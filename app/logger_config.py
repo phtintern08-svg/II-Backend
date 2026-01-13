@@ -59,7 +59,8 @@ else:
     SENTRY_ENABLED = False
 
 # Create logs directory if it doesn't exist
-LOG_DIR = os.path.join(os.path.dirname(os.path.abspath(__file__)), 'logs')
+# LOG_DIR should be in backend_api/logs (parent directory of app/)
+LOG_DIR = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), 'logs')
 os.makedirs(LOG_DIR, exist_ok=True)
 
 # Log file paths
@@ -156,7 +157,7 @@ def log_request(request, response=None, duration=None):
     
     # Log authenticated requests with user info
     try:
-        from auth import get_current_user
+        from app.auth import get_current_user
         user = get_current_user()
         if user:
             log_data['user_id'] = user.get('user_id')
@@ -272,4 +273,3 @@ def log_debug(message, context=None):
         app_logger.debug(f"{message} | Context: {context}")
     else:
         app_logger.debug(message)
-

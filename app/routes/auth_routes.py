@@ -18,7 +18,7 @@ from app.models import db, Admin, Customer, Vendor, Rider, Support, OTPLog
 from app.auth import generate_token, verify_token, login_required
 from app.validation import validate_request_data, LoginSchema, sanitize_text
 from config import Config
-from logger_config import app_logger, access_logger
+from app.logger_config import app_logger, access_logger
 
 # Create blueprint
 bp = Blueprint('auth', __name__, url_prefix='/api')

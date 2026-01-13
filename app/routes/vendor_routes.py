@@ -12,7 +12,7 @@ from app.models import (
 )
 from app.auth import login_required, role_required
 from app.file_upload import validate_and_save_file, delete_file, get_file_path_from_db
-from logger_config import app_logger
+from app.logger_config import app_logger
 
 # Create blueprint
 bp = Blueprint('vendor', __name__, url_prefix='/api/vendor')

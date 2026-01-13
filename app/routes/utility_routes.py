@@ -10,7 +10,7 @@ import requests
 from app.models import db, Category, Thread, Comment, Customer, Vendor
 from app.auth import login_required, role_required
 from app.schemas import category_schema, categories_schema, thread_schema, threads_schema, comment_schema, comments_schema
-from logger_config import app_logger
+from app.logger_config import app_logger
 
 # Create blueprint
 bp = Blueprint('utility', __name__, url_prefix='/api')

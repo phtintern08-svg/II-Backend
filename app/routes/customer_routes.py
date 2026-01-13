@@ -8,7 +8,7 @@ from datetime import datetime
 from app.models import db, Customer, Address, Order, Notification
 from app.auth import login_required, role_required
 from werkzeug.security import check_password_hash, generate_password_hash
-from logger_config import app_logger
+from app.logger_config import app_logger
 
 # Create blueprint
 bp = Blueprint('customer', __name__, url_prefix='/api/customer')

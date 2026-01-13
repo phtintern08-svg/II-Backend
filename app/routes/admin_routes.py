@@ -19,7 +19,7 @@ from app.utils.helpers import (
     assign_nearest_rider_to_order,
     get_rider_delivery_stats
 )
-from logger_config import app_logger
+from app.logger_config import app_logger
 
 # Create blueprint
 bp = Blueprint('admin', __name__, url_prefix='/api/admin')

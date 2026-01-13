@@ -9,7 +9,7 @@ from werkzeug.utils import secure_filename
 from werkzeug.datastructures import FileStorage
 from flask import current_app
 from config import Config
-from logger_config import log_error_with_context, log_warning, log_info
+from app.logger_config import log_error_with_context, log_warning, log_info
 from typing import Tuple, Optional, Dict, List
 
 # Try to import python-magic (optional, falls back to magic bytes if not available)

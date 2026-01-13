@@ -5,7 +5,7 @@ Provides centralized error handling and logging for production safety
 import traceback
 from flask import jsonify, request
 from config import Config
-from logger_config import log_error_with_context, error_logger
+from app.logger_config import log_error_with_context, error_logger
 
 
 def log_error(error, context=None):

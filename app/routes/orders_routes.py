@@ -9,7 +9,7 @@ from app.models import db, Order, OrderStatusHistory, Customer, Vendor, VendorOr
 from app.auth import login_required, admin_required, role_required
 from app.validation import validate_request_data, OrderSchema
 from app.schemas import order_schema, orders_schema
-from logger_config import app_logger
+from app.logger_config import app_logger
 
 # Create blueprint
 bp = Blueprint('orders', __name__, url_prefix='/api/orders')

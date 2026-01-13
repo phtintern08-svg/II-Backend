@@ -20,7 +20,7 @@ from sqlalchemy.engine import Engine
 from sqlalchemy.pool import Pool
 from sqlalchemy.exc import DisconnectionError, OperationalError
 from config import Config
-from logger_config import log_error_with_context, log_warning, log_info
+from app.logger_config import log_error_with_context, log_warning, log_info
 
 logger = logging.getLogger(__name__)
 

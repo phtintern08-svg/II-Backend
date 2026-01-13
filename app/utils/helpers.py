@@ -4,7 +4,7 @@ Helper utility functions for backend_api
 import math
 from datetime import datetime
 from app.models import db, Rider, DeliveryLog, Vendor, Order, VendorQuotationSubmission, ProductCatalog, Notification
-from logger_config import app_logger
+from app.logger_config import app_logger
 from app.error_handler import get_error_message
 
 
