@@ -6,36 +6,40 @@ import sys
 import os
 import logging
 
-# Add the backend_api directory to Python path
-sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+# Absolute path of backend_api
+BASE_DIR = os.path.dirname(os.path.abspath(__file__))
 
-# Configure logging for Passenger
+# Ensure backend_api is in Python path
+sys.path.insert(0, BASE_DIR)
+
+# Create logs folder if missing
+LOG_DIR = os.path.join(BASE_DIR, "logs")
+os.makedirs(LOG_DIR, exist_ok=True)
+
+LOG_FILE = os.path.join(LOG_DIR, "passenger.log")
+
+# Configure logging
 logging.basicConfig(
     level=logging.INFO,
-    format='%(asctime)s - %(name)s - %(levelname)s - %(message)s',
+    format="%(asctime)s | %(levelname)s | %(name)s | %(message)s",
     handlers=[
-        logging.FileHandler('../logs/passenger.log'),
-        logging.StreamHandler(sys.stderr)
-    ]
+        logging.FileHandler(LOG_FILE),
+        logging.StreamHandler(sys.stderr),
+    ],
 )
 
-logger = logging.getLogger(__name__)
+logger = logging.getLogger("passenger")
 
 try:
-    # Import the Flask application
     from app import create_app
     from config import Config
-    
-    # Create the application
-    application = create_app(Config)
-    
-    logger.info("Passenger WSGI application initialized successfully")
-    logger.info(f"Environment: {Config.ENV}")
-    logger.info(f"Debug mode: {Config.DEBUG}")
-    
-except Exception as e:
-    logger.exception(f"Failed to initialize Passenger WSGI application: {e}")
-    raise
 
-# Passenger looks for the 'application' object
-# Note: Do NOT rename this variable - Passenger requires it to be named 'application'
+    application = create_app(Config)
+
+    logger.info("Passenger WSGI started successfully")
+    logger.info(f"ENV = {Config.ENV}")
+    logger.info(f"DEBUG = {Config.DEBUG}")
+
+except Exception as e:
+    logger.exception("Passenger failed to start")
+    raise
