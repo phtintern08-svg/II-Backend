@@ -16,7 +16,7 @@ import sys
 from config import Config
 from app.models import db
 from app.schemas import ma
-from app.logger_config import app_logger, access_logger, error_logger
+from logger_config import app_logger, access_logger, error_logger
 
 # Initialize extensions (but don't bind to app yet)
 mail = Mail()
