@@ -2,7 +2,7 @@
 Flask Application Factory
 Creates and configures the Flask application with all extensions and blueprints
 """
-from flask import Flask
+from flask import Flask, request
 from flask_cors import CORS
 from flask_mail import Mail
 from flask_limiter import Limiter
@@ -11,13 +11,12 @@ from flask_wtf.csrf import CSRFProtect
 import os
 import sys
 
-# Add parent directory to path for imports
-sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+
 
 from config import Config
 from app.models import db
 from app.schemas import ma
-from logger_config import app_logger, access_logger, error_logger
+from app.logger_config import app_logger, access_logger, error_logger
 
 # Initialize extensions (but don't bind to app yet)
 mail = Mail()
@@ -49,13 +48,14 @@ def create_app(config_class=Config):
     limiter.init_app(app)
     csrf.init_app(app)
     
-    # Configure CORS
-    CORS(app, 
-         origins=["*"],  # Configure this properly in production
-         supports_credentials=True,
-         allow_headers=["Content-Type", "Authorization", "X-CSRF-Token"],
-         methods=["GET", "POST", "PUT", "DELETE", "OPTIONS"]
-    )
+    # Exempt API routes from CSRF protection
+    @app.before_request
+    def csrf_exempt_api():
+        if request.path.startswith("/api/"):
+            setattr(request, "csrf_processing_disabled", True)
+    
+    # Configure CORS for production APIs (JWT in headers, not cookies)
+    CORS(app, supports_credentials=True)
     
     # Register blueprints
     from app.routes import auth_routes, orders_routes, vendor_routes, rider_routes, admin_routes, customer_routes, utility_routes
