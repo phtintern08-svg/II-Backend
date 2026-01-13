@@ -6,7 +6,7 @@ import jwt
 from functools import wraps
 from flask import request, jsonify, current_app
 from datetime import datetime, timedelta
-from models import Admin, Customer, Vendor, Rider
+from app.models import Admin, Customer, Vendor, Rider
 
 
 def generate_token(user_id, role, username=None, email=None, phone=None):

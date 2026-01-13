@@ -1,6 +1,6 @@
 from flask_marshmallow import Marshmallow
 from marshmallow import fields
-from models import (
+from app.models import (
     Admin,
     Customer,
     Vendor,
@@ -90,7 +90,7 @@ class OrderSchema(ma.SQLAlchemyAutoSchema):
 
     def get_payments(self, obj):
         """Manually fetch payments from both admin and customer Payment models (cross-schema)"""
-        from models import Payment, CustomerPayment
+        from app.models import Payment, CustomerPayment
         admin_payments = Payment.query.filter_by(order_id=obj.id).all()
         customer_payments = CustomerPayment.query.filter_by(order_id=obj.id).all()
         
