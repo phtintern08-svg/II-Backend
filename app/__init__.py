@@ -68,6 +68,9 @@ def create_app(config_class=Config):
     app.register_blueprint(customer_routes.bp)
     app.register_blueprint(utility_routes.bp)
     
+    # Register static file serving routes (for cPanel/Passenger)
+    register_static_routes(app)
+    
     # Register error handlers
     register_error_handlers(app)
     
@@ -142,6 +145,70 @@ def register_error_handlers(app):
             response.headers['Content-Type'] = 'application/json'
             return response, 403
         return error
+
+
+def register_static_routes(app):
+    """Register routes to serve static HTML files (for cPanel/Passenger)"""
+    from flask import send_from_directory, abort
+    
+    # Determine frontend directory path (relative to backend_api)
+    # backend_api is in: /home/impromptuindian/backend_api
+    # Frontend is in: /home/impromptuindian/Frontend (sibling directory)
+    backend_dir = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+    frontend_base = os.path.join(os.path.dirname(backend_dir), 'Frontend')
+    
+    # Get subdomain from host header
+    def get_frontend_path():
+        host = request.host.lower()
+        if 'vendor.' in host:
+            return os.path.join(frontend_base, 'vendor.impromptuindian.com')
+        elif 'rider.' in host:
+            return os.path.join(frontend_base, 'rider.impromptuindian.com')
+        else:
+            return os.path.join(frontend_base, 'apparels.impromptuindian.com')
+    
+    @app.route('/', defaults={'path': ''})
+    @app.route('/<path:path>')
+    def serve_static(path):
+        """Serve static files - catch-all for non-API routes (registered last)"""
+        # Never serve API routes as static files
+        if request.path.startswith('/api/'):
+            abort(404)
+        
+        frontend_dir = get_frontend_path()
+        
+        # If path is empty or '/', serve index.html
+        if not path or path == '':
+            path = 'index.html'
+        
+        file_path = os.path.join(frontend_dir, path)
+        
+        # Security: prevent directory traversal
+        frontend_dir_abs = os.path.abspath(frontend_dir)
+        file_path_abs = os.path.abspath(file_path)
+        if not file_path_abs.startswith(frontend_dir_abs):
+            abort(403)
+        
+        # If it's a directory, try index.html
+        if os.path.isdir(file_path):
+            file_path = os.path.join(file_path, 'index.html')
+        
+        # If file doesn't exist, try with .html extension
+        if not os.path.exists(file_path) and not path.endswith('.html'):
+            file_path = file_path + '.html'
+        
+        # Serve the file if it exists
+        if os.path.exists(file_path) and os.path.isfile(file_path):
+            directory = os.path.dirname(file_path)
+            filename = os.path.basename(file_path)
+            return send_from_directory(directory, filename)
+        
+        # For SPA routing, serve index.html for any non-API route that doesn't match a file
+        index_path = os.path.join(frontend_dir, 'index.html')
+        if os.path.exists(index_path):
+            return send_from_directory(frontend_dir, 'index.html')
+        
+        abort(404)
 
 
 def register_request_handlers(app):

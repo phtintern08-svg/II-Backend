@@ -8,9 +8,9 @@ __pycache__/
 *.pyc
 *.pyo
 *.pyd
-.env
+
 venv/
-.env.*
+
 
 # OS
 .DS_Store
