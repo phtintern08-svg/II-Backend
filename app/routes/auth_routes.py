@@ -21,7 +21,7 @@ from config import Config
 from app.logger_config import app_logger, access_logger
 
 # Create blueprint
-bp = Blueprint('auth', __name__, url_prefix='/api')
+bp = Blueprint('auth', __name__)
 
 # In-memory storage for OTPs
 otp_storage = {}

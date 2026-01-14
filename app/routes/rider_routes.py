@@ -2,20 +2,32 @@
 Rider Routes Blueprint
 Handles rider-specific endpoints for deliveries, earnings, and profile management
 """
-from flask import Blueprint, request, jsonify, send_file
+from flask import Blueprint, request, jsonify, send_file, current_app
 from datetime import datetime, timedelta
 import os
 
 from app.models import (
     db, Rider, RiderDocument, DeliveryLog, DeliveryPartner, Order,
-    Notification, OrderStatusHistory
+    Notification, OrderStatusHistory, OTPLog, Customer
 )
 from app.auth import login_required, role_required
 from app.file_upload import validate_and_save_file, delete_file, get_file_path_from_db
 from app.logger_config import app_logger
+from flask_limiter import Limiter
+from flask_limiter.util import get_remote_address
 
 # Create blueprint
-bp = Blueprint('rider', __name__, url_prefix='/api/rider')
+bp = Blueprint('rider', __name__, url_prefix='/rider')
+
+# Custom key function for rate limiting by rider ID
+def get_rider_id_for_rate_limit():
+    """Get rider ID from request for rate limiting"""
+    try:
+        if hasattr(request, 'user_id') and request.user_id:
+            return f"rider:{request.user_id}"
+    except Exception:
+        pass
+    return get_remote_address()
 
 
 @bp.route('/profile', methods=['GET'])
@@ -80,85 +92,6 @@ def update_rider_profile():
         return jsonify({"error": "Failed to update profile"}), 500
 
 
-@bp.route('/deliveries/assigned', methods=['GET'])
-@role_required(['rider'])
-def get_assigned_deliveries():
-    """
-    GET /api/rider/deliveries/assigned
-    Get all assigned deliveries for this rider
-    """
-    try:
-        # Get active deliveries assigned to this rider
-        deliveries = DeliveryLog.query.filter_by(
-            rider_id=request.user_id,
-            status='assigned'
-        ).all()
-        
-        deliveries_data = [{
-            "id": d.id,
-            "order_id": d.order_id,
-            "status": d.status,
-            "assigned_at": d.assigned_at.isoformat() if d.assigned_at else None,
-            "pickup_address": d.pickup_address,
-            "delivery_address": d.delivery_address
-        } for d in deliveries]
-        
-        return jsonify({
-            "deliveries": deliveries_data,
-            "count": len(deliveries_data)
-        }), 200
-        
-    except Exception as e:
-        app_logger.exception(f"Get assigned deliveries error: {e}")
-        return jsonify({"error": "Failed to retrieve deliveries"}), 500
-
-
-@bp.route('/deliveries/<int:delivery_id>/status', methods=['PUT'])
-@role_required(['rider'])
-def update_delivery_status(delivery_id):
-    """
-    PUT /api/rider/deliveries/<delivery_id>/status
-    Update delivery status
-    """
-    try:
-        data = request.get_json()
-        new_status = data.get('status')
-        
-        if not new_status:
-            return jsonify({"error": "Status is required"}), 400
-        
-        delivery = DeliveryLog.query.get(delivery_id)
-        if not delivery:
-            return jsonify({"error": "Delivery not found"}), 404
-        
-        # Verify this delivery belongs to the rider
-        if delivery.rider_id != request.user_id:
-            return jsonify({"error": "Unauthorized"}), 403
-        
-        # Update delivery status
-        delivery.status = new_status
-        delivery.updated_at = datetime.utcnow()
-        
-        # Update timestamps based on status
-        if new_status == 'picked_up':
-            delivery.picked_up_at = datetime.utcnow()
-        elif new_status == 'delivered':
-            delivery.delivered_at = datetime.utcnow()
-        
-        db.session.commit()
-        
-        return jsonify({
-            "message": "Delivery status updated successfully",
-            "delivery_id": delivery_id,
-            "status": new_status
-        }), 200
-        
-    except Exception as e:
-        db.session.rollback()
-        app_logger.exception(f"Update delivery status error: {e}")
-        return jsonify({"error": "Failed to update delivery status"}), 500
-
-
 @bp.route('/deliveries/history', methods=['GET'])
 @role_required(['rider'])
 def get_delivery_history():
@@ -168,7 +101,7 @@ def get_delivery_history():
     """
     try:
         deliveries = DeliveryLog.query.filter_by(
-            rider_id=request.user_id
+            assigned_rider_id=request.user_id
         ).order_by(DeliveryLog.created_at.desc()).all()
         
         deliveries_data = [{
@@ -199,26 +132,25 @@ def get_earnings():
     try:
         # Calculate earnings from delivery logs
         completed_deliveries = DeliveryLog.query.filter_by(
-            rider_id=request.user_id,
+            assigned_rider_id=request.user_id,
             status='delivered'
         ).all()
         
         total_deliveries = len(completed_deliveries)
         
-        # Calculate earnings (assuming fixed rate per delivery, adjust as needed)
-        earnings_per_delivery = 50.0  # This should come from config or order details
-        total_earnings = total_deliveries * earnings_per_delivery
+        # Single source of truth: Calculate earnings from DeliveryLog only
+        # This is transactional and cannot diverge from stored values
+        total_earnings = sum(d.total_earning or 0 for d in completed_deliveries)
         
-        # Get rider record for stored earnings
-        rider = Rider.query.get(request.user_id)
-        stored_earnings = rider.total_earnings if rider and rider.total_earnings else 0.0
-        paid_amount = rider.paid_earnings if rider and hasattr(rider, 'paid_earnings') else 0.0
+        # Calculate paid amount from deliveries with payout_status='paid'
+        paid_deliveries = [d for d in completed_deliveries if getattr(d, 'payout_status', None) == 'paid']
+        paid_amount = sum(d.total_earning or 0 for d in paid_deliveries)
         
         earnings_data = {
             "total_deliveries": total_deliveries,
-            "total_earnings": float(stored_earnings) if stored_earnings else total_earnings,
-            "pending_payment": float(stored_earnings - paid_amount) if stored_earnings and paid_amount else total_earnings,
-            "paid_amount": float(paid_amount) if paid_amount else 0.0
+            "total_earnings": float(total_earnings),
+            "pending_payment": float(total_earnings - paid_amount),
+            "paid_amount": float(paid_amount)
         }
         
         return jsonify(earnings_data), 200
@@ -240,10 +172,13 @@ def upload_verification_document():
             return jsonify({"error": "No file part"}), 400
         
         file = request.files['file']
-        rider_id = request.form.get('rider_id')
         doc_type = request.form.get('doc_type')
         
-        if not file or not rider_id or not doc_type:
+        # Security: Use request.user_id instead of accepting rider_id from client
+        # This ensures riders can only upload documents for themselves
+        rider_id = request.user_id
+        
+        if not file or not doc_type:
             return jsonify({"error": "Missing required data"}), 400
         
         valid_types = ['aadhar', 'dl', 'pan', 'photo', 'vehicle_rc', 'insurance', 'bank']
@@ -265,7 +200,7 @@ def upload_verification_document():
             file=file,
             endpoint='/api/rider/verification/upload',
             subfolder='rider',
-            user_id=int(rider_id),
+            user_id=rider_id,
             doc_type=doc_type,
             scan_virus=False
         )
@@ -340,10 +275,10 @@ def submit_verification():
     """
     try:
         data = request.get_json()
-        rider_id = data.get('rider_id')
         
-        if rider_id:
-            rider_id = int(rider_id)
+        # Security: Use request.user_id instead of accepting rider_id from client
+        # This ensures riders can only submit verification for themselves
+        rider_id = request.user_id
         
         rider = Rider.query.get(rider_id)
         if not rider:
@@ -666,13 +601,18 @@ def get_status():
 
 @bp.route('/deliveries/assigned', methods=['GET'])
 @role_required(['rider'])
-def get_assigned_deliveries_full():
+def get_assigned_deliveries():
     """
     GET /api/rider/deliveries/assigned
-    Get all assigned deliveries with full details
+    Get all assigned deliveries with full details (excludes delivered/completed)
     """
     try:
-        deliveries = DeliveryLog.query.filter_by(assigned_rider_id=request.user_id).all()
+        # Consistency: Always filter by assigned_rider_id first (security)
+        # Then exclude completed deliveries to show only active assignments
+        deliveries = DeliveryLog.query.filter(
+            DeliveryLog.assigned_rider_id == request.user_id,
+            DeliveryLog.status != 'delivered'
+        ).all()
         
         result = []
         for d in deliveries:
@@ -706,7 +646,7 @@ def get_assigned_deliveries_full():
 
 @bp.route('/deliveries/<int:delivery_id>/status', methods=['PUT'])
 @role_required(['rider'])
-def update_delivery_status_full(delivery_id):
+def update_delivery_status(delivery_id):
     """
     PUT /api/rider/deliveries/<delivery_id>/status
     Update delivery status with location tracking
@@ -724,6 +664,34 @@ def update_delivery_status_full(delivery_id):
         if delivery.assigned_rider_id != request.user_id:
             return jsonify({"error": "Unauthorized"}), 403
         
+        # Validate rider can only set specific statuses
+        allowed_rider_statuses = ['reached_vendor', 'picked_up', 'out_for_delivery', 'delivered']
+        if status not in allowed_rider_statuses:
+            return jsonify({"error": f"Invalid status. Riders can only set: {', '.join(allowed_rider_statuses)}"}), 400
+        
+        # Get order to validate current state
+        order = Order.query.get(delivery.order_id)
+        if not order:
+            return jsonify({"error": "Order not found"}), 404
+        
+        # Validate status transition - prevent skipping workflow states
+        # Riders can only progress through delivery stages in sequence
+        # CRITICAL: Rider can only set 'reached_vendor' when order is 'ready_for_pickup'
+        # This ensures vendor has finished packing before rider arrives
+        current_order_status = order.status
+        valid_transitions = {
+            'reached_vendor': ['ready_for_pickup'],  # Only allow when vendor has marked ready
+            'picked_up': ['reached_vendor'],
+            'out_for_delivery': ['picked_up'],
+            'delivered': ['out_for_delivery']
+        }
+        
+        if status in valid_transitions:
+            if current_order_status not in valid_transitions[status]:
+                return jsonify({
+                    "error": f"Cannot set status to '{status}'. Order must be in one of: {', '.join(valid_transitions[status])}. Current status: {current_order_status}"
+                }), 400
+        
         delivery.status = status
         
         # Record timestamp and GPS location based on status
@@ -740,28 +708,24 @@ def update_delivery_status_full(delivery_id):
         elif status == 'delivered':
             delivery.delivered_at = datetime.utcnow()
         
-        order = Order.query.get(delivery.order_id)
+        # Update order status and create history
+        status_labels = {
+            'reached_vendor': 'Rider Reached Vendor',
+            'picked_up': 'Order Picked Up',
+            'out_for_delivery': 'Out for Delivery',
+            'delivered': 'Order Delivered'
+        }
         
-        if order:
-            # Update order status and create history
-            status_labels = {
-                'reached_vendor': 'Rider Reached Vendor',
-                'picked_up': 'Order Picked Up',
-                'out_for_delivery': 'Out for Delivery',
-                'delivered': 'Order Delivered'
-            }
-            
-            if status in status_labels:
-                order.status = status
-                history = OrderStatusHistory(
-                    order_id=order.id,
-                    status=status,
-                    status_label=status_labels[status],
-                    changed_by_type='rider',
-                    changed_by_id=request.user_id,
-                    notes=data.get('notes', '')
-                )
-                db.session.add(history)
+        order.status = status
+        history = OrderStatusHistory(
+            order_id=order.id,
+            status=status,
+            status_label=status_labels[status],
+            changed_by_type='rider',
+            changed_by_id=request.user_id,
+            notes=data.get('notes', '')
+        )
+        db.session.add(history)
         
         db.session.commit()
         return jsonify({"message": f"Delivery status updated to {status}"}), 200
@@ -813,17 +777,27 @@ def upload_pickup_proof(delivery_id):
         delivery.picked_up_at = datetime.utcnow()
         
         order = Order.query.get(delivery.order_id)
-        if order:
-            order.status = 'picked_up'
-            history = OrderStatusHistory(
-                order_id=order.id,
-                status='picked_up',
-                status_label='Order Picked Up',
-                changed_by_type='rider',
-                changed_by_id=request.user_id,
-                notes=f'Pickup proof uploaded. Notes: {notes}'
-            )
-            db.session.add(history)
+        if not order:
+            return jsonify({"error": "Order not found"}), 404
+        
+        # Validate status transition - can only set picked_up from reached_vendor
+        current_order_status = order.status
+        valid_pickup_states = ['reached_vendor']
+        if current_order_status not in valid_pickup_states:
+            return jsonify({
+                "error": f"Cannot mark as picked up. Order must be in 'reached_vendor' status. Current status: {current_order_status}"
+            }), 400
+        
+        order.status = 'picked_up'
+        history = OrderStatusHistory(
+            order_id=order.id,
+            status='picked_up',
+            status_label='Order Picked Up',
+            changed_by_type='rider',
+            changed_by_id=request.user_id,
+            notes=f'Pickup proof uploaded. Notes: {notes}'
+        )
+        db.session.add(history)
         
         db.session.commit()
         return jsonify({"message": "Pickup proof uploaded and marked as picked up"}), 200
@@ -853,6 +827,35 @@ def upload_delivery_proof(delivery_id):
         otp = request.form.get('otp', '')
         notes = request.form.get('notes', '')
         
+        # CRITICAL: Verify OTP before allowing delivery completion
+        # This prevents fraud - rider cannot complete delivery without customer OTP
+        if not otp:
+            return jsonify({"error": "OTP is required for delivery completion"}), 400
+        
+        # Get order and customer to verify OTP
+        order = Order.query.get(delivery.order_id)
+        if not order:
+            return jsonify({"error": "Order not found"}), 404
+        
+        customer = Customer.query.get(order.customer_id)
+        if not customer:
+            return jsonify({"error": "Customer not found"}), 404
+        
+        # Verify OTP from OTPLog - check recent OTPs for customer's phone/email
+        # CRITICAL: This prevents fraud - rider cannot complete delivery without valid customer OTP
+        recent_otp = OTPLog.query.filter(
+            OTPLog.recipient.in_([customer.phone, customer.email]),
+            OTPLog.otp_code == otp,
+            OTPLog.status == 'sent',
+            OTPLog.expires_at >= datetime.utcnow()
+        ).order_by(OTPLog.created_at.desc()).first()
+        
+        if not recent_otp:
+            return jsonify({"error": "Invalid or expired OTP. Please verify with customer."}), 400
+        
+        # Mark OTP as used to prevent reuse
+        recent_otp.status = 'verified'
+        
         if file:
             file_info, error = validate_and_save_file(
                 file=file,
@@ -876,23 +879,32 @@ def upload_delivery_proof(delivery_id):
         delivery.delivery_time = datetime.utcnow()
         delivery.notes = (delivery.notes or "") + f" | Delivery notes: {notes}"
         delivery.delivery_otp = otp
+        delivery.otp_verified = True  # Mark OTP as verified
         
         # Calculate earnings
         delivery.base_payout = 40.0
         delivery.total_earning = 50.0
         delivery.payout_status = 'pending'
         
-        order = Order.query.get(delivery.order_id)
-        if order:
-            order.status = 'delivered'
-            history = OrderStatusHistory(
-                order_id=order.id,
-                status='delivered',
-                status_label='Order Delivered',
-                changed_by_type='rider',
-                changed_by_id=request.user_id
-            )
-            db.session.add(history)
+        # Order already fetched above for OTP verification
+        
+        # Validate status transition - can only set delivered from out_for_delivery
+        current_order_status = order.status
+        valid_delivery_states = ['out_for_delivery']
+        if current_order_status not in valid_delivery_states:
+            return jsonify({
+                "error": f"Cannot mark as delivered. Order must be in 'out_for_delivery' status. Current status: {current_order_status}"
+            }), 400
+        
+        order.status = 'delivered'
+        history = OrderStatusHistory(
+            order_id=order.id,
+            status='delivered',
+            status_label='Order Delivered',
+            changed_by_type='rider',
+            changed_by_id=request.user_id
+        )
+        db.session.add(history)
         
         db.session.commit()
         return jsonify({
@@ -912,7 +924,27 @@ def update_live_location(delivery_id):
     """
     PUT /api/rider/deliveries/<delivery_id>/location
     Update live location during delivery
+    Rate limited to prevent spam and DB overload (1 update per 5 seconds per rider)
     """
+    # Rate limit: 1 update per 5 seconds per rider
+    # This prevents spam attacks while allowing reasonable tracking frequency
+    # Use in-memory tracking for simplicity (can be upgraded to Redis in production)
+    if not hasattr(update_live_location, '_last_update'):
+        update_live_location._last_update = {}
+    
+    rider_id = request.user_id
+    current_time = datetime.utcnow().timestamp()
+    last_update = update_live_location._last_update.get(rider_id, 0)
+    
+    if current_time - last_update < 5:  # 5 seconds
+        return jsonify({
+            "error": "Rate limit exceeded. Please wait before updating location again.",
+            "retry_after": max(1, int(5 - (current_time - last_update)))
+        }), 429
+    
+    # Update last update time
+    update_live_location._last_update[rider_id] = current_time
+    
     try:
         data = request.get_json()
         lat = data.get('latitude')
@@ -946,13 +978,11 @@ def get_delivery_details(delivery_id):
     Get full delivery details for a specific delivery
     """
     try:
-        rider_id = request.args.get('rider_id')
-        if not rider_id:
-            return jsonify({"error": "Rider ID required"}), 400
-        
+        # Security: Use request.user_id instead of accepting rider_id from client
+        # This ensures riders can only access their own deliveries
         delivery = DeliveryLog.query.filter_by(
             id=delivery_id,
-            assigned_rider_id=int(rider_id)
+            assigned_rider_id=request.user_id
         ).first()
         
         if not delivery:

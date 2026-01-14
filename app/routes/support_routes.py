@@ -1,6 +1,6 @@
 """
-Utility Routes Blueprint
-Handles utility endpoints like config, geocoding, categories, threads, and profile updates
+Support Routes Blueprint
+Handles support endpoints like config, geocoding, categories, threads, and profile updates
 """
 from flask import Blueprint, request, jsonify
 from datetime import datetime
@@ -13,24 +13,11 @@ from app.schemas import category_schema, categories_schema, thread_schema, threa
 from app.logger_config import app_logger
 
 # Create blueprint
-bp = Blueprint('utility', __name__, url_prefix='/api')
+bp = Blueprint('support', __name__)
 
 
-@bp.route('/config', methods=['GET'])
-@login_required
-def get_config():
-    """
-    GET /api/config
-    Get application configuration including API keys for frontend
-    """
-    try:
-        return jsonify({
-            "hereApiKey": os.environ.get('HERE_API_KEY') or "YOUR_HERE_API_KEY",
-            "mapplsApiKey": os.environ.get('MAPPLS_API_KEY') or ""
-        }), 200
-    except Exception as e:
-        app_logger.exception(f"Get config error: {e}")
-        return jsonify({"error": "Failed to retrieve configuration"}), 500
+# SECURITY: /config endpoint removed - API keys must never be exposed to frontend
+# Frontend should use proxied endpoints (/geocode, /reverse-geocode) instead
 
 
 @bp.route('/reverse-geocode', methods=['GET'])
@@ -39,7 +26,36 @@ def reverse_geocode():
     """
     GET /api/reverse-geocode
     Reverse geocode coordinates to address
+    Rate limited to prevent abuse of paid API
     """
+    # Rate limit: 10 requests per minute per user
+    # This prevents abuse of paid Mappls API
+    if not hasattr(reverse_geocode, '_last_requests'):
+        reverse_geocode._last_requests = {}
+    
+    user_id = request.user_id
+    current_time = datetime.utcnow().timestamp()
+    
+    # Clean old entries (older than 1 minute)
+    reverse_geocode._last_requests = {
+        uid: times for uid, times in reverse_geocode._last_requests.items()
+        if any(t > current_time - 60 for t in times)
+    }
+    
+    # Get user's request times in last minute
+    user_requests = reverse_geocode._last_requests.get(user_id, [])
+    user_requests = [t for t in user_requests if t > current_time - 60]
+    
+    if len(user_requests) >= 10:
+        return jsonify({
+            "error": "Rate limit exceeded. Maximum 10 requests per minute.",
+            "retry_after": max(1, int(60 - (current_time - user_requests[0])))
+        }), 429
+    
+    # Add current request
+    user_requests.append(current_time)
+    reverse_geocode._last_requests[user_id] = user_requests
+    
     try:
         lat = request.args.get('lat')
         lng = request.args.get('lng')
@@ -188,7 +204,8 @@ def create_thread():
         
         title = data.get('title')
         content = data.get('content')
-        user_id = data.get('user_id', request.user_id)
+        # SECURITY: Always use user_id from JWT, never from request body
+        user_id = request.user_id
         category_id = data.get('category_id')
         
         if not title or not content:
@@ -257,7 +274,8 @@ def add_comment(thread_id):
             return jsonify({"error": "Request body required"}), 400
         
         content = data.get('content')
-        user_id = data.get('user_id', request.user_id)
+        # SECURITY: Always use user_id from JWT, never from request body
+        user_id = request.user_id
         parent_comment_id = data.get('parent_comment_id')
         
         if not content:
@@ -298,8 +316,9 @@ def update_profile():
         if not data:
             return jsonify({"error": "Request body required"}), 400
         
-        user_id = data.get('user_id', request.user_id)
-        role = data.get('role', request.role)
+        # SECURITY: Always use user_id and role from JWT, never from request body
+        user_id = request.user_id
+        role = request.role
         username = data.get('username')
         email = data.get('email')
         phone = data.get('phone')
@@ -364,8 +383,9 @@ def change_password():
     """
     try:
         data = request.get_json()
-        user_id = data.get('user_id', request.user_id)
-        role = data.get('role', request.role)
+        # SECURITY: Always use user_id and role from JWT, never from request body
+        user_id = request.user_id
+        role = request.role
         current_password = data.get('current_password')
         new_password = data.get('new_password')
         
@@ -398,7 +418,7 @@ def change_password():
 
 
 @bp.route('/estimate-price', methods=['POST'])
-@login_required
+@role_required(['customer', 'vendor', 'admin'])
 def estimate_price():
     """
     POST /api/estimate-price
@@ -485,7 +505,7 @@ def estimate_price():
 
 
 @bp.route('/product-price/<int:product_id>', methods=['GET'])
-@login_required
+@role_required(['customer', 'vendor', 'admin'])
 def get_product_price(product_id):
     """
     GET /api/product-price/<product_id>

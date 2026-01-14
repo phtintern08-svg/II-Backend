@@ -15,7 +15,7 @@ from app.file_upload import validate_and_save_file, delete_file, get_file_path_f
 from app.logger_config import app_logger
 
 # Create blueprint
-bp = Blueprint('vendor', __name__, url_prefix='/api/vendor')
+bp = Blueprint('vendor', __name__, url_prefix='/vendor')
 
 
 @bp.route('/profile', methods=['GET'])
@@ -223,10 +223,11 @@ def upload_verification_document():
             return jsonify({"error": "No file part"}), 400
         
         file = request.files['file']
-        vendor_id = request.form.get('vendor_id')
+        # SECURITY: Always use vendor_id from JWT, never from request body
+        vendor_id = request.user_id
         doc_type = request.form.get('doc_type')
         
-        if not file or not vendor_id or not doc_type:
+        if not file or not doc_type:
             return jsonify({"error": "Missing required data"}), 400
         
         vendor = Vendor.query.get(vendor_id)
@@ -313,10 +314,8 @@ def submit_verification():
     """
     try:
         data = request.get_json()
-        vendor_id = data.get('vendor_id')
-        
-        if vendor_id:
-            vendor_id = int(vendor_id)
+        # SECURITY: Always use vendor_id from JWT, never from request body
+        vendor_id = request.user_id
         
         vendor = Vendor.query.get(vendor_id)
         if not vendor:
@@ -464,10 +463,11 @@ def submit_quotation_file():
             return jsonify({"error": "No file part"}), 400
         
         file = request.files['file']
-        vendor_id = request.form.get('vendor_id')
+        # SECURITY: Always use vendor_id from JWT, never from request body
+        vendor_id = request.user_id
         commission_rate = request.form.get('commission_rate')
         
-        if not file or not vendor_id or not commission_rate:
+        if not file or not commission_rate:
             return jsonify({"error": "Missing required data"}), 400
         
         if float(commission_rate) < 15:
@@ -856,7 +856,8 @@ def move_to_production(order_id):
     """
     try:
         data = request.get_json()
-        vendor_id = data.get('vendor_id', request.user_id)
+        # SECURITY: Always use vendor_id from JWT, never from request body
+        vendor_id = request.user_id
         
         # Handle ORD- prefix if present
         actual_order_id = order_id

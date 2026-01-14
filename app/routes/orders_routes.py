@@ -12,7 +12,7 @@ from app.schemas import order_schema, orders_schema
 from app.logger_config import app_logger
 
 # Create blueprint
-bp = Blueprint('orders', __name__, url_prefix='/api/orders')
+bp = Blueprint('orders', __name__, url_prefix='/orders')
 
 
 @bp.route('/', methods=['GET'])
