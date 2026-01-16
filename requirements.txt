@@ -1,51 +1,32 @@
-# Python 3.11 Compatible Requirements
-# Tested and verified for Python 3.11.x
-
-# Core Flask Framework
+# Core Framework
 Flask==3.0.3
-Flask-SQLAlchemy==3.1.1
+Werkzeug==3.0.3
+Flask-Cors==4.0.0
 Flask-Mail==0.9.1
-flask-cors==4.0.0
-flask-marshmallow==1.2.1
+Flask-Limiter==3.5.0
 
 # Database & ORM
-PyMySQL==1.1.0
+# PyMySQL is essential for connecting Flask to cPanel MySQL
+PyMySQL==1.1.0 
 SQLAlchemy==2.0.30
+Flask-SQLAlchemy==3.1.1
 
 # Serialization
 marshmallow==3.21.3
+Flask-Marshmallow==1.2.1
 marshmallow-sqlalchemy==1.0.0
 
-# HTTP & Requests
-requests==2.31.0
-
-# Security & Encryption
-cryptography==41.0.7
-Werkzeug==3.0.3
+# Security & Environment
 PyJWT==2.8.0
-Flask-Limiter==3.5.0
+cryptography==41.0.7
+python-dotenv==1.0.1
 Flask-WTF==1.2.1
 WTForms==3.1.2
 bleach==6.1.0
 
-# Environment & Configuration
-python-dotenv==1.0.1
-
-# Excel/Spreadsheet Support
+# Utilities
+requests==2.31.0
 openpyxl==3.1.2
-
-# Production Server
-gunicorn==21.2.0
-
-# System Utilities
 psutil==5.9.8
-
-# File Upload Security
 python-magic==0.4.27
-# pyclamd==1.0.1  # Optional - for virus scanning (requires ClamAV daemon)
-
-# Error Tracking (Optional - install if using Sentry)
-# sentry-sdk[flask]==2.19.0
-
-# Additional Dependencies for Python 3.11
-typing-extensions>=4.9.0  # For backwards compatibility with typing features
+typing-extensions>=4.9.0

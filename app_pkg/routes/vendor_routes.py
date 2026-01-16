@@ -6,13 +6,13 @@ from flask import Blueprint, request, jsonify, send_file
 from datetime import datetime
 import os
 
-from app.models import (
+from app_pkg.models import (
     db, Vendor, VendorQuotation, VendorDocument, VendorOrderAssignment, Order,
     VendorQuotationSubmission, Notification, OrderStatusHistory, Customer
 )
-from app.auth import login_required, role_required
-from app.file_upload import validate_and_save_file, delete_file, get_file_path_from_db
-from app.logger_config import app_logger
+from app_pkg.auth import login_required, role_required
+from app_pkg.file_upload import validate_and_save_file, delete_file, get_file_path_from_db
+from app_pkg.logger_config import app_logger
 
 # Create blueprint
 bp = Blueprint('vendor', __name__, url_prefix='/vendor')

@@ -7,15 +7,15 @@ from datetime import datetime
 import os
 import math
 
-from app.models import (
+from app_pkg.models import (
     db, Admin, Customer, Vendor, Rider, Order, OTPLog, Payment, 
     VendorDocument, VendorQuotationSubmission, RiderDocument, Notification,
     VendorOrderAssignment, OrderStatusHistory, DeliveryLog
 )
-from app.auth import login_required, admin_required
-from app.file_upload import get_file_path_from_db
-from app.logger_config import app_logger
-from app.error_handler import get_error_message
+from app_pkg.auth import login_required, admin_required
+from app_pkg.file_upload import get_file_path_from_db
+from app_pkg.logger_config import app_logger
+from app_pkg.error_handler import get_error_message
 
 # Helper functions (moved from app/utils/helpers.py)
 def haversine_distance(lat1, lon1, lat2, lon2):

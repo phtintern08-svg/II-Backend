@@ -1,6 +1,6 @@
 from flask_marshmallow import Marshmallow
 from marshmallow import fields
-from app.models import (
+from app_pkg.models import (
     Admin,
     Customer,
     Vendor,

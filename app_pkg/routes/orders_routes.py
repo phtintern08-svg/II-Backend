@@ -5,11 +5,11 @@ Handles order creation, management, and tracking endpoints
 from flask import Blueprint, request, jsonify
 from datetime import datetime
 
-from app.models import db, Order, OrderStatusHistory, Customer, Vendor, VendorOrderAssignment, Payment, CustomerPayment
-from app.auth import login_required, admin_required, role_required
-from app.validation import validate_request_data, OrderSchema
-from app.schemas import order_schema, orders_schema
-from app.logger_config import app_logger
+from app_pkg.models import db, Order, OrderStatusHistory, Customer, Vendor, VendorOrderAssignment, Payment, CustomerPayment
+from app_pkg.auth import login_required, admin_required, role_required
+from app_pkg.validation import validate_request_data, OrderSchema
+from app_pkg.schemas import order_schema, orders_schema
+from app_pkg.logger_config import app_logger
 
 # Create blueprint
 bp = Blueprint('orders', __name__, url_prefix='/orders')

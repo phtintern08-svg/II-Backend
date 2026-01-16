@@ -6,13 +6,13 @@ from flask import Blueprint, request, jsonify, send_file, current_app
 from datetime import datetime, timedelta
 import os
 
-from app.models import (
+from app_pkg.models import (
     db, Rider, RiderDocument, DeliveryLog, DeliveryPartner, Order,
     Notification, OrderStatusHistory, OTPLog, Customer
 )
-from app.auth import login_required, role_required
-from app.file_upload import validate_and_save_file, delete_file, get_file_path_from_db
-from app.logger_config import app_logger
+from app_pkg.auth import login_required, role_required
+from app_pkg.file_upload import validate_and_save_file, delete_file, get_file_path_from_db
+from app_pkg.logger_config import app_logger
 from flask_limiter import Limiter
 from flask_limiter.util import get_remote_address
 

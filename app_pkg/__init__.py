@@ -14,9 +14,9 @@ import sys
 
 
 from config import Config
-from app.models import db
-from app.schemas import ma
-from app.logger_config import app_logger, access_logger, error_logger
+from app_pkg.models import db
+from app_pkg.schemas import ma
+from app_pkg.logger_config import app_logger, access_logger, error_logger
 
 # Initialize extensions (but don't bind to app yet)
 mail = Mail()
@@ -57,7 +57,7 @@ def create_app(config_class=Config):
     CORS(app, supports_credentials=True)
     
     # Register blueprints
-    from app.routes import auth_routes, orders_routes, vendor_routes, rider_routes, admin_routes, customer_routes, support_routes, health
+    from app_pkg.routes import auth_routes, orders_routes, vendor_routes, rider_routes, admin_routes, customer_routes, support_routes, health
     
     # Register blueprints with /api prefix to keep HTML and Flask separated
     app.register_blueprint(auth_routes.bp, url_prefix="/api")

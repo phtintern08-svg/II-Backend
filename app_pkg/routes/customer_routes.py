@@ -5,10 +5,10 @@ Handles customer-specific endpoints for profile, orders, and addresses
 from flask import Blueprint, request, jsonify
 from datetime import datetime
 
-from app.models import db, Customer, Address, Order, Notification
-from app.auth import login_required, role_required
+from app_pkg.models import db, Customer, Address, Order, Notification
+from app_pkg.auth import login_required, role_required
 from werkzeug.security import check_password_hash, generate_password_hash
-from app.logger_config import app_logger
+from app_pkg.logger_config import app_logger
 
 # Create blueprint
 bp = Blueprint('customer', __name__, url_prefix='/customer')
