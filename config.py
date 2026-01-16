@@ -24,7 +24,7 @@ class Config:
     RIDER_SUBDOMAIN = os.environ.get('RIDER_SUBDOMAIN', 'rider')
     
     # Server Configuration - PRODUCTION ONLY
-    SERVER_NAME = f".{BASE_DOMAIN}"
+    SERVER_COOKIE_DOMAIN = None
     
     # Database Credentials (from environment variables - required in production)
     MYSQL_USER = os.environ.get('DB_USER')
