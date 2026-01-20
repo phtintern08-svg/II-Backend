@@ -18,7 +18,16 @@ class Config:
         raise ValueError("SECRET_KEY environment variable is required")
     
     # Domain Configuration - PRODUCTION ONLY
-    BASE_DOMAIN = os.environ.get('BASE_DOMAIN', 'impromptuindian.com')
+    # BASE_DOMAIN is CRITICAL for cookie-based SSO across subdomains
+    BASE_DOMAIN = os.environ.get('BASE_DOMAIN')
+    
+    if not BASE_DOMAIN:
+        raise ValueError("BASE_DOMAIN is required")
+    
+    BASE_DOMAIN = BASE_DOMAIN.strip()
+    
+    if BASE_DOMAIN.startswith('http') or '/' in BASE_DOMAIN:
+        raise ValueError("BASE_DOMAIN must be a naked domain like impromptuindian.com")
     APP_SUBDOMAIN = os.environ.get('APP_SUBDOMAIN', 'apparels')
     VENDOR_SUBDOMAIN = os.environ.get('VENDOR_SUBDOMAIN', 'vendor')
     RIDER_SUBDOMAIN = os.environ.get('RIDER_SUBDOMAIN', 'rider')

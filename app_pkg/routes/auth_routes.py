@@ -42,12 +42,8 @@ def get_otp_recipient():
 # Helper function for building subdomain URLs
 def build_subdomain_url(subdomain, path=''):
     """Build URL for subdomain"""
-    # Ensure BASE_DOMAIN is a string, not Python code
-    base_domain = str(Config.BASE_DOMAIN).strip()
-    if not base_domain or base_domain.startswith('os.environ'):
-        # Fallback if BASE_DOMAIN is not set correctly
-        base_domain = 'impromptuindian.com'
-        app_logger.warning(f"BASE_DOMAIN not configured correctly, using fallback: {base_domain}")
+    # BASE_DOMAIN is validated in config.py, so it's guaranteed to be a valid naked domain
+    base_domain = Config.BASE_DOMAIN
     
     if Config.ENV == 'production':
         return f"https://{subdomain}.{base_domain}{path}"
