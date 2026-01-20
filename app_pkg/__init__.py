@@ -1,4 +1,4 @@
-from flask import Flask, request, jsonify
+from flask import Flask, request, jsonify, redirect
 from flask_cors import CORS
 from flask_mail import Mail
 from flask_limiter import Limiter
@@ -13,6 +13,7 @@ from app_pkg.logger_config import (
     access_logger,
     error_logger
 )
+from app_pkg.auth import get_token_from_request, verify_token
 
 # Initialize extensions (without app binding)
 mail = Mail()
@@ -143,11 +144,63 @@ def register_request_handlers(app):
     """
 
     @app.before_request
-    def log_request():
-        if request.path.startswith("/api/"):
+    def auth_guard():
+        """
+        Authentication guard for HTML pages
+        - API endpoints handle their own authentication (return 401 JSON)
+        - Public paths (login, static files) are always allowed
+        - Protected HTML pages redirect to /login.html if not authenticated
+        """
+        path = request.path
+        
+        # Log API requests
+        if path.startswith("/api/"):
             access_logger.info(
                 f"{request.remote_addr} - {request.method} {request.path}"
             )
+        
+        # Public paths that don't require authentication
+        PUBLIC_PATHS = (
+            '/login.html',
+            '/css/',
+            '/js/',
+            '/images/',
+            '/favicon.ico',
+            '/api/',  # API endpoints handle their own auth
+        )
+        
+        # Check if path is public
+        is_public = any(path.startswith(public_path) for public_path in PUBLIC_PATHS)
+        
+        if is_public:
+            return None  # Continue to route handler
+        
+        # For non-public HTML pages and root path, check authentication
+        # Only check HTML pages (not API, not static files with extensions)
+        is_html_page = (
+            path.endswith('.html') or 
+            path == '/' or 
+            (not path.startswith('/api/') and not '.' in path.split('/')[-1])
+        )
+        
+        if is_html_page:
+            token = get_token_from_request()
+            
+            if not token:
+                # No token found - redirect to login (NOT to /)
+                return redirect('/login.html', code=302)
+            
+            # Verify token
+            payload = verify_token(token)
+            if not payload:
+                # Invalid or expired token - redirect to login (NOT to /)
+                return redirect('/login.html', code=302)
+            
+            # Token is valid - continue to route handler
+            return None
+        
+        # For all other paths (static files, etc.), allow
+        return None
 
     @app.after_request
     def log_response(response):

@@ -15,7 +15,7 @@ import os
 from datetime import datetime
 
 from app_pkg.models import db, Admin, Customer, Vendor, Rider, Support, OTPLog
-from app_pkg.auth import generate_token, verify_token, login_required
+from app_pkg.auth import generate_token, verify_token, login_required, get_token_from_request
 from app_pkg.validation import validate_request_data, LoginSchema, sanitize_text
 from config import Config
 from app_pkg.logger_config import app_logger, access_logger
@@ -632,24 +632,46 @@ def verify_token_endpoint():
 
 
 @bp.route('/logout', methods=['POST'])
-@login_required
 def logout():
     """
     POST /api/logout
     Logout user by deleting the access_token cookie
+    
+    NOTE: This endpoint does NOT require authentication.
+    Users should be able to logout even with expired tokens.
     """
     try:
-        user_id = request.user_id
-        role = request.role
-        log_auth_event('logout', True, f"user_{user_id}", user_id, role, request.remote_addr)
+        # Try to get user info for logging (optional - don't fail if token is expired)
+        try:
+            token = get_token_from_request()
+            if token:
+                payload = verify_token(token)
+                if payload:
+                    user_id = payload.get('user_id')
+                    role = payload.get('role')
+                    log_auth_event('logout', True, f"user_{user_id}", user_id, role, request.remote_addr)
+        except Exception:
+            # Token might be expired/invalid - that's okay, just log without user info
+            log_auth_event('logout', True, 'unknown', None, None, request.remote_addr)
         
         # Delete the access_token cookie from all subdomains
-        response = jsonify({"message": "Logout successful"})
+        # IMPORTANT: Return JSON only - NEVER redirect from API endpoints
+        response = jsonify({
+            "success": True,
+            "message": "Logged out successfully"
+        })
+        
         response.delete_cookie(
             "access_token",
-            domain=f".{Config.BASE_DOMAIN}"  # .impromptuindian.com
+            domain=f".{Config.BASE_DOMAIN}",  # .impromptuindian.com
+            path="/"
         )
+        
         return response, 200
     except Exception as e:
         app_logger.error(f"Logout error: {e}")
-        return jsonify({"error": "Logout failed"}), 500
+        # Even on error, return JSON (never redirect)
+        return jsonify({
+            "success": False,
+            "error": "Logout failed"
+        }), 500
