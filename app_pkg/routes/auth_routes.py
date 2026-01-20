@@ -58,18 +58,12 @@ def build_subdomain_url(subdomain, path=''):
 def log_auth_event(event_type, success, identifier, user_id=None, role=None, ip_address=None, error=None):
     """Log authentication events"""
     try:
-        log_entry = OTPLog(
-            recipient=identifier,
-            event_type=event_type,
-            success=success,
-            user_id=user_id,
-            role=role,
-            ip_address=ip_address,
-            error_message=error,
-            timestamp=datetime.utcnow()
+        # OTPLog model only supports: recipient, otp_code, type, status, created_at, expires_at
+        # Log auth events to application logger instead of database
+        app_logger.info(
+            f"Auth Event: type={event_type}, success={success}, identifier={identifier}, "
+            f"user_id={user_id}, role={role}, ip={ip_address}, error={error}"
         )
-        db.session.add(log_entry)
-        db.session.commit()
     except Exception as e:
         app_logger.error(f"Failed to log auth event: {e}")
 
