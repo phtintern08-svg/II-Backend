@@ -103,7 +103,8 @@ def authenticate():
     
     try:
         # Safely parse JSON - use silent=True to avoid exceptions on malformed JSON
-        data = request.get_json(silent=True, force=True)
+        # Do NOT use force=True as it can cause issues behind Passenger
+        data = request.get_json(silent=True)
         
         # Handle cases where JSON parsing fails or body is empty
         if data is None:

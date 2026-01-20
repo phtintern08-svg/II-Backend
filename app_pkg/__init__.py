@@ -36,7 +36,12 @@ def create_app(config_class=Config):
     ma.init_app(app)
     mail.init_app(app)
     limiter.init_app(app)
-    csrf.init_app(app)
+    
+    # CSRF is disabled for APIs (WTF_CSRF_ENABLED = False in config)
+    # APIs use JWT tokens in Authorization headers, so CSRF protection is not needed
+    # Only initialize CSRF if explicitly enabled (for future HTML form support if needed)
+    if app.config.get('WTF_CSRF_ENABLED', False):
+        csrf.init_app(app)
 
     # Enable CORS (JWT in headers, not cookies)
     CORS(app, supports_credentials=True)
@@ -62,10 +67,8 @@ def create_app(config_class=Config):
     app.register_blueprint(support_routes.bp, url_prefix="/api")
     app.register_blueprint(health.bp, url_prefix="/api")
 
-    # Exempt all API routes from CSRF
-    for bp in app.blueprints.values():
-        if bp.url_prefix and bp.url_prefix.startswith("/api"):
-            csrf.exempt(bp)
+    # CSRF is disabled globally for APIs (WTF_CSRF_ENABLED = False in config)
+    # No need to exempt blueprints since CSRF is not active
 
     # Register handlers
     register_error_handlers(app)

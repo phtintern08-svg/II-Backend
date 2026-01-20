@@ -119,10 +119,12 @@ class Config:
     SESSION_COOKIE_MAX_AGE = SESSION_TIMEOUT
     
     # CSRF Protection Configuration
-    WTF_CSRF_ENABLED = True
+    # DISABLED for APIs - Using JWT tokens in Authorization headers instead
+    # CSRF is not needed for API endpoints that use JWT authentication
+    WTF_CSRF_ENABLED = False
     WTF_CSRF_TIME_LIMIT = 3600  # 1 hour
     WTF_CSRF_SSL_STRICT = ENV == 'production'  # Only enforce SSL in production
-    WTF_CSRF_CHECK_DEFAULT = True
+    WTF_CSRF_CHECK_DEFAULT = False
     WTF_CSRF_METHODS = ['POST', 'PUT', 'PATCH', 'DELETE']
     
     # Content Security Policy (CSP) Configuration
