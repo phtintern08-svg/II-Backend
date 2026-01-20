@@ -210,8 +210,8 @@ def authenticate():
                     token,
                     domain=f".{Config.BASE_DOMAIN}",  # .impromptuindian.com
                     httponly=True,
-                    secure=(Config.ENV == 'production'),  # HTTPS only in production
-                    samesite="Lax",
+                    secure=True,  # REQUIRED when SameSite=None
+                    samesite="None",  # Allows cross-subdomain POST requests
                     max_age=7 * 24 * 60 * 60  # 7 days
                 )
                 response.headers['Content-Type'] = 'application/json'
@@ -247,8 +247,8 @@ def authenticate():
                         token,
                         domain=f".{Config.BASE_DOMAIN}",  # .impromptuindian.com
                         httponly=True,
-                        secure=(Config.ENV == 'production'),  # HTTPS only in production
-                        samesite="Lax",
+                        secure=True,  # REQUIRED when SameSite=None
+                        samesite="None",  # Allows cross-subdomain POST requests
                         max_age=7 * 24 * 60 * 60  # 7 days
                     )
                     response.headers['Content-Type'] = 'application/json'
@@ -286,8 +286,8 @@ def authenticate():
                         token,
                         domain=f".{Config.BASE_DOMAIN}",  # .impromptuindian.com
                         httponly=True,
-                        secure=(Config.ENV == 'production'),  # HTTPS only in production
-                        samesite="Lax",
+                        secure=True,  # REQUIRED when SameSite=None
+                        samesite="None",  # Allows cross-subdomain POST requests
                         max_age=7 * 24 * 60 * 60  # 7 days
                     )
                     response.headers['Content-Type'] = 'application/json'
@@ -325,8 +325,8 @@ def authenticate():
                         token,
                         domain=f".{Config.BASE_DOMAIN}",  # .impromptuindian.com
                         httponly=True,
-                        secure=(Config.ENV == 'production'),  # HTTPS only in production
-                        samesite="Lax",
+                        secure=True,  # REQUIRED when SameSite=None
+                        samesite="None",  # Allows cross-subdomain POST requests
                         max_age=7 * 24 * 60 * 60  # 7 days
                     )
                     response.headers['Content-Type'] = 'application/json'
@@ -362,8 +362,8 @@ def authenticate():
                         token,
                         domain=f".{Config.BASE_DOMAIN}",  # .impromptuindian.com
                         httponly=True,
-                        secure=(Config.ENV == 'production'),  # HTTPS only in production
-                        samesite="Lax",
+                        secure=True,  # REQUIRED when SameSite=None
+                        samesite="None",  # Allows cross-subdomain POST requests
                         max_age=7 * 24 * 60 * 60  # 7 days
                     )
                     response.headers['Content-Type'] = 'application/json'
@@ -470,8 +470,8 @@ def register():
             token,
             domain=f".{Config.BASE_DOMAIN}",  # .impromptuindian.com
             httponly=True,
-            secure=(Config.ENV == 'production'),  # HTTPS only in production
-            samesite="Lax",
+            secure=True,  # REQUIRED when SameSite=None
+            samesite="None",  # Allows cross-subdomain POST requests
             max_age=7 * 24 * 60 * 60  # 7 days
         )
         response.headers['Content-Type'] = 'application/json'
