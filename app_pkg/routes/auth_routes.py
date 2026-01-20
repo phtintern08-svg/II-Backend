@@ -42,10 +42,17 @@ def get_otp_recipient():
 # Helper function for building subdomain URLs
 def build_subdomain_url(subdomain, path=''):
     """Build URL for subdomain"""
+    # Ensure BASE_DOMAIN is a string, not Python code
+    base_domain = str(Config.BASE_DOMAIN).strip()
+    if not base_domain or base_domain.startswith('os.environ'):
+        # Fallback if BASE_DOMAIN is not set correctly
+        base_domain = 'impromptuindian.com'
+        app_logger.warning(f"BASE_DOMAIN not configured correctly, using fallback: {base_domain}")
+    
     if Config.ENV == 'production':
-        return f"https://{subdomain}.{Config.BASE_DOMAIN}{path}"
+        return f"https://{subdomain}.{base_domain}{path}"
     else:
-        return f"http://{subdomain}.{Config.BASE_DOMAIN}{path}"
+        return f"http://{subdomain}.{base_domain}{path}"
 
 # Helper function for logging auth events
 def log_auth_event(event_type, success, identifier, user_id=None, role=None, ip_address=None, error=None):
