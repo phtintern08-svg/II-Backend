@@ -186,15 +186,23 @@ def register_request_handlers(app):
         if is_html_page:
             token = get_token_from_request()
             
+            # Build absolute login URL (prevents relative path issues when on /admin/home.html, etc.)
+            if app.config.get('ENV') == 'production':
+                login_url = f"https://apparels.{Config.BASE_DOMAIN}/login.html"
+            else:
+                # Development: use request host
+                scheme = 'https' if request.is_secure else 'http'
+                login_url = f"{scheme}://{request.host}/login.html"
+            
             if not token:
-                # No token found - redirect to login (NOT to /)
-                return redirect('/login.html', code=302)
+                # No token found - redirect to login (ABSOLUTE URL to prevent relative path issues)
+                return redirect(login_url, code=302)
             
             # Verify token
             payload = verify_token(token)
             if not payload:
-                # Invalid or expired token - redirect to login (NOT to /)
-                return redirect('/login.html', code=302)
+                # Invalid or expired token - redirect to login (ABSOLUTE URL to prevent relative path issues)
+                return redirect(login_url, code=302)
             
             # Token is valid - continue to route handler
             return None
