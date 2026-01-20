@@ -89,252 +89,261 @@ def authenticate():
             "redirect_url": "url"
         }
     """
+    # Create response helper to ensure JSON Content-Type
+    def json_response(data, status_code=200):
+        """Helper to ensure JSON response with proper headers"""
+        response = jsonify(data)
+        response.headers['Content-Type'] = 'application/json'
+        return response, status_code
+    
     # Log request details in DEBUG mode only
     if current_app.config.get('DEBUG', False):
         app_logger.debug(f"Authenticate request from {request.remote_addr}")
         app_logger.debug(f"Content-Type: {request.content_type}")
-        app_logger.debug(f"Headers: {dict(request.headers)}")
     
     try:
         # Safely parse JSON - use silent=True to avoid exceptions on malformed JSON
-        # This handles empty body, malformed JSON, and missing Content-Type gracefully
-        data = request.get_json(silent=True, force=False)
+        data = request.get_json(silent=True, force=True)
         
         # Handle cases where JSON parsing fails or body is empty
         if data is None:
-            # Check if there's any body content
             if request.content_length and request.content_length > 0:
-                # Body exists but isn't valid JSON
-                if current_app.config.get('DEBUG', False):
-                    try:
-                        body_text = request.get_data(as_text=True)
-                        app_logger.debug(f"Invalid JSON body received: {body_text[:200]}")
-                    except Exception:
-                        pass
-                return jsonify({
+                return json_response({
                     "error": "Invalid JSON format",
                     "message": "Request body must be valid JSON"
-                }), 400
+                }, 400)
             else:
-                # No body at all
-                return jsonify({
+                return json_response({
                     "error": "Missing request body",
                     "message": "Request body is required"
-                }), 400
+                }, 400)
         
-        # Validate that data is a dictionary (not a list or other type)
+        # Validate that data is a dictionary
         if not isinstance(data, dict):
-            return jsonify({
+            return json_response({
                 "error": "Invalid request format",
                 "message": "Request body must be a JSON object"
-            }), 400
+            }, 400)
         
-        # Extract and validate required fields with clear error messages
+        # Extract and validate required fields
         identifier = data.get('identifier')
         password = data.get('password')
         
         # Check for missing required fields
-        missing_fields = []
-        if not identifier:
-            missing_fields.append('identifier')
-        if not password:
-            missing_fields.append('password')
-        
-        if missing_fields:
-            return jsonify({
+        if not identifier or not password:
+            missing = []
+            if not identifier:
+                missing.append('identifier')
+            if not password:
+                missing.append('password')
+            return json_response({
                 "error": "Missing required fields",
-                "message": f"The following fields are required: {', '.join(missing_fields)}",
-                "missing_fields": missing_fields
-            }), 400
+                "message": f"The following fields are required: {', '.join(missing)}",
+                "missing_fields": missing
+            }, 400)
         
-        # Ensure fields are strings and not empty after stripping
-        identifier = str(identifier).strip() if identifier else ""
-        password = str(password) if password else ""
+        # Ensure fields are strings and trim
+        identifier = str(identifier).strip()
+        password = str(password)
         
         if not identifier:
-            return jsonify({
+            return json_response({
                 "error": "Invalid identifier",
                 "message": "Identifier cannot be empty"
-            }), 400
+            }, 400)
         
         if not password:
-            return jsonify({
+            return json_response({
                 "error": "Invalid password",
                 "message": "Password cannot be empty"
-            }), 400
+            }, 400)
         
-        # Validate field lengths (basic validation before schema)
+        # Validate field lengths
         if len(identifier) > 255:
-            return jsonify({
+            return json_response({
                 "error": "Invalid identifier",
                 "message": "Identifier must be 255 characters or less"
-            }), 400
+            }, 400)
         
         if len(password) > 255:
-            return jsonify({
+            return json_response({
                 "error": "Invalid password",
                 "message": "Password must be 255 characters or less"
-            }), 400
+            }, 400)
         
-        # Use schema validation for additional checks
-        validated_data, errors = validate_request_data(LoginSchema, data)
-        if errors:
-            # Format validation errors for better readability
-            error_messages = []
-            for field, field_errors in errors.items():
-                if isinstance(field_errors, list):
-                    error_messages.extend([f"{field}: {err}" for err in field_errors])
-                else:
-                    error_messages.append(f"{field}: {field_errors}")
-            
-            return jsonify({
-                "error": "Validation failed",
-                "message": "One or more fields failed validation",
-                "details": errors,
-                "formatted_errors": error_messages
-            }), 400
+        # Check all user tables to find if email/username exists
+        # Track which table has the user for better error messages
+        user_found = False
+        user_table = None
+        user_obj = None
         
-        # Use validated data (already trimmed and validated)
-        identifier = validated_data['identifier']
-        password = validated_data['password']
-        
-        # 1. Check Admin table (by username only)
+        # 1. Check Admin table (by username only) - impromptuindian_admin.admins
         admin = Admin.query.filter_by(username=identifier).first()
-        if admin and check_password_hash(admin.password_hash, password):
-            token = generate_token(
-                user_id=admin.id,
-                role="admin",
-                username=admin.username
-            )
-            log_auth_event('login', True, identifier, admin.id, 'admin', request.remote_addr)
-            return jsonify({
-                "message": "Login successful",
-                "token": token,
-                "role": "admin",
-                "user_id": admin.id,
-                "username": admin.username,
-                "redirect_url": "/admin/home.html"
-            }), 200
+        if admin:
+            user_found = True
+            user_table = 'admin'
+            user_obj = admin
+            if check_password_hash(admin.password_hash, password):
+                token = generate_token(
+                    user_id=admin.id,
+                    role="admin",
+                    username=admin.username
+                )
+                log_auth_event('login', True, identifier, admin.id, 'admin', request.remote_addr)
+                return json_response({
+                    "message": "Login successful",
+                    "token": token,
+                    "role": "admin",
+                    "user_id": admin.id,
+                    "username": admin.username,
+                    "redirect_url": "/admin/home.html"
+                }, 200)
         
-        # 2. Check Customer table (by email)
-        customer = Customer.query.filter_by(email=identifier).first()
-        if customer and check_password_hash(customer.password_hash, password):
-            token = generate_token(
-                user_id=customer.id,
-                role="customer",
-                username=customer.username,
-                email=customer.email,
-                phone=customer.phone
-            )
-            log_auth_event('login', True, identifier, customer.id, 'customer', request.remote_addr)
-            return jsonify({
-                "message": "Login successful",
-                "token": token,
-                "role": "customer",
-                "user_id": customer.id,
-                "username": customer.username,
-                "email": customer.email,
-                "phone": customer.phone,
-                "redirect_url": "/customer/home.html"
-            }), 200
+        # 2. Check Customer table (by email) - impromptuindian_customer.customers
+        if not user_found:
+            customer = Customer.query.filter_by(email=identifier).first()
+            if customer:
+                user_found = True
+                user_table = 'customer'
+                user_obj = customer
+                if check_password_hash(customer.password_hash, password):
+                    token = generate_token(
+                        user_id=customer.id,
+                        role="customer",
+                        username=customer.username,
+                        email=customer.email,
+                        phone=customer.phone
+                    )
+                    log_auth_event('login', True, identifier, customer.id, 'customer', request.remote_addr)
+                    return json_response({
+                        "message": "Login successful",
+                        "token": token,
+                        "role": "customer",
+                        "user_id": customer.id,
+                        "username": customer.username,
+                        "email": customer.email,
+                        "phone": customer.phone,
+                        "redirect_url": "/customer/home.html"
+                    }, 200)
         
-        # 3. Check Vendor table (by email)
-        vendor = Vendor.query.filter_by(email=identifier).first()
-        if vendor and check_password_hash(vendor.password_hash, password):
-            token = generate_token(
-                user_id=vendor.id,
-                role="vendor",
-                username=vendor.username,
-                email=vendor.email,
-                phone=vendor.phone
-            )
-            log_auth_event('login', True, identifier, vendor.id, 'vendor', request.remote_addr)
-            redirect_url = build_subdomain_url('vendor', '/home.html')
-            return jsonify({
-                "message": "Login successful",
-                "token": token,
-                "role": "vendor",
-                "user_id": vendor.id,
-                "business_name": vendor.business_name,
-                "username": vendor.username,
-                "email": vendor.email,
-                "phone": vendor.phone,
-                "redirect_url": redirect_url
-            }), 200
+        # 3. Check Vendor table (by email) - impromptuindian_vendor.vendors
+        if not user_found:
+            vendor = Vendor.query.filter_by(email=identifier).first()
+            if vendor:
+                user_found = True
+                user_table = 'vendor'
+                user_obj = vendor
+                if check_password_hash(vendor.password_hash, password):
+                    token = generate_token(
+                        user_id=vendor.id,
+                        role="vendor",
+                        username=vendor.username,
+                        email=vendor.email,
+                        phone=vendor.phone
+                    )
+                    log_auth_event('login', True, identifier, vendor.id, 'vendor', request.remote_addr)
+                    redirect_url = build_subdomain_url('vendor', '/home.html')
+                    return json_response({
+                        "message": "Login successful",
+                        "token": token,
+                        "role": "vendor",
+                        "user_id": vendor.id,
+                        "business_name": vendor.business_name,
+                        "username": vendor.username,
+                        "email": vendor.email,
+                        "phone": vendor.phone,
+                        "redirect_url": redirect_url
+                    }, 200)
         
-        # 4. Check Rider table (by email)
-        rider = Rider.query.filter_by(email=identifier).first()
-        if rider and check_password_hash(rider.password_hash, password):
-            token = generate_token(
-                user_id=rider.id,
-                role="rider",
-                username=rider.name,
-                email=rider.email,
-                phone=rider.phone
-            )
-            log_auth_event('login', True, identifier, rider.id, 'rider', request.remote_addr)
-            redirect_url = build_subdomain_url('rider', '/home.html')
-            return jsonify({
-                "message": "Login successful",
-                "token": token,
-                "role": "rider",
-                "user_id": rider.id,
-                "username": rider.name,
-                "email": rider.email,
-                "phone": rider.phone,
-                "verification_status": rider.verification_status,
-                "redirect_url": redirect_url
-            }), 200
+        # 4. Check Rider table (by email) - impromptuindian_rider.riders
+        if not user_found:
+            rider = Rider.query.filter_by(email=identifier).first()
+            if rider:
+                user_found = True
+                user_table = 'rider'
+                user_obj = rider
+                if check_password_hash(rider.password_hash, password):
+                    token = generate_token(
+                        user_id=rider.id,
+                        role="rider",
+                        username=rider.name,
+                        email=rider.email,
+                        phone=rider.phone
+                    )
+                    log_auth_event('login', True, identifier, rider.id, 'rider', request.remote_addr)
+                    redirect_url = build_subdomain_url('rider', '/home.html')
+                    return json_response({
+                        "message": "Login successful",
+                        "token": token,
+                        "role": "rider",
+                        "user_id": rider.id,
+                        "username": rider.name,
+                        "email": rider.email,
+                        "phone": rider.phone,
+                        "verification_status": rider.verification_status,
+                        "redirect_url": redirect_url
+                    }, 200)
         
-        # 5. Check Support table (by email)
-        support = Support.query.filter_by(email=identifier).first()
-        if support and check_password_hash(support.password_hash, password):
-            token = generate_token(
-                user_id=support.id,
-                role="support",
-                username=support.username,
-                email=support.email,
-                phone=support.phone
-            )
-            log_auth_event('login', True, identifier, support.id, 'support', request.remote_addr)
-            return jsonify({
-                "message": "Login successful",
-                "token": token,
-                "role": "support",
-                "user_id": support.id,
-                "username": support.username,
-                "email": support.email,
-                "phone": support.phone,
-                "redirect_url": "/support/home.html"
-            }), 200
+        # 5. Check Support table (by email) - impromptuindian_support.support
+        if not user_found:
+            support = Support.query.filter_by(email=identifier).first()
+            if support:
+                user_found = True
+                user_table = 'support'
+                user_obj = support
+                if check_password_hash(support.password_hash, password):
+                    token = generate_token(
+                        user_id=support.id,
+                        role="support",
+                        username=support.username,
+                        email=support.email,
+                        phone=support.phone
+                    )
+                    log_auth_event('login', True, identifier, support.id, 'support', request.remote_addr)
+                    return json_response({
+                        "message": "Login successful",
+                        "token": token,
+                        "role": "support",
+                        "user_id": support.id,
+                        "username": support.username,
+                        "email": support.email,
+                        "phone": support.phone,
+                        "redirect_url": "/support/home.html"
+                    }, 200)
         
-        # No user found or invalid credentials
-        log_auth_event('login', False, identifier, None, None, request.remote_addr, error="Invalid credentials")
-        return jsonify({
-            "error": "Invalid credentials",
-            "message": "The email/username or password you entered is incorrect"
-        }), 401
+        # Determine error message based on whether user was found
+        if user_found:
+            # Email/username exists but password is wrong
+            log_auth_event('login', False, identifier, user_obj.id if user_obj else None, user_table, request.remote_addr, error="Wrong password")
+            return json_response({
+                "error": "Invalid password",
+                "message": "The entered password is wrong"
+            }, 401)
+        else:
+            # Email/username doesn't exist
+            log_auth_event('login', False, identifier, None, None, request.remote_addr, error="Email/username not found")
+            return json_response({
+                "error": "Invalid email",
+                "message": "The entered email is wrong"
+            }, 401)
         
     except Exception as e:
         # Log full exception details server-side only
         app_logger.exception(f"Authentication error: {e}")
         
-        # In DEBUG mode, include more details
+        # Always return JSON, never HTML
         is_debug = current_app.config.get('DEBUG', False)
         if is_debug:
-            error_response = {
+            return json_response({
                 "error": "Internal server error",
                 "message": "An unexpected error occurred during authentication",
                 "debug_info": str(e)
-            }
+            }, 500)
         else:
-            # Production: generic error message
-            error_response = {
+            return json_response({
                 "error": "Internal server error",
                 "message": "Login failed. Please try again later."
-            }
-        
-        return jsonify(error_response), 500
+            }, 500)
 
 
 @bp.route('/register', methods=['POST'])
