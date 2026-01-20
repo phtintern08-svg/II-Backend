@@ -84,6 +84,23 @@ def create_app(config_class=Config):
     # CSRF is disabled globally for APIs (WTF_CSRF_ENABLED = False in config)
     # No need to exempt blueprints since CSRF is not active
 
+    # Explicit root route handler - redirects to login page
+    @app.route('/')
+    def root_redirect():
+        """Redirect root path to login page"""
+        if app.config.get('ENV') == 'production':
+            return redirect(
+                f"https://apparels.{Config.BASE_DOMAIN}/login.html",
+                code=302
+            )
+        else:
+            # Development: use request host
+            scheme = 'https' if request.is_secure else 'http'
+            return redirect(
+                f"{scheme}://{request.host}/login.html",
+                code=302
+            )
+
     # Register handlers
     register_error_handlers(app)
     register_request_handlers(app)
@@ -161,6 +178,7 @@ def register_request_handlers(app):
         
         # Public paths that don't require authentication
         PUBLIC_PATHS = (
+            '/',
             '/login.html',
             '/css/',
             '/js/',
@@ -175,11 +193,11 @@ def register_request_handlers(app):
         if is_public:
             return None  # Continue to route handler
         
-        # For non-public HTML pages and root path, check authentication
+        # For non-public HTML pages, check authentication
         # Only check HTML pages (not API, not static files with extensions)
+        # Note: '/' is now in PUBLIC_PATHS, so it's handled separately
         is_html_page = (
             path.endswith('.html') or 
-            path == '/' or 
             (not path.startswith('/api/') and not '.' in path.split('/')[-1])
         )
         
