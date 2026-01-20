@@ -89,20 +89,112 @@ def authenticate():
             "redirect_url": "url"
         }
     """
+    # Log request details in DEBUG mode only
+    if current_app.config.get('DEBUG', False):
+        app_logger.debug(f"Authenticate request from {request.remote_addr}")
+        app_logger.debug(f"Content-Type: {request.content_type}")
+        app_logger.debug(f"Headers: {dict(request.headers)}")
+    
     try:
-        # Validate JSON request
-        if not request.is_json:
-            return jsonify({"error": "Content-Type must be application/json"}), 400
+        # Safely parse JSON - use silent=True to avoid exceptions on malformed JSON
+        # This handles empty body, malformed JSON, and missing Content-Type gracefully
+        data = request.get_json(silent=True, force=False)
         
-        data = request.get_json()
-        if not data:
-            return jsonify({"error": "Request body is required"}), 400
+        # Handle cases where JSON parsing fails or body is empty
+        if data is None:
+            # Check if there's any body content
+            if request.content_length and request.content_length > 0:
+                # Body exists but isn't valid JSON
+                if current_app.config.get('DEBUG', False):
+                    try:
+                        body_text = request.get_data(as_text=True)
+                        app_logger.debug(f"Invalid JSON body received: {body_text[:200]}")
+                    except Exception:
+                        pass
+                return jsonify({
+                    "error": "Invalid JSON format",
+                    "message": "Request body must be valid JSON"
+                }), 400
+            else:
+                # No body at all
+                return jsonify({
+                    "error": "Missing request body",
+                    "message": "Request body is required"
+                }), 400
         
-        # Validate input data
+        # Validate that data is a dictionary (not a list or other type)
+        if not isinstance(data, dict):
+            return jsonify({
+                "error": "Invalid request format",
+                "message": "Request body must be a JSON object"
+            }), 400
+        
+        # Extract and validate required fields with clear error messages
+        identifier = data.get('identifier')
+        password = data.get('password')
+        
+        # Check for missing required fields
+        missing_fields = []
+        if not identifier:
+            missing_fields.append('identifier')
+        if not password:
+            missing_fields.append('password')
+        
+        if missing_fields:
+            return jsonify({
+                "error": "Missing required fields",
+                "message": f"The following fields are required: {', '.join(missing_fields)}",
+                "missing_fields": missing_fields
+            }), 400
+        
+        # Ensure fields are strings and not empty after stripping
+        identifier = str(identifier).strip() if identifier else ""
+        password = str(password) if password else ""
+        
+        if not identifier:
+            return jsonify({
+                "error": "Invalid identifier",
+                "message": "Identifier cannot be empty"
+            }), 400
+        
+        if not password:
+            return jsonify({
+                "error": "Invalid password",
+                "message": "Password cannot be empty"
+            }), 400
+        
+        # Validate field lengths (basic validation before schema)
+        if len(identifier) > 255:
+            return jsonify({
+                "error": "Invalid identifier",
+                "message": "Identifier must be 255 characters or less"
+            }), 400
+        
+        if len(password) > 255:
+            return jsonify({
+                "error": "Invalid password",
+                "message": "Password must be 255 characters or less"
+            }), 400
+        
+        # Use schema validation for additional checks
         validated_data, errors = validate_request_data(LoginSchema, data)
         if errors:
-            return jsonify({"error": "Validation failed", "details": errors}), 400
+            # Format validation errors for better readability
+            error_messages = []
+            for field, field_errors in errors.items():
+                if isinstance(field_errors, list):
+                    error_messages.extend([f"{field}: {err}" for err in field_errors])
+                else:
+                    error_messages.append(f"{field}: {field_errors}")
+            
+            return jsonify({
+                "error": "Validation failed",
+                "message": "One or more fields failed validation",
+                "details": errors,
+                "formatted_errors": error_messages
+            }), 400
         
+        # Use validated data (already trimmed and validated)
         identifier = validated_data['identifier']
         password = validated_data['password']
         
@@ -218,11 +310,31 @@ def authenticate():
         
         # No user found or invalid credentials
         log_auth_event('login', False, identifier, None, None, request.remote_addr, error="Invalid credentials")
-        return jsonify({"error": "Invalid credentials"}), 401
+        return jsonify({
+            "error": "Invalid credentials",
+            "message": "The email/username or password you entered is incorrect"
+        }), 401
         
     except Exception as e:
+        # Log full exception details server-side only
         app_logger.exception(f"Authentication error: {e}")
-        return jsonify({"error": "Login failed. Please try again."}), 500
+        
+        # In DEBUG mode, include more details
+        is_debug = current_app.config.get('DEBUG', False)
+        if is_debug:
+            error_response = {
+                "error": "Internal server error",
+                "message": "An unexpected error occurred during authentication",
+                "debug_info": str(e)
+            }
+        else:
+            # Production: generic error message
+            error_response = {
+                "error": "Internal server error",
+                "message": "Login failed. Please try again later."
+            }
+        
+        return jsonify(error_response), 500
 
 
 @bp.route('/register', methods=['POST'])
