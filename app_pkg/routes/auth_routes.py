@@ -191,14 +191,24 @@ def authenticate():
                     username=admin.username
                 )
                 log_auth_event('login', True, identifier, admin.id, 'admin', request.remote_addr)
-                return json_response({
+                response = jsonify({
                     "message": "Login successful",
-                    "token": token,
                     "role": "admin",
                     "user_id": admin.id,
                     "username": admin.username,
                     "redirect_url": "/admin/home.html"
-                }, 200)
+                })
+                response.set_cookie(
+                    "access_token",
+                    token,
+                    domain=f".{Config.BASE_DOMAIN}",  # .impromptuindian.com
+                    httponly=True,
+                    secure=(Config.ENV == 'production'),  # HTTPS only in production
+                    samesite="Lax",
+                    max_age=7 * 24 * 60 * 60  # 7 days
+                )
+                response.headers['Content-Type'] = 'application/json'
+                return response, 200
         
         # 2. Check Customer table (by email) - impromptuindian_customer.customers
         if not user_found:
@@ -216,16 +226,26 @@ def authenticate():
                         phone=customer.phone
                     )
                     log_auth_event('login', True, identifier, customer.id, 'customer', request.remote_addr)
-                    return json_response({
+                    response = jsonify({
                         "message": "Login successful",
-                        "token": token,
                         "role": "customer",
                         "user_id": customer.id,
                         "username": customer.username,
                         "email": customer.email,
                         "phone": customer.phone,
                         "redirect_url": "/customer/home.html"
-                    }, 200)
+                    })
+                    response.set_cookie(
+                        "access_token",
+                        token,
+                        domain=f".{Config.BASE_DOMAIN}",  # .impromptuindian.com
+                        httponly=True,
+                        secure=(Config.ENV == 'production'),  # HTTPS only in production
+                        samesite="Lax",
+                        max_age=7 * 24 * 60 * 60  # 7 days
+                    )
+                    response.headers['Content-Type'] = 'application/json'
+                    return response, 200
         
         # 3. Check Vendor table (by email) - impromptuindian_vendor.vendors
         if not user_found:
@@ -244,9 +264,8 @@ def authenticate():
                     )
                     log_auth_event('login', True, identifier, vendor.id, 'vendor', request.remote_addr)
                     redirect_url = build_subdomain_url('vendor', '/home.html')
-                    return json_response({
+                    response = jsonify({
                         "message": "Login successful",
-                        "token": token,
                         "role": "vendor",
                         "user_id": vendor.id,
                         "business_name": vendor.business_name,
@@ -254,7 +273,18 @@ def authenticate():
                         "email": vendor.email,
                         "phone": vendor.phone,
                         "redirect_url": redirect_url
-                    }, 200)
+                    })
+                    response.set_cookie(
+                        "access_token",
+                        token,
+                        domain=f".{Config.BASE_DOMAIN}",  # .impromptuindian.com
+                        httponly=True,
+                        secure=(Config.ENV == 'production'),  # HTTPS only in production
+                        samesite="Lax",
+                        max_age=7 * 24 * 60 * 60  # 7 days
+                    )
+                    response.headers['Content-Type'] = 'application/json'
+                    return response, 200
         
         # 4. Check Rider table (by email) - impromptuindian_rider.riders
         if not user_found:
@@ -273,9 +303,8 @@ def authenticate():
                     )
                     log_auth_event('login', True, identifier, rider.id, 'rider', request.remote_addr)
                     redirect_url = build_subdomain_url('rider', '/home.html')
-                    return json_response({
+                    response = jsonify({
                         "message": "Login successful",
-                        "token": token,
                         "role": "rider",
                         "user_id": rider.id,
                         "username": rider.name,
@@ -283,7 +312,18 @@ def authenticate():
                         "phone": rider.phone,
                         "verification_status": rider.verification_status,
                         "redirect_url": redirect_url
-                    }, 200)
+                    })
+                    response.set_cookie(
+                        "access_token",
+                        token,
+                        domain=f".{Config.BASE_DOMAIN}",  # .impromptuindian.com
+                        httponly=True,
+                        secure=(Config.ENV == 'production'),  # HTTPS only in production
+                        samesite="Lax",
+                        max_age=7 * 24 * 60 * 60  # 7 days
+                    )
+                    response.headers['Content-Type'] = 'application/json'
+                    return response, 200
         
         # 5. Check Support table (by email) - impromptuindian_support.support
         if not user_found:
@@ -301,16 +341,26 @@ def authenticate():
                         phone=support.phone
                     )
                     log_auth_event('login', True, identifier, support.id, 'support', request.remote_addr)
-                    return json_response({
+                    response = jsonify({
                         "message": "Login successful",
-                        "token": token,
                         "role": "support",
                         "user_id": support.id,
                         "username": support.username,
                         "email": support.email,
                         "phone": support.phone,
                         "redirect_url": "/support/home.html"
-                    }, 200)
+                    })
+                    response.set_cookie(
+                        "access_token",
+                        token,
+                        domain=f".{Config.BASE_DOMAIN}",  # .impromptuindian.com
+                        httponly=True,
+                        secure=(Config.ENV == 'production'),  # HTTPS only in production
+                        samesite="Lax",
+                        max_age=7 * 24 * 60 * 60  # 7 days
+                    )
+                    response.headers['Content-Type'] = 'application/json'
+                    return response, 200
         
         # Determine error message based on whether user was found
         if user_found:
@@ -398,12 +448,27 @@ def register():
         
         log_auth_event('register', True, data['email'], new_customer.id, 'customer', request.remote_addr)
         
-        return jsonify({
+        # Set cookie for automatic login (consistent with login endpoint)
+        response = jsonify({
             "message": "Registration successful",
-            "token": token,
+            "role": "customer",
             "user_id": new_customer.id,
+            "username": new_customer.username,
+            "email": new_customer.email,
+            "phone": new_customer.phone,
             "redirect_url": "/customer/home.html"
-        }), 201
+        })
+        response.set_cookie(
+            "access_token",
+            token,
+            domain=f".{Config.BASE_DOMAIN}",  # .impromptuindian.com
+            httponly=True,
+            secure=(Config.ENV == 'production'),  # HTTPS only in production
+            samesite="Lax",
+            max_age=7 * 24 * 60 * 60  # 7 days
+        )
+        response.headers['Content-Type'] = 'application/json'
+        return response, 201
         
     except Exception as e:
         db.session.rollback()
@@ -542,14 +607,16 @@ def verify_otp():
 def verify_token_endpoint():
     """
     POST /api/verify-token
-    Verify JWT token validity
+    Verify JWT token validity (reads from cookie or Authorization header)
     """
     try:
-        auth_header = request.headers.get('Authorization')
-        if not auth_header or not auth_header.startswith('Bearer '):
-            return jsonify({"error": "Missing or invalid authorization header"}), 401
+        # Get token from cookie (primary) or Authorization header (fallback)
+        from app_pkg.auth import get_token_from_request
+        token = get_token_from_request()
         
-        token = auth_header.split(' ')[1]
+        if not token:
+            return jsonify({"error": "Not authenticated"}), 401
+        
         payload = verify_token(token)
         
         if not payload:
@@ -571,15 +638,20 @@ def verify_token_endpoint():
 def logout():
     """
     POST /api/logout
-    Logout user (client-side token removal)
+    Logout user by deleting the access_token cookie
     """
-    # Since JWT is stateless, logout is handled client-side
-    # This endpoint exists for logging purposes
     try:
         user_id = request.user_id
         role = request.role
         log_auth_event('logout', True, f"user_{user_id}", user_id, role, request.remote_addr)
-        return jsonify({"message": "Logout successful"}), 200
+        
+        # Delete the access_token cookie from all subdomains
+        response = jsonify({"message": "Logout successful"})
+        response.delete_cookie(
+            "access_token",
+            domain=f".{Config.BASE_DOMAIN}"  # .impromptuindian.com
+        )
+        return response, 200
     except Exception as e:
         app_logger.error(f"Logout error: {e}")
         return jsonify({"error": "Logout failed"}), 500

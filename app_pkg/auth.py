@@ -84,30 +84,34 @@ def get_current_user():
 
 def get_token_from_request():
     """
-    Extract JWT token from request headers
+    Extract JWT token from request (cookie or Authorization header)
+    
+    Priority:
+    1. HttpOnly cookie (access_token) - PRIMARY for subdomain SSO
+    2. Authorization header (Bearer token) - Fallback for API clients
+    3. Query parameter (token) - Legacy/JSONP support
     
     Returns:
         str: Token or None
     """
-    # Check Authorization header: Bearer <token>
+    # 1. Check HttpOnly cookie first (PRIMARY for subdomain SSO)
+    token = request.cookies.get('access_token')
+    if token:
+        return token
+    
+    # 2. Check Authorization header (optional fallback for API clients)
     auth_header = request.headers.get('Authorization')
-    if auth_header:
+    if auth_header and auth_header.startswith('Bearer '):
         try:
             token = auth_header.split(' ')[1]  # Extract token from "Bearer <token>"
             return token
         except IndexError:
             pass
     
-    # Fallback: Check for token in request args (for JSONP compatibility)
+    # 3. Fallback: Check for token in request args (for JSONP compatibility)
     token = request.args.get('token')
     if token:
         return token
-    
-    # Fallback: Check for token in JSON body
-    if request.is_json:
-        token = request.json.get('token')
-        if token:
-            return token
     
     return None
 
