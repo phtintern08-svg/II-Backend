@@ -43,8 +43,21 @@ def create_app(config_class=Config):
     if app.config.get('WTF_CSRF_ENABLED', False):
         csrf.init_app(app)
 
-    # Enable CORS (JWT in headers, not cookies)
-    CORS(app, supports_credentials=True)
+    # Enable CORS with explicit origins for cross-subdomain cookie support
+    # When using credentials, must specify exact origins (cannot use *)
+    CORS(
+        app,
+        supports_credentials=True,
+        origins=[
+            "https://apparels.impromptuindian.com",
+            "https://rider.impromptuindian.com",
+            "https://vendor.impromptuindian.com",
+            "https://support.impromptuindian.com",
+            "https://admin.impromptuindian.com",
+            "http://localhost:5000",  # For local development
+            "http://localhost:3000",  # For local frontend development
+        ]
+    )
 
     # Register blueprints
     from app_pkg.routes import (

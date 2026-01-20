@@ -610,11 +610,12 @@ def verify_otp():
         return jsonify({"error": "Failed to verify OTP"}), 500
 
 
-@bp.route('/verify-token', methods=['POST'])
+@bp.route('/verify-token', methods=['GET'])
 def verify_token_endpoint():
     """
-    POST /api/verify-token
+    GET /api/verify-token
     Verify JWT token validity (reads from cookie or Authorization header)
+    Using GET avoids OPTIONS preflight for simpler CORS handling
     """
     try:
         # Get token from cookie (primary) or Authorization header (fallback)
