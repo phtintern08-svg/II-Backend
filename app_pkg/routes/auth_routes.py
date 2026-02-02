@@ -207,9 +207,11 @@ def authenticate():
                 response.headers['Content-Type'] = 'application/json'
                 return response, 200
         
-        # 2. Check Customer table (by email) - impromptuindian_customer.customers
+        # 2. Check Customer table (by email or phone) - impromptuindian_customer.customers
         if not user_found:
-            customer = Customer.query.filter_by(email=identifier).first()
+            customer = Customer.query.filter(
+                (Customer.email == identifier) | (Customer.phone == identifier)
+            ).first()
             if customer:
                 user_found = True
                 user_table = 'customer'
@@ -244,9 +246,11 @@ def authenticate():
                     response.headers['Content-Type'] = 'application/json'
                     return response, 200
         
-        # 3. Check Vendor table (by email) - impromptuindian_vendor.vendors
+        # 3. Check Vendor table (by email or phone) - impromptuindian_vendor.vendors
         if not user_found:
-            vendor = Vendor.query.filter_by(email=identifier).first()
+            vendor = Vendor.query.filter(
+                (Vendor.email == identifier) | (Vendor.phone == identifier)
+            ).first()
             if vendor:
                 user_found = True
                 user_table = 'vendor'
@@ -283,9 +287,11 @@ def authenticate():
                     response.headers['Content-Type'] = 'application/json'
                     return response, 200
         
-        # 4. Check Rider table (by email) - impromptuindian_rider.riders
+        # 4. Check Rider table (by email or phone) - impromptuindian_rider.riders
         if not user_found:
-            rider = Rider.query.filter_by(email=identifier).first()
+            rider = Rider.query.filter(
+                (Rider.email == identifier) | (Rider.phone == identifier)
+            ).first()
             if rider:
                 user_found = True
                 user_table = 'rider'
@@ -322,9 +328,11 @@ def authenticate():
                     response.headers['Content-Type'] = 'application/json'
                     return response, 200
         
-        # 5. Check Support table (by email) - impromptuindian_support.support
+        # 5. Check Support table (by email or phone) - impromptuindian_support.support
         if not user_found:
-            support = Support.query.filter_by(email=identifier).first()
+            support = Support.query.filter(
+                (Support.email == identifier) | (Support.phone == identifier)
+            ).first()
             if support:
                 user_found = True
                 user_table = 'support'
@@ -359,20 +367,20 @@ def authenticate():
                     response.headers['Content-Type'] = 'application/json'
                     return response, 200
         
-        # Determine error message based on whether user was found
+        # Determine error message - use unified message for security (don't reveal which is wrong)
         if user_found:
-            # Email/username exists but password is wrong
+            # Email/phone/username exists but password is wrong
             log_auth_event('login', False, identifier, user_obj.id if user_obj else None, user_table, request.remote_addr, error="Wrong password")
             return json_response({
-                "error": "Invalid password",
-                "message": "The entered password is wrong"
+                "error": "Invalid credentials",
+                "message": "Email or password incorrect"
             }, 401)
         else:
-            # Email/username doesn't exist
-            log_auth_event('login', False, identifier, None, None, request.remote_addr, error="Email/username not found")
+            # Email/phone/username doesn't exist
+            log_auth_event('login', False, identifier, None, None, request.remote_addr, error="Email/phone/username not found")
             return json_response({
-                "error": "Invalid email",
-                "message": "The entered email is wrong"
+                "error": "Invalid credentials",
+                "message": "Email or password incorrect"
             }, 401)
         
     except Exception as e:
