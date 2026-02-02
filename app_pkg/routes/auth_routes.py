@@ -52,16 +52,19 @@ def build_subdomain_url(subdomain, path=''):
 
 # Helper function for logging auth events
 def log_auth_event(event_type, success, identifier, user_id=None, role=None, ip_address=None, error=None):
-    """Log authentication events"""
+    """Log authentication events.
+
+    IMPORTANT: This helper must NEVER raise, especially from within auth flows.
+    """
     try:
-        # OTPLog model only supports: recipient, otp_code, type, status, created_at, expires_at
-        # Log auth events to application logger instead of database
         app_logger.info(
             f"Auth Event: type={event_type}, success={success}, identifier={identifier}, "
             f"user_id={user_id}, role={role}, ip={ip_address}, error={error}"
         )
-    except Exception as e:
-        app_logger.error(f"Failed to log auth event: {e}")
+    except Exception:
+        # Logging failures must be completely ignored to avoid breaking authentication
+        # (e.g., file permission issues, formatter bugs, etc.)
+        pass
 
 
 @bp.route('/authenticate', methods=['POST'])
@@ -169,219 +172,220 @@ def authenticate():
                 "message": "Password must be 255 characters or less"
             }, 400)
         
-        # Check all user tables to find if email/username exists
-        # Track which table has the user for better error messages
-        user_found = False
-        user_table = None
-        user_obj = None
-        
         # 1. Check Admin table (by username only) - impromptuindian_admin.admins
         admin = Admin.query.filter_by(username=identifier).first()
         if admin:
-            user_found = True
-            user_table = 'admin'
-            user_obj = admin
-            if check_password_hash(admin.password_hash, password):
-                token = generate_token(
-                    user_id=admin.id,
-                    role="admin",
-                    username=admin.username
-                )
-                log_auth_event('login', True, identifier, admin.id, 'admin', request.remote_addr)
-                response = jsonify({
-                    "message": "Login successful",
-                    "role": "admin",
-                    "user_id": admin.id,
-                    "username": admin.username,
-                    "redirect_url": "/admin/home.html"
-                })
-                response.set_cookie(
-                    "access_token",
-                    token,
-                    domain=f".{Config.BASE_DOMAIN}",  # .impromptuindian.com
-                    httponly=True,
-                    secure=True,  # REQUIRED when SameSite=None
-                    samesite="None",  # Allows cross-subdomain POST requests
-                    max_age=7 * 24 * 60 * 60  # 7 days
-                )
-                response.headers['Content-Type'] = 'application/json'
-                return response, 200
+            if not check_password_hash(admin.password_hash, password):
+                # Wrong password for existing admin
+                log_auth_event('login', False, identifier, admin.id, 'admin', request.remote_addr, error="Wrong password")
+                return json_response({
+                    "error": "Invalid credentials",
+                    "message": "Email or password incorrect"
+                }, 401)
+
+            token = generate_token(
+                user_id=admin.id,
+                role="admin",
+                username=admin.username
+            )
+            log_auth_event('login', True, identifier, admin.id, 'admin', request.remote_addr)
+            response = jsonify({
+                "message": "Login successful",
+                "role": "admin",
+                "user_id": admin.id,
+                "username": admin.username,
+                "redirect_url": "/admin/home.html"
+            })
+            response.set_cookie(
+                "access_token",
+                token,
+                domain=f".{Config.BASE_DOMAIN}",  # .impromptuindian.com
+                httponly=True,
+                secure=True,  # REQUIRED when SameSite=None
+                samesite="None",  # Allows cross-subdomain POST requests
+                max_age=7 * 24 * 60 * 60  # 7 days
+            )
+            response.headers['Content-Type'] = 'application/json'
+            return response, 200
         
         # 2. Check Customer table (by email or phone) - impromptuindian_customer.customers
-        if not user_found:
-            customer = Customer.query.filter(
-                (Customer.email == identifier) | (Customer.phone == identifier)
-            ).first()
-            if customer:
-                user_found = True
-                user_table = 'customer'
-                user_obj = customer
-                if check_password_hash(customer.password_hash, password):
-                    token = generate_token(
-                        user_id=customer.id,
-                        role="customer",
-                        username=customer.username,
-                        email=customer.email,
-                        phone=customer.phone
-                    )
-                    log_auth_event('login', True, identifier, customer.id, 'customer', request.remote_addr)
-                    response = jsonify({
-                        "message": "Login successful",
-                        "role": "customer",
-                        "user_id": customer.id,
-                        "username": customer.username,
-                        "email": customer.email,
-                        "phone": customer.phone,
-                        "redirect_url": "/customer/home.html"
-                    })
-                    response.set_cookie(
-                        "access_token",
-                        token,
-                        domain=f".{Config.BASE_DOMAIN}",  # .impromptuindian.com
-                        httponly=True,
-                        secure=True,  # REQUIRED when SameSite=None
-                        samesite="None",  # Allows cross-subdomain POST requests
-                        max_age=7 * 24 * 60 * 60  # 7 days
-                    )
-                    response.headers['Content-Type'] = 'application/json'
-                    return response, 200
+        customer = Customer.query.filter(
+            (Customer.email == identifier) | (Customer.phone == identifier)
+        ).first()
+        if customer:
+            if not check_password_hash(customer.password_hash, password):
+                # Wrong password for existing customer
+                log_auth_event('login', False, identifier, customer.id, 'customer', request.remote_addr, error="Wrong password")
+                return json_response({
+                    "error": "Invalid credentials",
+                    "message": "Email or password incorrect"
+                }, 401)
+
+            token = generate_token(
+                user_id=customer.id,
+                role="customer",
+                username=customer.username,
+                email=customer.email,
+                phone=customer.phone
+            )
+            log_auth_event('login', True, identifier, customer.id, 'customer', request.remote_addr)
+            response = jsonify({
+                "message": "Login successful",
+                "role": "customer",
+                "user_id": customer.id,
+                "username": customer.username,
+                "email": customer.email,
+                "phone": customer.phone,
+                "redirect_url": "/customer/home.html"
+            })
+            response.set_cookie(
+                "access_token",
+                token,
+                domain=f".{Config.BASE_DOMAIN}",  # .impromptuindian.com
+                httponly=True,
+                secure=True,  # REQUIRED when SameSite=None
+                samesite="None",  # Allows cross-subdomain POST requests
+                max_age=7 * 24 * 60 * 60  # 7 days
+            )
+            response.headers['Content-Type'] = 'application/json'
+            return response, 200
         
         # 3. Check Vendor table (by email or phone) - impromptuindian_vendor.vendors
-        if not user_found:
-            vendor = Vendor.query.filter(
-                (Vendor.email == identifier) | (Vendor.phone == identifier)
-            ).first()
-            if vendor:
-                user_found = True
-                user_table = 'vendor'
-                user_obj = vendor
-                if check_password_hash(vendor.password_hash, password):
-                    token = generate_token(
-                        user_id=vendor.id,
-                        role="vendor",
-                        username=vendor.username,
-                        email=vendor.email,
-                        phone=vendor.phone
-                    )
-                    log_auth_event('login', True, identifier, vendor.id, 'vendor', request.remote_addr)
-                    redirect_url = build_subdomain_url('vendor', '/home.html')
-                    response = jsonify({
-                        "message": "Login successful",
-                        "role": "vendor",
-                        "user_id": vendor.id,
-                        "business_name": vendor.business_name,
-                        "username": vendor.username,
-                        "email": vendor.email,
-                        "phone": vendor.phone,
-                        "redirect_url": redirect_url
-                    })
-                    response.set_cookie(
-                        "access_token",
-                        token,
-                        domain=f".{Config.BASE_DOMAIN}",  # .impromptuindian.com
-                        httponly=True,
-                        secure=True,  # REQUIRED when SameSite=None
-                        samesite="None",  # Allows cross-subdomain POST requests
-                        max_age=7 * 24 * 60 * 60  # 7 days
-                    )
-                    response.headers['Content-Type'] = 'application/json'
-                    return response, 200
+        vendor = Vendor.query.filter(
+            (Vendor.email == identifier) | (Vendor.phone == identifier)
+        ).first()
+        if vendor:
+            if not check_password_hash(vendor.password_hash, password):
+                # Wrong password for existing vendor
+                log_auth_event('login', False, identifier, vendor.id, 'vendor', request.remote_addr, error="Wrong password")
+                return json_response({
+                    "error": "Invalid credentials",
+                    "message": "Email or password incorrect"
+                }, 401)
+
+            token = generate_token(
+                user_id=vendor.id,
+                role="vendor",
+                username=vendor.username,
+                email=vendor.email,
+                phone=vendor.phone
+            )
+            log_auth_event('login', True, identifier, vendor.id, 'vendor', request.remote_addr)
+            redirect_url = build_subdomain_url('vendor', '/home.html')
+            response = jsonify({
+                "message": "Login successful",
+                "role": "vendor",
+                "user_id": vendor.id,
+                "business_name": vendor.business_name,
+                "username": vendor.username,
+                "email": vendor.email,
+                "phone": vendor.phone,
+                "redirect_url": redirect_url
+            })
+            response.set_cookie(
+                "access_token",
+                token,
+                domain=f".{Config.BASE_DOMAIN}",  # .impromptuindian.com
+                httponly=True,
+                secure=True,  # REQUIRED when SameSite=None
+                samesite="None",  # Allows cross-subdomain POST requests
+                max_age=7 * 24 * 60 * 60  # 7 days
+            )
+            response.headers['Content-Type'] = 'application/json'
+            return response, 200
         
         # 4. Check Rider table (by email or phone) - impromptuindian_rider.riders
-        if not user_found:
-            rider = Rider.query.filter(
-                (Rider.email == identifier) | (Rider.phone == identifier)
-            ).first()
-            if rider:
-                user_found = True
-                user_table = 'rider'
-                user_obj = rider
-                if check_password_hash(rider.password_hash, password):
-                    token = generate_token(
-                        user_id=rider.id,
-                        role="rider",
-                        username=rider.name,
-                        email=rider.email,
-                        phone=rider.phone
-                    )
-                    log_auth_event('login', True, identifier, rider.id, 'rider', request.remote_addr)
-                    redirect_url = build_subdomain_url('rider', '/home.html')
-                    response = jsonify({
-                        "message": "Login successful",
-                        "role": "rider",
-                        "user_id": rider.id,
-                        "username": rider.name,
-                        "email": rider.email,
-                        "phone": rider.phone,
-                        "verification_status": rider.verification_status,
-                        "redirect_url": redirect_url
-                    })
-                    response.set_cookie(
-                        "access_token",
-                        token,
-                        domain=f".{Config.BASE_DOMAIN}",  # .impromptuindian.com
-                        httponly=True,
-                        secure=True,  # REQUIRED when SameSite=None
-                        samesite="None",  # Allows cross-subdomain POST requests
-                        max_age=7 * 24 * 60 * 60  # 7 days
-                    )
-                    response.headers['Content-Type'] = 'application/json'
-                    return response, 200
+        rider = Rider.query.filter(
+            (Rider.email == identifier) | (Rider.phone == identifier)
+        ).first()
+        if rider:
+            if not check_password_hash(rider.password_hash, password):
+                # Wrong password for existing rider
+                log_auth_event('login', False, identifier, rider.id, 'rider', request.remote_addr, error="Wrong password")
+                return json_response({
+                    "error": "Invalid credentials",
+                    "message": "Email or password incorrect"
+                }, 401)
+
+            token = generate_token(
+                user_id=rider.id,
+                role="rider",
+                username=rider.name,
+                email=rider.email,
+                phone=rider.phone
+            )
+            log_auth_event('login', True, identifier, rider.id, 'rider', request.remote_addr)
+            redirect_url = build_subdomain_url('rider', '/home.html')
+            response = jsonify({
+                "message": "Login successful",
+                "role": "rider",
+                "user_id": rider.id,
+                "username": rider.name,
+                "email": rider.email,
+                "phone": rider.phone,
+                "verification_status": rider.verification_status,
+                "redirect_url": redirect_url
+            })
+            response.set_cookie(
+                "access_token",
+                token,
+                domain=f".{Config.BASE_DOMAIN}",  # .impromptuindian.com
+                httponly=True,
+                secure=True,  # REQUIRED when SameSite=None
+                samesite="None",  # Allows cross-subdomain POST requests
+                max_age=7 * 24 * 60 * 60  # 7 days
+            )
+            response.headers['Content-Type'] = 'application/json'
+            return response, 200
         
         # 5. Check Support table (by email or phone) - impromptuindian_support.support
-        if not user_found:
-            support = Support.query.filter(
-                (Support.email == identifier) | (Support.phone == identifier)
-            ).first()
-            if support:
-                user_found = True
-                user_table = 'support'
-                user_obj = support
-                if check_password_hash(support.password_hash, password):
-                    token = generate_token(
-                        user_id=support.id,
-                        role="support",
-                        username=support.username,
-                        email=support.email,
-                        phone=support.phone
-                    )
-                    log_auth_event('login', True, identifier, support.id, 'support', request.remote_addr)
-                    response = jsonify({
-                        "message": "Login successful",
-                        "role": "support",
-                        "user_id": support.id,
-                        "username": support.username,
-                        "email": support.email,
-                        "phone": support.phone,
-                        "redirect_url": "/support/home.html"
-                    })
-                    response.set_cookie(
-                        "access_token",
-                        token,
-                        domain=f".{Config.BASE_DOMAIN}",  # .impromptuindian.com
-                        httponly=True,
-                        secure=True,  # REQUIRED when SameSite=None
-                        samesite="None",  # Allows cross-subdomain POST requests
-                        max_age=7 * 24 * 60 * 60  # 7 days
-                    )
-                    response.headers['Content-Type'] = 'application/json'
-                    return response, 200
+        support = Support.query.filter(
+            (Support.email == identifier) | (Support.phone == identifier)
+        ).first()
+        if support:
+            if not check_password_hash(support.password_hash, password):
+                # Wrong password for existing support user
+                log_auth_event('login', False, identifier, support.id, 'support', request.remote_addr, error="Wrong password")
+                return json_response({
+                    "error": "Invalid credentials",
+                    "message": "Email or password incorrect"
+                }, 401)
+
+            token = generate_token(
+                user_id=support.id,
+                role="support",
+                username=support.username,
+                email=support.email,
+                phone=support.phone
+            )
+            log_auth_event('login', True, identifier, support.id, 'support', request.remote_addr)
+            response = jsonify({
+                "message": "Login successful",
+                "role": "support",
+                "user_id": support.id,
+                "username": support.username,
+                "email": support.email,
+                "phone": support.phone,
+                "redirect_url": "/support/home.html"
+            })
+            response.set_cookie(
+                "access_token",
+                token,
+                domain=f".{Config.BASE_DOMAIN}",  # .impromptuindian.com
+                httponly=True,
+                secure=True,  # REQUIRED when SameSite=None
+                samesite="None",  # Allows cross-subdomain POST requests
+                max_age=7 * 24 * 60 * 60  # 7 days
+            )
+            response.headers['Content-Type'] = 'application/json'
+            return response, 200
         
-        # Determine error message - use unified message for security (don't reveal which is wrong)
-        if user_found:
-            # Email/phone/username exists but password is wrong
-            log_auth_event('login', False, identifier, user_obj.id if user_obj else None, user_table, request.remote_addr, error="Wrong password")
-            return json_response({
-                "error": "Invalid credentials",
-                "message": "Email or password incorrect"
-            }, 401)
-        else:
-            # Email/phone/username doesn't exist
-            log_auth_event('login', False, identifier, None, None, request.remote_addr, error="Email/phone/username not found")
-            return json_response({
-                "error": "Invalid credentials",
-                "message": "Email or password incorrect"
-            }, 401)
+        # If we reached here, identifier was not found in any table
+        log_auth_event('login', False, identifier, None, None, request.remote_addr, error="Email/phone/username not found")
+        return json_response({
+            "error": "Invalid credentials",
+            "message": "Email or password incorrect"
+        }, 401)
         
     except Exception as e:
         # Log full exception details server-side only
