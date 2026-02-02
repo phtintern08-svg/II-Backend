@@ -359,6 +359,7 @@ def authenticate():
                 phone=support.phone
             )
             log_auth_event('login', True, identifier, support.id, 'support', request.remote_addr)
+            redirect_url = build_subdomain_url('support', '/home.html')
             response = jsonify({
                 "message": "Login successful",
                 "role": "support",
@@ -366,7 +367,7 @@ def authenticate():
                 "username": support.username,
                 "email": support.email,
                 "phone": support.phone,
-                "redirect_url": "/support/home.html"
+                "redirect_url": redirect_url
             })
             response.set_cookie(
                 "access_token",

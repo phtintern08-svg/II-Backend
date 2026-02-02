@@ -31,6 +31,7 @@ class Config:
     APP_SUBDOMAIN = os.environ.get('APP_SUBDOMAIN', 'apparels')
     VENDOR_SUBDOMAIN = os.environ.get('VENDOR_SUBDOMAIN', 'vendor')
     RIDER_SUBDOMAIN = os.environ.get('RIDER_SUBDOMAIN', 'rider')
+    SUPPORT_SUBDOMAIN = os.environ.get('SUPPORT_SUBDOMAIN', 'support')
     
     # Server Configuration - PRODUCTION ONLY
     SERVER_COOKIE_DOMAIN = None
