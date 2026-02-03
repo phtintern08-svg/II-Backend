@@ -792,12 +792,13 @@ class EmailVerificationToken(db.Model):
     __tablename__ = 'email_verification_tokens'
     
     id = db.Column(db.Integer, primary_key=True)
-    user_id = db.Column(db.Integer, nullable=False)
-    user_role = db.Column(db.String(20), nullable=False)  # 'customer', 'rider'
+    user_id = db.Column(db.Integer, nullable=True)  # Nullable for pre-registration verification
+    email = db.Column(db.String(255), nullable=True)  # Store email for pre-registration tokens
+    user_role = db.Column(db.String(20), nullable=False)  # 'customer', 'rider', 'vendor'
     token = db.Column(db.String(128), unique=True, nullable=False)
     expires_at = db.Column(db.DateTime, nullable=False)
     used = db.Column(db.Boolean, default=False, nullable=False)
     created_at = db.Column(db.DateTime, default=datetime.utcnow)
     
     def __repr__(self):
-        return f'<EmailVerificationToken {self.token[:8]}... - User {self.user_id}>'
+        return f'<EmailVerificationToken {self.token[:8]}... - User {self.user_id or "pre-reg"} - {self.email}>'

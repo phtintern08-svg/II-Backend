@@ -467,6 +467,20 @@ def register():
         if existing_customer or existing_rider or existing_vendor:
             return jsonify({"error": "Email already registered"}), 400
         
+        # Check if email was verified before registration
+        verified_token = EmailVerificationToken.query.filter_by(
+            email=email,
+            user_role=role,
+            used=True,
+            user_id=None  # Pre-registration token
+        ).filter(
+            EmailVerificationToken.expires_at > datetime.utcnow() - timedelta(hours=24)  # Verified within last 24 hours
+        ).order_by(
+            EmailVerificationToken.created_at.desc()
+        ).first()
+        
+        email_was_verified = verified_token is not None
+        
         user_id = None
         user_role = role
         
@@ -484,7 +498,7 @@ def register():
                 email=email,
                 phone=phone,
                 password_hash=generate_password_hash(data['password']),
-                is_email_verified=False,
+                is_email_verified=email_was_verified,  # Set based on pre-registration verification
                 created_at=datetime.utcnow()
             )
             db.session.add(new_user)
@@ -502,7 +516,7 @@ def register():
                 email=email,
                 phone=phone,
                 password_hash=generate_password_hash(data['password']),
-                is_email_verified=False,
+                is_email_verified=email_was_verified,  # Set based on pre-registration verification
                 created_at=datetime.utcnow()
             )
             db.session.add(new_user)
@@ -523,34 +537,44 @@ def register():
                 phone=phone,
                 password_hash=generate_password_hash(data['password']),
                 business_name=data.get('business_name', '').strip() if data.get('business_name') else None,
-                is_email_verified=False,
+                is_email_verified=email_was_verified,  # Set based on pre-registration verification
                 created_at=datetime.utcnow()
             )
             db.session.add(new_user)
             db.session.flush()  # Get the ID without committing
             user_id = new_user.id
         
-        # Generate verification token
-        token = secrets.token_urlsafe(48)
-        expires_at = datetime.utcnow() + timedelta(minutes=30)
-        
-        verification_record = EmailVerificationToken(
-            user_id=user_id,
-            user_role=user_role,
-            token=token,
-            expires_at=expires_at,
-            used=False
-        )
-        db.session.add(verification_record)
-        db.session.commit()
-        
-        # Send verification email
-        try:
-            send_verification_email(email, token)
-        except Exception as email_err:
-            app_logger.exception(f"Failed to send verification email: {email_err}")
-            # Don't fail registration if email fails - user can request resend later
-            # But log the error
+        # Link pre-registration token to user if email was verified before registration
+        if email_was_verified and verified_token:
+            # Update the pre-registration token to link it to the new user
+            verified_token.user_id = user_id
+            verified_token.used = False  # Reset so it can be used for post-registration flow if needed
+            db.session.commit()
+            app_logger.info(f"Linked pre-registration token to user {user_id} (email: {email}, role: {role})")
+        else:
+            # Generate new verification token (for post-registration verification)
+            token = secrets.token_urlsafe(48)
+            expires_at = datetime.utcnow() + timedelta(minutes=30)
+            
+            verification_record = EmailVerificationToken(
+                user_id=user_id,
+                email=email,  # Also store email for consistency
+                user_role=user_role,
+                token=token,
+                expires_at=expires_at,
+                used=False
+            )
+            db.session.add(verification_record)
+            db.session.commit()
+            
+            # Send verification email only if email wasn't verified before registration
+            if not email_was_verified:
+                try:
+                    send_verification_email(email, token)
+                except Exception as email_err:
+                    app_logger.exception(f"Failed to send verification email: {email_err}")
+                    # Don't fail registration if email fails - user can request resend later
+                    # But log the error
         
         log_auth_event('register', True, email, user_id, user_role, request.remote_addr)
         
@@ -563,6 +587,99 @@ def register():
         db.session.rollback()
         app_logger.exception(f"Registration error: {e}")
         return jsonify({"error": "Registration failed. Please try again."}), 500
+
+
+@bp.route('/send-email-verification-link', methods=['POST'])
+def send_email_verification_link():
+    """
+    POST /api/send-email-verification-link
+    Send email verification link before registration
+    Creates a pre-registration verification token
+    """
+    try:
+        if not request.is_json:
+            return jsonify({"error": "Content-Type must be application/json"}), 400
+        
+        data = request.get_json()
+        email = data.get('email', '').strip().lower()
+        role = data.get('role', '').strip().lower()
+        
+        if not email or not role:
+            return jsonify({"error": "Email and role are required"}), 400
+        
+        # Validate role
+        if role not in ['customer', 'vendor', 'rider']:
+            return jsonify({"error": "Invalid role. Must be 'customer', 'vendor', or 'rider'"}), 400
+        
+        # Validate email format
+        email_pattern = r'^[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,}$'
+        if not re.match(email_pattern, email):
+            return jsonify({"error": "Invalid email address format"}), 400
+        
+        # Check if email already registered
+        existing_customer = Customer.query.filter_by(email=email).first()
+        existing_rider = Rider.query.filter_by(email=email).first()
+        existing_vendor = Vendor.query.filter_by(email=email).first()
+        
+        if existing_customer or existing_rider or existing_vendor:
+            return jsonify({"error": "Email already registered"}), 400
+        
+        # Check if there's already a valid unexpired token for this email+role
+        existing_token = EmailVerificationToken.query.filter_by(
+            email=email,
+            user_role=role,
+            used=False
+        ).filter(
+            EmailVerificationToken.expires_at > datetime.utcnow()
+        ).first()
+        
+        if existing_token:
+            # Resend email with existing token
+            try:
+                send_verification_email(email, existing_token.token)
+                app_logger.info(f"Resent verification email to {email} (role: {role})")
+                return jsonify({
+                    "success": True,
+                    "message": "Verification link sent"
+                }), 200
+            except Exception as email_err:
+                app_logger.exception(f"Failed to resend verification email: {email_err}")
+                return jsonify({"error": "Failed to send verification email"}), 500
+        
+        # Create new verification token (user_id=None for pre-registration)
+        token = secrets.token_urlsafe(48)
+        expires_at = datetime.utcnow() + timedelta(minutes=30)
+        
+        verification_record = EmailVerificationToken(
+            user_id=None,  # None for pre-registration
+            email=email,  # Store email for matching during registration
+            user_role=role,
+            token=token,
+            expires_at=expires_at,
+            used=False
+        )
+        
+        db.session.add(verification_record)
+        db.session.commit()
+        
+        # Send verification email
+        try:
+            send_verification_email(email, token)
+            app_logger.info(f"Sent pre-registration verification email to {email} (role: {role})")
+        except Exception as email_err:
+            db.session.rollback()
+            app_logger.exception(f"Failed to send verification email: {email_err}")
+            return jsonify({"error": "Failed to send verification email"}), 500
+        
+        return jsonify({
+            "success": True,
+            "message": "Verification link sent"
+        }), 200
+        
+    except Exception as e:
+        db.session.rollback()
+        app_logger.exception(f"Error sending email verification link: {e}")
+        return jsonify({"error": "Failed to send verification link"}), 500
 
 
 @bp.route('/send-otp', methods=['POST'])
@@ -748,7 +865,20 @@ def verify_email():
         if record.expires_at < datetime.utcnow():
             return jsonify({"error": "Invalid or expired link"}), 400
         
-        # Mark user email as verified
+        # Handle pre-registration verification (user_id is None)
+        if record.user_id is None:
+            # Pre-registration token - just mark as used
+            # The email will be verified during registration
+            record.used = True
+            db.session.commit()
+            app_logger.info(f"Pre-registration email verified: {record.email} (role: {record.user_role})")
+            return jsonify({
+                "success": True,
+                "message": "Email verified successfully. You can now complete your registration.",
+                "pre_registration": True
+            }), 200
+        
+        # Handle post-registration verification (user_id exists)
         if record.user_role == 'customer':
             user = Customer.query.get(record.user_id)
         elif record.user_role == 'rider':
