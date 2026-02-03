@@ -552,8 +552,9 @@ def register():
         # Link pre-registration token to user if email was verified before registration
         if email_was_verified and verified_token:
             # Update the pre-registration token to link it to the new user
+            # ✅ CRITICAL: Do NOT reset used = False. Token is a one-way fuse - once used, never reset.
             verified_token.user_id = user_id
-            verified_token.used = False  # Reset so it can be used for post-registration flow if needed
+            # verified_token.used stays True (it was already set to True when user clicked the link)
             db.session.commit()
             app_logger.info(f"Linked pre-registration token to user {user_id} (email: {email}, role: {role})")
         else:
@@ -583,10 +584,17 @@ def register():
         
         log_auth_event('register', True, email, user_id, user_role, request.remote_addr)
         
-        return jsonify({
-            "success": True,
-            "message": "Verification link sent to your email"
-        }), 201
+        # Return appropriate message based on whether email was pre-verified
+        if email_was_verified:
+            return jsonify({
+                "success": True,
+                "message": "Account created successfully. Your email was already verified."
+            }), 201
+        else:
+            return jsonify({
+                "success": True,
+                "message": "Verification link sent to your email"
+            }), 201
         
     except Exception as e:
         db.session.rollback()
