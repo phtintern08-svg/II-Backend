@@ -467,19 +467,24 @@ def register():
         if existing_customer or existing_rider or existing_vendor:
             return jsonify({"error": "Email already registered"}), 400
         
-        # Check if email was verified before registration
+        # ✅ SECURITY CHECK: Verify that email was actually verified via link click
+        # This is the ONLY way to ensure email ownership
         verified_token = EmailVerificationToken.query.filter_by(
             email=email,
             user_role=role,
-            used=True,
-            user_id=None  # Pre-registration token
+            used=True  # Token must be used (link was clicked)
         ).filter(
-            EmailVerificationToken.expires_at > datetime.utcnow() - timedelta(hours=24)  # Verified within last 24 hours
+            EmailVerificationToken.expires_at > datetime.utcnow()  # Token must not be expired
         ).order_by(
             EmailVerificationToken.created_at.desc()
         ).first()
         
-        email_was_verified = verified_token is not None
+        if not verified_token:
+            return jsonify({
+                "error": "Please verify your email before creating an account. Click the verification link sent to your email."
+            }), 403
+        
+        email_was_verified = True
         
         user_id = None
         user_role = role
