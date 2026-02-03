@@ -304,6 +304,16 @@ def send_verification_email(to_email, token):
         to_email: Recipient email address
         token: Verification token
     """
+    # Log SMTP configuration for debugging (Passenger .env loading verification)
+    from flask import current_app
+    from config import Config
+    try:
+        current_app.logger.info(
+            f"SMTP CHECK → HOST={Config.SMTP_HOST}, PORT={Config.SMTP_PORT}, USER={Config.SMTP_USER}"
+        )
+    except:
+        pass  # Don't fail if logging fails
+    
     try:
         msg = EmailMessage()
         msg["Subject"] = "Verify your Impromptu Indian account"

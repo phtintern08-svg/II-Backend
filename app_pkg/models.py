@@ -793,7 +793,7 @@ class EmailVerificationToken(db.Model):
     
     id = db.Column(db.Integer, primary_key=True)
     user_id = db.Column(db.Integer, nullable=True)  # Nullable for pre-registration verification
-    email = db.Column(db.String(255), nullable=True)  # Store email for pre-registration tokens
+    email = db.Column(db.String(120), nullable=False)  # Store email for pre-registration tokens (required)
     user_role = db.Column(db.String(20), nullable=False)  # 'customer', 'rider', 'vendor'
     token = db.Column(db.String(128), unique=True, nullable=False)
     expires_at = db.Column(db.DateTime, nullable=False)

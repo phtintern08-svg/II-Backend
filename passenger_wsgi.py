@@ -2,8 +2,15 @@ import os
 import traceback
 import importlib.util
 
+# ✅ Load .env file explicitly (Passenger doesn't load it automatically)
+from dotenv import load_dotenv
+
 # backend/ directory (this is the project root)
 PROJECT_ROOT = os.path.dirname(__file__)
+
+# ✅ Load .env file explicitly (Passenger-safe)
+ENV_PATH = os.path.join(PROJECT_ROOT, ".env")
+load_dotenv(ENV_PATH)
 
 # app.py lives directly inside backend/
 APP_FILE = os.path.join(PROJECT_ROOT, "app.py")
