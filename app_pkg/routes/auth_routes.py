@@ -880,15 +880,17 @@ def verify_email():
         
         # Handle pre-registration verification (user_id is None)
         if record.user_id is None:
-            # Pre-registration token - just mark as used
-            # The email will be verified during registration
+            # Pre-registration token - ONLY mark as used (this is the verification)
+            # Do NOT create user, do NOT auto-login, do NOT set any other flags
             record.used = True
             db.session.commit()
             app_logger.info(f"Pre-registration email verified: {record.email} (role: {record.user_role})")
             return jsonify({
                 "success": True,
                 "message": "Email verified successfully. You can now complete your registration.",
-                "pre_registration": True
+                "pre_registration": True,
+                "email": record.email,  # Return email for frontend (backend-driven)
+                "role": record.user_role  # Return role for frontend (backend-driven)
             }), 200
         
         # Handle post-registration verification (user_id exists)
