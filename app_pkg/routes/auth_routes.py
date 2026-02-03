@@ -2,7 +2,7 @@
 Authentication Routes Blueprint
 Handles login, registration, OTP, and authentication-related endpoints
 """
-from flask import Blueprint, request, jsonify, send_from_directory, current_app
+from flask import Blueprint, request, jsonify, send_from_directory, current_app, session
 from werkzeug.security import check_password_hash, generate_password_hash
 from flask_mail import Message
 from flask_limiter import Limiter
@@ -884,6 +884,13 @@ def verify_email():
             # Do NOT create user, do NOT auto-login, do NOT set any other flags
             record.used = True
             db.session.commit()
+            
+            # ✅ Store verification in server-side session (refresh-proof)
+            session['email_verified'] = True
+            session['verified_email'] = record.email
+            session['verified_role'] = record.user_role
+            session.permanent = True  # Make session persistent
+            
             app_logger.info(f"Pre-registration email verified: {record.email} (role: {record.user_role})")
             return jsonify({
                 "success": True,
@@ -918,6 +925,28 @@ def verify_email():
         db.session.rollback()
         app_logger.exception(f"Email verification error: {e}")
         return jsonify({"error": "Verification failed. Please try again."}), 500
+
+
+@bp.route('/email-verification-status', methods=['GET'])
+def email_verification_status():
+    """
+    GET /api/email-verification-status
+    Check if email was verified in current session (for pre-registration)
+    Returns verification status from server-side session (refresh-proof)
+    """
+    try:
+        return jsonify({
+            "verified": session.get('email_verified', False),
+            "email": session.get('verified_email'),
+            "role": session.get('verified_role')
+        }), 200
+    except Exception as e:
+        app_logger.exception(f"Error checking email verification status: {e}")
+        return jsonify({
+            "verified": False,
+            "email": None,
+            "role": None
+        }), 200
 
 
 @bp.route('/logout', methods=['POST'])
