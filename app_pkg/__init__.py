@@ -180,6 +180,8 @@ def register_request_handlers(app):
         PUBLIC_PATHS = (
             '/',
             '/login.html',
+            '/register.html',
+            '/verify-email.html',
             '/css/',
             '/js/',
             '/images/',

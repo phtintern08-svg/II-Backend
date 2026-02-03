@@ -178,6 +178,13 @@ class Config:
     MSG91_ROUTE = '4'
     MSG91_DLT_TE_ID = ''
     
+    # SMTP Configuration for Email Verification
+    SMTP_HOST = os.getenv("SMTP_HOST")
+    SMTP_PORT = int(os.getenv("SMTP_PORT")) if os.getenv("SMTP_PORT") else None
+    SMTP_USER = os.getenv("SMTP_USER")
+    SMTP_PASS = os.getenv("SMTP_PASS")
+    APP_BASE_URL = os.getenv("APP_BASE_URL")
+    
     # Production Security Settings
     if ENV == 'production':
         # Force HTTPS

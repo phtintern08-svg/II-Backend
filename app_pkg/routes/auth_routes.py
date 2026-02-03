@@ -12,10 +12,11 @@ import random
 import time
 import threading
 import os
-from datetime import datetime
+from datetime import datetime, timedelta
 
-from app_pkg.models import db, Admin, Customer, Vendor, Rider, Support, OTPLog
-from app_pkg.auth import generate_token, verify_token, login_required, get_token_from_request
+from app_pkg.models import db, Admin, Customer, Vendor, Rider, Support, OTPLog, EmailVerificationToken
+from app_pkg.auth import generate_token, verify_token, login_required, get_token_from_request, send_verification_email
+import secrets
 from app_pkg.validation import validate_request_data, LoginSchema, sanitize_text
 from config import Config
 from app_pkg.logger_config import app_logger, access_logger
@@ -220,6 +221,13 @@ def authenticate():
                     "error": "Invalid credentials",
                     "message": "Email or password incorrect"
                 }, 401)
+            
+            # Check email verification
+            if not customer.is_email_verified:
+                return json_response({
+                    "error": "Email not verified",
+                    "message": "Please verify your email before logging in"
+                }, 403)
 
             token = generate_token(
                 user_id=customer.id,
@@ -262,6 +270,13 @@ def authenticate():
                     "error": "Invalid credentials",
                     "message": "Email or password incorrect"
                 }, 401)
+            
+            # Check email verification
+            if not vendor.is_email_verified:
+                return json_response({
+                    "error": "Email not verified",
+                    "message": "Please verify your email before logging in"
+                }, 403)
 
             token = generate_token(
                 user_id=vendor.id,
@@ -306,6 +321,13 @@ def authenticate():
                     "error": "Invalid credentials",
                     "message": "Email or password incorrect"
                 }, 401)
+            
+            # Check email verification
+            if not rider.is_email_verified:
+                return json_response({
+                    "error": "Email not verified",
+                    "message": "Please verify your email before logging in"
+                }, 403)
 
             token = generate_token(
                 user_id=rider.id,
@@ -411,74 +433,131 @@ def authenticate():
 def register():
     """
     POST /api/register
-    Register a new customer account
+    Register a new customer, rider, or vendor account
+    Creates user and sends email verification link
     """
     try:
         if not request.is_json:
             return jsonify({"error": "Content-Type must be application/json"}), 400
         
         data = request.get_json()
+        role = data.get('role', 'customer')  # Default to customer
         
-        # Validate required fields
-        required_fields = ['username', 'email', 'phone', 'password']
+        # Validate required fields based on role
+        if role == 'customer':
+            required_fields = ['username', 'email', 'password']
+        elif role == 'rider':
+            required_fields = ['username', 'email', 'phone', 'password']
+        elif role == 'vendor':
+            required_fields = ['username', 'email', 'password']
+        else:
+            return jsonify({"error": f"Invalid role: {role}. Must be 'customer', 'rider', or 'vendor'"}), 400
+        
         for field in required_fields:
             if not data.get(field):
                 return jsonify({"error": f"Missing required field: {field}"}), 400
         
-        # Check if email already exists
-        existing_customer = Customer.query.filter_by(email=data['email']).first()
-        if existing_customer:
+        email = data['email'].lower().strip()
+        
+        # Check if email already exists (for all user types)
+        existing_customer = Customer.query.filter_by(email=email).first()
+        existing_rider = Rider.query.filter_by(email=email).first()
+        existing_vendor = Vendor.query.filter_by(email=email).first()
+        
+        if existing_customer or existing_rider or existing_vendor:
             return jsonify({"error": "Email already registered"}), 400
         
-        # Check if phone already exists
-        existing_phone = Customer.query.filter_by(phone=data['phone']).first()
-        if existing_phone:
-            return jsonify({"error": "Phone number already registered"}), 400
+        user_id = None
+        user_role = role
         
-        # Create new customer
-        new_customer = Customer(
-            username=sanitize_text(data['username']),
-            email=data['email'].lower().strip(),
-            phone=data['phone'].strip(),
-            password_hash=generate_password_hash(data['password']),
-            created_at=datetime.utcnow()
+        # Create user based on role
+        if role == 'customer':
+            # Check if phone already exists (if provided)
+            phone = data.get('phone', '').strip() if data.get('phone') else None
+            if phone:
+                existing_phone = Customer.query.filter_by(phone=phone).first()
+                if existing_phone:
+                    return jsonify({"error": "Phone number already registered"}), 400
+            
+            new_user = Customer(
+                username=sanitize_text(data['username']),
+                email=email,
+                phone=phone,
+                password_hash=generate_password_hash(data['password']),
+                is_email_verified=False,
+                created_at=datetime.utcnow()
+            )
+            db.session.add(new_user)
+            db.session.flush()  # Get the ID without committing
+            user_id = new_user.id
+            
+        elif role == 'rider':
+            phone = data['phone'].strip()
+            existing_phone = Rider.query.filter_by(phone=phone).first()
+            if existing_phone:
+                return jsonify({"error": "Phone number already registered"}), 400
+            
+            new_user = Rider(
+                name=sanitize_text(data['username']),
+                email=email,
+                phone=phone,
+                password_hash=generate_password_hash(data['password']),
+                is_email_verified=False,
+                created_at=datetime.utcnow()
+            )
+            db.session.add(new_user)
+            db.session.flush()  # Get the ID without committing
+            user_id = new_user.id
+            
+        elif role == 'vendor':
+            # Check if phone already exists (if provided)
+            phone = data.get('phone', '').strip() if data.get('phone') else None
+            if phone:
+                existing_phone = Vendor.query.filter_by(phone=phone).first()
+                if existing_phone:
+                    return jsonify({"error": "Phone number already registered"}), 400
+            
+            new_user = Vendor(
+                username=sanitize_text(data['username']),
+                email=email,
+                phone=phone,
+                password_hash=generate_password_hash(data['password']),
+                business_name=data.get('business_name', '').strip() if data.get('business_name') else None,
+                is_email_verified=False,
+                created_at=datetime.utcnow()
+            )
+            db.session.add(new_user)
+            db.session.flush()  # Get the ID without committing
+            user_id = new_user.id
+        
+        # Generate verification token
+        token = secrets.token_urlsafe(48)
+        expires_at = datetime.utcnow() + timedelta(minutes=30)
+        
+        verification_record = EmailVerificationToken(
+            user_id=user_id,
+            user_role=user_role,
+            token=token,
+            expires_at=expires_at,
+            used=False
         )
-        
-        db.session.add(new_customer)
+        db.session.add(verification_record)
         db.session.commit()
         
-        # Generate token
-        token = generate_token(
-            user_id=new_customer.id,
-            role="customer",
-            username=new_customer.username,
-            email=new_customer.email,
-            phone=new_customer.phone
-        )
+        # Send verification email
+        try:
+            send_verification_email(email, token)
+        except Exception as email_err:
+            app_logger.exception(f"Failed to send verification email: {email_err}")
+            # Don't fail registration if email fails - user can request resend later
+            # But log the error
         
-        log_auth_event('register', True, data['email'], new_customer.id, 'customer', request.remote_addr)
+        log_auth_event('register', True, email, user_id, user_role, request.remote_addr)
         
-        # Set cookie for automatic login (consistent with login endpoint)
-        response = jsonify({
-            "message": "Registration successful",
-            "role": "customer",
-            "user_id": new_customer.id,
-            "username": new_customer.username,
-            "email": new_customer.email,
-            "phone": new_customer.phone,
-            "redirect_url": "/customer/home.html"
-        })
-        response.set_cookie(
-            "access_token",
-            token,
-            domain=f".{Config.BASE_DOMAIN}",  # .impromptuindian.com
-            httponly=True,
-            secure=True,  # REQUIRED when SameSite=None
-            samesite="None",  # Allows cross-subdomain POST requests
-            max_age=7 * 24 * 60 * 60  # 7 days
-        )
-        response.headers['Content-Type'] = 'application/json'
-        return response, 201
+        return jsonify({
+            "success": True,
+            "message": "Verification link sent to your email"
+        }), 201
         
     except Exception as e:
         db.session.rollback()
@@ -642,6 +721,58 @@ def verify_token_endpoint():
     except Exception as e:
         app_logger.error(f"Token verification error: {e}")
         return jsonify({"error": "Token verification failed"}), 401
+
+
+@bp.route('/verify-email', methods=['GET'])
+def verify_email():
+    """
+    GET /api/verify-email?token=<token>
+    Verify user email using token from verification link
+    """
+    try:
+        token = request.args.get('token')
+        
+        if not token:
+            return jsonify({"error": "Token is required"}), 400
+        
+        # Find verification record
+        record = EmailVerificationToken.query.filter_by(
+            token=token,
+            used=False
+        ).first()
+        
+        if not record:
+            return jsonify({"error": "Invalid or expired link"}), 400
+        
+        # Check expiration
+        if record.expires_at < datetime.utcnow():
+            return jsonify({"error": "Invalid or expired link"}), 400
+        
+        # Mark user email as verified
+        if record.user_role == 'customer':
+            user = Customer.query.get(record.user_id)
+        elif record.user_role == 'rider':
+            user = Rider.query.get(record.user_id)
+        elif record.user_role == 'vendor':
+            user = Vendor.query.get(record.user_id)
+        else:
+            return jsonify({"error": "Invalid user role"}), 400
+        
+        if not user:
+            return jsonify({"error": "User not found"}), 404
+        
+        user.is_email_verified = True
+        record.used = True
+        db.session.commit()
+        
+        log_auth_event('email_verified', True, user.email, user.id, record.user_role, request.remote_addr)
+        
+        return jsonify({"success": True, "message": "Email verified successfully"}), 200
+        
+    except Exception as e:
+        db.session.rollback()
+        app_logger.exception(f"Email verification error: {e}")
+        return jsonify({"error": "Verification failed. Please try again."}), 500
 
 
 @bp.route('/logout', methods=['POST'])

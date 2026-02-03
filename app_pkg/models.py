@@ -26,6 +26,7 @@ class Customer(db.Model):
     password_hash = db.Column(db.String(255), nullable=False)
     bio = db.Column(db.Text)
     avatar_url = db.Column(db.String(255))
+    is_email_verified = db.Column(db.Boolean, default=False, nullable=False)
     created_at = db.Column(db.DateTime, default=datetime.utcnow)
 
     # Relationships
@@ -395,6 +396,7 @@ class Rider(db.Model):
     email = db.Column(db.String(120), unique=True, nullable=False)
     phone = db.Column(db.String(20), unique=True, nullable=False)
     password_hash = db.Column(db.String(255), nullable=False)
+    is_email_verified = db.Column(db.Boolean, default=False, nullable=False)
     
     # Vehicle Information
     vehicle_type = db.Column(db.String(50))  # 'bike', 'scooter', 'bicycle', 'car'
@@ -784,3 +786,18 @@ class Payment(db.Model):
     def __repr__(self):
         return f'<Payment {self.transaction_id} - ₹{self.amount}>'
 
+class EmailVerificationToken(db.Model):
+    """Email verification tokens for user registration"""
+    __bind_key__ = 'admin'  # Store in admin database
+    __tablename__ = 'email_verification_tokens'
+    
+    id = db.Column(db.Integer, primary_key=True)
+    user_id = db.Column(db.Integer, nullable=False)
+    user_role = db.Column(db.String(20), nullable=False)  # 'customer', 'rider'
+    token = db.Column(db.String(128), unique=True, nullable=False)
+    expires_at = db.Column(db.DateTime, nullable=False)
+    used = db.Column(db.Boolean, default=False, nullable=False)
+    created_at = db.Column(db.DateTime, default=datetime.utcnow)
+    
+    def __repr__(self):
+        return f'<EmailVerificationToken {self.token[:8]}... - User {self.user_id}>'

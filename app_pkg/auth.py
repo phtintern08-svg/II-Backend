@@ -3,10 +3,15 @@ Authentication and Authorization Utilities
 Provides JWT token generation, verification, and decorators for route protection
 """
 import jwt
+import smtplib
+import ssl
+import secrets
 from functools import wraps
 from flask import request, jsonify, current_app
 from datetime import datetime, timedelta
+from email.message import EmailMessage
 from app_pkg.models import Admin, Customer, Vendor, Rider
+from config import Config
 
 
 def generate_token(user_id, role, username=None, email=None, phone=None):
@@ -289,4 +294,44 @@ def verify_user_exists(user_id, role):
         return user is not None
     except Exception:
         return False
+
+
+def send_verification_email(to_email, token):
+    """
+    Send email verification link to user
+    
+    Args:
+        to_email: Recipient email address
+        token: Verification token
+    """
+    try:
+        msg = EmailMessage()
+        msg["Subject"] = "Verify your Impromptu Indian account"
+        msg["From"] = Config.SMTP_USER
+        msg["To"] = to_email
+
+        link = f"{Config.APP_BASE_URL}/verify-email.html?token={token}"
+
+        msg.set_content(
+            f"""Welcome to Impromptu Indian 👋
+
+Please verify your email by clicking the link below:
+
+{link}
+
+This link expires in 30 minutes.
+
+If you didn't register, ignore this email.
+"""
+        )
+
+        context = ssl.create_default_context()
+        with smtplib.SMTP_SSL(Config.SMTP_HOST, Config.SMTP_PORT, context=context) as server:
+            server.login(Config.SMTP_USER, Config.SMTP_PASS)
+            server.send_message(msg)
+    except Exception as e:
+        # Log error but don't raise - registration should still succeed
+        from app_pkg.logger_config import app_logger
+        app_logger.exception(f"Failed to send verification email to {to_email}: {e}")
+        raise  # Re-raise to handle in calling function
 
