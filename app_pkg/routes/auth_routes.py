@@ -880,24 +880,21 @@ def verify_email():
         
         # Handle pre-registration verification (user_id is None)
         if record.user_id is None:
-            # Pre-registration token - ONLY mark as used (this is the verification)
-            # Do NOT create user, do NOT auto-login, do NOT set any other flags
+            # ✅ PRE-REGISTRATION VERIFICATION - DB is the single source of truth
+            # Mark token as used in database (this is the verification)
             record.used = True
-            db.session.commit()
+            db.session.commit()  # CRITICAL: Commit immediately
             
-            # ✅ Store verification in server-side session (refresh-proof)
-            session['email_verified'] = True
-            session['verified_email'] = record.email
-            session['verified_role'] = record.user_role
-            session.permanent = True  # Make session persistent
+            app_logger.info(
+                f"Email verified via magic link: {record.email} ({record.user_role})"
+            )
             
-            app_logger.info(f"Pre-registration email verified: {record.email} (role: {record.user_role})")
+            # Return JSON immediately - frontend will check DB status
             return jsonify({
                 "success": True,
-                "message": "Email verified successfully. You can now complete your registration.",
                 "pre_registration": True,
-                "email": record.email,  # Return email for frontend (backend-driven)
-                "role": record.user_role  # Return role for frontend (backend-driven)
+                "email": record.email,
+                "role": record.user_role
             }), 200
         
         # Handle post-registration verification (user_id exists)
@@ -927,25 +924,40 @@ def verify_email():
         return jsonify({"error": "Verification failed. Please try again."}), 500
 
 
-@bp.route('/email-verification-status', methods=['GET'])
-def email_verification_status():
+@bp.route('/email-verification-status-by-email', methods=['GET'])
+def email_verification_status_by_email():
     """
-    GET /api/email-verification-status
-    Check if email was verified in current session (for pre-registration)
-    Returns verification status from server-side session (refresh-proof)
+    GET /api/email-verification-status-by-email
+    Check if email was verified by querying database directly (DB is single source of truth)
+    Query parameters: email, role
     """
     try:
+        email = request.args.get('email', '').strip().lower()
+        role = request.args.get('role', '').strip().lower()
+        
+        if not email or not role:
+            return jsonify({"verified": False, "error": "Email and role are required"}), 400
+        
+        # Query database directly - DB is the single source of truth
+        record = EmailVerificationToken.query.filter_by(
+            email=email,
+            user_role=role,
+            used=True  # Token must be used (link was clicked)
+        ).order_by(
+            EmailVerificationToken.created_at.desc()
+        ).first()
+        
+        verified = bool(record)
+        
+        app_logger.debug(f"Email verification check: {email} ({role}) = {verified}")
+        
         return jsonify({
-            "verified": session.get('email_verified', False),
-            "email": session.get('verified_email'),
-            "role": session.get('verified_role')
+            "verified": verified
         }), 200
     except Exception as e:
         app_logger.exception(f"Error checking email verification status: {e}")
         return jsonify({
-            "verified": False,
-            "email": None,
-            "role": None
+            "verified": False
         }), 200
 
 
