@@ -939,10 +939,13 @@ def email_verification_status_by_email():
             return jsonify({"verified": False, "error": "Email and role are required"}), 400
         
         # Query database directly - DB is the single source of truth
+        # Also check that token isn't expired (security hardening)
         record = EmailVerificationToken.query.filter_by(
             email=email,
             user_role=role,
             used=True  # Token must be used (link was clicked)
+        ).filter(
+            EmailVerificationToken.expires_at > datetime.utcnow()  # Token must not be expired
         ).order_by(
             EmailVerificationToken.created_at.desc()
         ).first()
