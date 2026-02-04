@@ -469,12 +469,12 @@ def register():
         
         # ✅ SECURITY CHECK: Verify that email was actually verified via link click
         # This is the ONLY way to ensure email ownership
+        # IMPORTANT: Once token is used=True, expiration no longer matters
+        # Expiration only applies BEFORE click - after click, it's a permanent verification record
         verified_token = EmailVerificationToken.query.filter_by(
             email=email,
             user_role=role,
-            used=True  # Token must be used (link was clicked)
-        ).filter(
-            EmailVerificationToken.expires_at > datetime.utcnow()  # Token must not be expired
+            used=True  # Token must be used (link was clicked - email ownership proven)
         ).order_by(
             EmailVerificationToken.created_at.desc()
         ).first()
@@ -939,13 +939,12 @@ def email_verification_status_by_email():
             return jsonify({"verified": False, "error": "Email and role are required"}), 400
         
         # Query database directly - DB is the single source of truth
-        # Also check that token isn't expired (security hardening)
+        # ✅ IMPORTANT: Once token is used=True, expiration no longer matters
+        # Expiration only applies BEFORE click - after click, it's a permanent verification record
         record = EmailVerificationToken.query.filter_by(
             email=email,
             user_role=role,
-            used=True  # Token must be used (link was clicked)
-        ).filter(
-            EmailVerificationToken.expires_at > datetime.utcnow()  # Token must not be expired
+            used=True  # Token must be used (link was clicked - email ownership proven)
         ).order_by(
             EmailVerificationToken.created_at.desc()
         ).first()
