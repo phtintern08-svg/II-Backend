@@ -932,15 +932,23 @@ def verify_email():
         if record.used:
             app_logger.info(f"Email verification token already used: {record.email} ({record.user_role})")
             
-            # ✅ UX IMPROVEMENT: Detect browser requests and redirect appropriately
+            # ✅ FIX #1: Properly detect API requests (not just by Accept header)
+            # Browsers send Accept: text/html even for fetch() requests, so we need better detection
+            # Note: Content-Type is often None on GET requests, so we don't check it
             accept_header = request.headers.get('Accept', '')
-            if 'text/html' in accept_header and record.user_id is None:
+            is_api_request = (
+                request.headers.get('X-Requested-With') == 'XMLHttpRequest'
+                or 'application/json' in accept_header
+            )
+            
+            # Only redirect for actual browser navigation (not polling/fetch)
+            if not is_api_request and record.user_id is None:
                 # Browser request for pre-registration token - redirect to success page
                 from flask import redirect
                 redirect_url = f"{Config.APP_BASE_URL}/verify-email.html?token={token}&verified=1&already_verified=1&email={record.email}&role={record.user_role}"
                 return redirect(redirect_url), 302
             
-            # API request or post-registration token - return JSON
+            # ✅ ALWAYS return JSON for API/polling requests (even when already used)
             if record.user_id is None:
                 # Pre-registration token - include email/role for redirect (needed for UX)
                 return jsonify({
@@ -996,16 +1004,23 @@ def verify_email():
                 f"Email verified via magic link: {record.email} ({record.user_role}), token_id={record.id}"
             )
             
-            # ✅ UX IMPROVEMENT: Detect browser requests and redirect to success page
-            # If Accept header includes text/html, redirect to HTML success page
+            # ✅ FIX #1: Properly detect API requests (not just by Accept header)
+            # Browsers send Accept: text/html even for fetch() requests, so we need better detection
+            # Note: Content-Type is often None on GET requests, so we don't check it
             accept_header = request.headers.get('Accept', '')
-            if 'text/html' in accept_header:
+            is_api_request = (
+                request.headers.get('X-Requested-With') == 'XMLHttpRequest'
+                or 'application/json' in accept_header
+            )
+            
+            # Only redirect for actual browser navigation (not polling/fetch)
+            if not is_api_request:
                 # Browser request - redirect to success page with email/role for auto-fill
                 from flask import redirect
                 redirect_url = f"{Config.APP_BASE_URL}/verify-email.html?token={token}&verified=1&email={record.email}&role={record.user_role}"
                 return redirect(redirect_url), 302
             
-            # API request - return JSON
+            # ✅ ALWAYS return JSON for API/polling requests
             return jsonify({
                 "success": True,
                 "pre_registration": True,
