@@ -87,6 +87,7 @@ class Vendor(db.Model):
     avatar_url = db.Column(db.String(255))
     
     # Verification
+    is_email_verified = db.Column(db.Boolean, default=False, nullable=False)
     verification_status = db.Column(db.String(50), default='not-submitted')
     admin_remarks = db.Column(db.Text)
     
@@ -787,18 +788,26 @@ class Payment(db.Model):
         return f'<Payment {self.transaction_id} - ₹{self.amount}>'
 
 class EmailVerificationToken(db.Model):
-    """Email verification tokens for user registration"""
+    """Email verification tokens for user registration and other purposes"""
     __bind_key__ = 'admin'  # Store in admin database
     __tablename__ = 'email_verification_tokens'
     
     id = db.Column(db.Integer, primary_key=True)
     user_id = db.Column(db.Integer, nullable=True)  # Nullable for pre-registration verification
-    email = db.Column(db.String(120), nullable=False)  # Store email for pre-registration tokens (required)
+    email = db.Column(db.String(255), nullable=False, index=True)  # Store email for pre-registration tokens (required)
     user_role = db.Column(db.String(20), nullable=False)  # 'customer', 'rider', 'vendor'
-    token = db.Column(db.String(128), unique=True, nullable=False)
-    expires_at = db.Column(db.DateTime, nullable=False)
-    used = db.Column(db.Boolean, default=False, nullable=False)
+    token = db.Column(db.String(255), unique=True, nullable=False)  # Increased length for security
+    expires_at = db.Column(db.DateTime, nullable=False, index=True)  # Indexed for expiry queries
+    used = db.Column(db.Boolean, default=False, nullable=False, index=True)  # Indexed for verification queries
+    purpose = db.Column(db.String(50), nullable=False, default='pre_registration', index=True)  # 'pre_registration', 'password_reset', etc.
+    ip_address = db.Column(db.String(45), nullable=True)  # IPv4 or IPv6 address where token was created
+    user_agent_hash = db.Column(db.String(64), nullable=True)  # Hash of user agent for security tracking
+    used_at = db.Column(db.DateTime, nullable=True, index=True)  # ✅ Timestamp when token was used (for race condition protection)
     created_at = db.Column(db.DateTime, default=datetime.utcnow)
     
     def __repr__(self):
-        return f'<EmailVerificationToken {self.token[:8]}... - User {self.user_id or "pre-reg"} - {self.email}>'
+        return f'<EmailVerificationToken {self.token[:8]}... - User {self.user_id or "pre-reg"} - {self.email} - {self.purpose}>'
+    
+    def is_expired(self):
+        """Check if token has expired"""
+        return datetime.utcnow() > self.expires_at  

@@ -128,6 +128,10 @@ class Config:
     # Session Cookie Max Age (should match PERMANENT_SESSION_LIFETIME)
     SESSION_COOKIE_MAX_AGE = SESSION_TIMEOUT
     
+    # Email Verification Timeout Configuration (in seconds)
+    # Default: 5 minutes (300 seconds) - can be overridden via environment variable
+    EMAIL_VERIFICATION_TTL = int(os.environ.get('EMAIL_VERIFICATION_TTL', 300))  # 5 minutes
+    
     # CSRF Protection Configuration
     # DISABLED for APIs - Using JWT tokens in Authorization headers instead
     # CSRF is not needed for API endpoints that use JWT authentication
@@ -139,6 +143,8 @@ class Config:
     
     # Content Security Policy (CSP) Configuration
     CSP_DEFAULT_SRC = "'self'"
+    # ⚠️ SECURITY NOTE: 'unsafe-eval' weakens CSP but may be needed for some libraries
+    # TODO: Remove 'unsafe-eval' once all dependencies are stable and don't require eval
     CSP_SCRIPT_SRC = "'self' 'unsafe-inline' 'unsafe-eval'"  # Adjust based on your needs
     CSP_STYLE_SRC = "'self' 'unsafe-inline'"
     CSP_IMG_SRC = "'self' data: https:"

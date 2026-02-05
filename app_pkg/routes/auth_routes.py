@@ -2,43 +2,40 @@
 Authentication Routes Blueprint
 Handles login, registration, OTP, and authentication-related endpoints
 """
-from flask import Blueprint, request, jsonify, send_from_directory, current_app, session
+from flask import Blueprint, request, jsonify, current_app
 from werkzeug.security import check_password_hash, generate_password_hash
 from flask_mail import Message
-from flask_limiter import Limiter
-from flask_limiter.util import get_remote_address
 import re
 import random
 import time
 import threading
 import os
+import hashlib
 from datetime import datetime, timedelta
 
 from app_pkg.models import db, Admin, Customer, Vendor, Rider, Support, OTPLog, EmailVerificationToken
-from app_pkg.auth import generate_token, verify_token, login_required, get_token_from_request, send_verification_email
+from app_pkg.auth import generate_token, verify_token, get_token_from_request, send_verification_email
 import secrets
-from app_pkg.validation import validate_request_data, LoginSchema, sanitize_text
+from app_pkg.validation import sanitize_text
 from config import Config
-from app_pkg.logger_config import app_logger, access_logger
+from app_pkg.logger_config import app_logger
+from sqlalchemy import or_, and_
 
 # Create blueprint
 bp = Blueprint('auth', __name__)
 
-# In-memory storage for OTPs
+# ⚠️ SECURITY NOTE: In-memory OTP storage (will break with multiple workers/restarts)
+# TODO: Migrate to DB-based OTP verification using OTPLog table
+# Currently acceptable because:
+# 1. Phone OTP is disabled on backend
+# 2. Email OTP uses DB (OTPLog) for logging
+# 3. Single-worker deployment works for now
 otp_storage = {}
 OTP_TTL_SECONDS = int(os.environ.get('OTP_TTL_SECONDS', '600'))  # default 10 minutes
 
-# Custom key function for OTP rate limiting by recipient
-def get_otp_recipient():
-    """Get recipient from request for OTP rate limiting"""
-    try:
-        if request.is_json:
-            recipient = request.get_json().get('recipient')
-            if recipient:
-                return f"otp:{recipient}"
-    except Exception:
-        pass
-    return get_remote_address()
+# ✅ REMOVED: get_otp_recipient() function
+# This function was never used and had an incomplete import (get_remote_address)
+# If OTP rate limiting is needed in the future, implement it properly with correct imports
 
 # Helper function for building subdomain URLs
 def build_subdomain_url(subdomain, path=''):
@@ -46,10 +43,21 @@ def build_subdomain_url(subdomain, path=''):
     # BASE_DOMAIN is validated in config.py, so it's guaranteed to be a valid naked domain
     base_domain = Config.BASE_DOMAIN
     
+    # ✅ FIX: Use config constants instead of hardcoded subdomain strings
+    # Map subdomain names to config constants
+    subdomain_map = {
+        'vendor': Config.VENDOR_SUBDOMAIN,
+        'rider': Config.RIDER_SUBDOMAIN,
+        'support': Config.SUPPORT_SUBDOMAIN,
+        'apparels': Config.APP_SUBDOMAIN
+    }
+    # Use mapped subdomain if available, otherwise use provided subdomain
+    actual_subdomain = subdomain_map.get(subdomain, subdomain)
+    
     if Config.ENV == 'production':
-        return f"https://{subdomain}.{base_domain}{path}"
+        return f"https://{actual_subdomain}.{base_domain}{path}"
     else:
-        return f"http://{subdomain}.{base_domain}{path}"
+        return f"http://{actual_subdomain}.{base_domain}{path}"
 
 # Helper function for logging auth events
 def log_auth_event(event_type, success, identifier, user_id=None, role=None, ip_address=None, error=None):
@@ -467,16 +475,18 @@ def register():
         if existing_customer or existing_rider or existing_vendor:
             return jsonify({"error": "Email already registered"}), 400
         
-        # ✅ SECURITY CHECK: Verify that email was actually verified via link click
-        # This is the ONLY way to ensure email ownership
-        # IMPORTANT: Once token is used=True, expiration no longer matters
-        # Expiration only applies BEFORE click - after click, it's a permanent verification record
-        verified_token = EmailVerificationToken.query.filter_by(
-            email=email,
-            user_role=role,
-            used=True  # Token must be used (link was clicked - email ownership proven)
+        # ✅ SINGLE SOURCE OF TRUTH: Only backend decides if email is verified
+        # Check for used token with pre_registration purpose
+        # ✅ RACE CONDITION FIX: Only accept tokens that were used before this request
+        request_time = datetime.utcnow()
+        verified_token = EmailVerificationToken.query.filter(
+            EmailVerificationToken.email == email,
+            EmailVerificationToken.user_role == role,
+            EmailVerificationToken.used == True,
+            EmailVerificationToken.purpose == 'pre_registration',
+            EmailVerificationToken.used_at <= request_time  # Only tokens used before this request
         ).order_by(
-            EmailVerificationToken.created_at.desc()
+            EmailVerificationToken.used_at.desc()  # Most recently used token
         ).first()
         
         if not verified_token:
@@ -550,6 +560,8 @@ def register():
             user_id = new_user.id
         
         # Link pre-registration token to user if email was verified before registration
+        # ✅ LOGIC FIX: This branch is always reached because registration requires pre-registration verification
+        # email_was_verified is always True here (we return 403 earlier if no verified token exists)
         if email_was_verified and verified_token:
             # Update the pre-registration token to link it to the new user
             # ✅ CRITICAL: Do NOT reset used = False. Token is a one-way fuse - once used, never reset.
@@ -557,44 +569,21 @@ def register():
             # verified_token.used stays True (it was already set to True when user clicked the link)
             db.session.commit()
             app_logger.info(f"Linked pre-registration token to user {user_id} (email: {email}, role: {role})")
-        else:
-            # Generate new verification token (for post-registration verification)
-            token = secrets.token_urlsafe(48)
-            expires_at = datetime.utcnow() + timedelta(minutes=30)
-            
-            verification_record = EmailVerificationToken(
-                user_id=user_id,
-                email=email,  # Also store email for consistency
-                user_role=user_role,
-                token=token,
-                expires_at=expires_at,
-                used=False
-            )
-            db.session.add(verification_record)
-            db.session.commit()
-            
-            # Send verification email only if email wasn't verified before registration
-            if not email_was_verified:
-                try:
-                    send_verification_email(email, token)
-                except Exception as email_err:
-                    app_logger.exception(f"Failed to send verification email: {email_err}")
-                    # Don't fail registration if email fails - user can request resend later
-                    # But log the error
+        # ✅ REMOVED: Post-registration token creation block
+        # This branch was unreachable because:
+        # 1. Registration requires pre-registration email verification (returns 403 if not verified)
+        # 2. Therefore email_was_verified is always True when we reach user creation
+        # 3. Login already requires is_email_verified=True, so post-registration tokens serve no purpose
+        # If post-registration verification is needed in the future, implement a separate flow
         
         log_auth_event('register', True, email, user_id, user_role, request.remote_addr)
         
-        # Return appropriate message based on whether email was pre-verified
-        if email_was_verified:
-            return jsonify({
-                "success": True,
-                "message": "Account created successfully. Your email was already verified."
-            }), 201
-        else:
-            return jsonify({
-                "success": True,
-                "message": "Verification link sent to your email"
-            }), 201
+        # ✅ LOGIC FIX: email_was_verified is always True here (we return 403 earlier if not verified)
+        # Removed unreachable else branch for cleaner code
+        return jsonify({
+            "success": True,
+            "message": "Account created successfully. Your email was already verified."
+        }), 201
         
     except Exception as e:
         db.session.rollback()
@@ -637,11 +626,28 @@ def send_email_verification_link():
         if existing_customer or existing_rider or existing_vendor:
             return jsonify({"error": "Email already registered"}), 400
         
-        # Check if there's already a valid unexpired token for this email+role
+        # ✅ DATA HYGIENE: Mark expired tokens as used (prevents accumulation of garbage tokens)
+        expired_tokens = EmailVerificationToken.query.filter_by(
+            email=email,
+            user_role=role,
+            used=False,
+            purpose='pre_registration'
+        ).filter(
+            EmailVerificationToken.expires_at < datetime.utcnow()
+        ).all()
+        
+        if expired_tokens:
+            for token in expired_tokens:
+                token.used = True  # Mark as used to prevent accumulation
+            db.session.commit()
+            app_logger.debug(f"Marked {len(expired_tokens)} expired token(s) as used for {email} ({role})")
+        
+        # Check if there's already a valid unexpired token for this email+role with pre_registration purpose
         existing_token = EmailVerificationToken.query.filter_by(
             email=email,
             user_role=role,
-            used=False
+            used=False,
+            purpose='pre_registration'
         ).filter(
             EmailVerificationToken.expires_at > datetime.utcnow()
         ).first()
@@ -660,8 +666,13 @@ def send_email_verification_link():
                 return jsonify({"error": "Failed to send verification email"}), 500
         
         # Create new verification token (user_id=None for pre-registration)
+        # ✅ Use centralized timeout from config
         token = secrets.token_urlsafe(48)
-        expires_at = datetime.utcnow() + timedelta(minutes=30)
+        expires_at = datetime.utcnow() + timedelta(seconds=Config.EMAIL_VERIFICATION_TTL)
+        
+        # ✅ SECURITY: Hash user agent for tracking (don't store full UA)
+        user_agent = request.headers.get('User-Agent', '')
+        user_agent_hash = hashlib.sha256(user_agent.encode()).hexdigest() if user_agent else None
         
         verification_record = EmailVerificationToken(
             user_id=None,  # None for pre-registration
@@ -669,18 +680,21 @@ def send_email_verification_link():
             user_role=role,
             token=token,
             expires_at=expires_at,
-            used=False
+            used=False,
+            purpose='pre_registration',  # ✅ Purpose-bound token (required for registration check)
+            ip_address=request.remote_addr,  # ✅ Track IP for security
+            user_agent_hash=user_agent_hash  # ✅ Track UA hash for security
         )
         
         db.session.add(verification_record)
-        db.session.commit()
-        
-        # Send verification email
+        # ✅ CRITICAL FIX: Commit AFTER successful email send (not before)
+        # This ensures token is only stored if email actually sent
         try:
             send_verification_email(email, token)
+            db.session.commit()  # Only commit if email send succeeded
             app_logger.info(f"Sent pre-registration verification email to {email} (role: {role})")
         except Exception as email_err:
-            db.session.rollback()
+            db.session.rollback()  # Now rollback actually works (before commit)
             app_logger.exception(f"Failed to send verification email: {email_err}")
             return jsonify({"error": "Failed to send verification email"}), 500
         
@@ -712,25 +726,6 @@ def send_otp():
         # Generate 6-digit OTP
         otp = str(random.randint(100000, 999999))
 
-        # Store OTP with expiry
-        expires_at = time.time() + OTP_TTL_SECONDS
-        otp_storage[recipient] = (otp, expires_at)
-        
-        # Save OTP to Database
-        try:
-            new_otp_log = OTPLog(
-                recipient=recipient,
-                otp_code=otp,
-                type=type_,
-                status='sent',
-                created_at=datetime.utcnow(),
-                expires_at=datetime.fromtimestamp(expires_at)
-            )
-            db.session.add(new_otp_log)
-            db.session.commit()
-        except Exception as db_err:
-            db.session.rollback()
-
         try:
             if type_ == 'email':
                 # Validate email format
@@ -743,38 +738,59 @@ def send_otp():
                     app_logger.error("SMTP not configured", extra={"recipient": recipient})
                     return jsonify({"error": "Email service is not configured. Please contact support."}), 500
                 
-                # Send email in background thread
-                def send_email_async():
-                    try:
-                        with current_app.app_context():
-                            from flask_mail import Mail
-                            mail = Mail(current_app)
-                            msg = Message(
-                                subject='Your ImpromptuIndian OTP Code',
-                                recipients=[recipient],
-                                body=f'Your OTP code is: {otp}\n\nThis code will expire in 10 minutes.\n\nIf you did not request this code, please ignore this email.\n\nBest regards,\nImpromptuIndian Team'
-                            )
-                            mail.send(msg)
-                            app_logger.info(f"OTP email sent successfully to {recipient}")
-                    except Exception as email_err:
-                        app_logger.exception("OTP email sending failed", extra={"recipient": recipient})
+                # ✅ CRITICAL FIX: Make email send synchronous for OTP (critical path)
+                # OTP must only be stored if email actually sent successfully
+                # Background thread exceptions don't propagate, so we can't know if send failed
+                try:
+                    from flask_mail import Mail
+                    mail = Mail(current_app)
+                    msg = Message(
+                        subject='Your ImpromptuIndian OTP Code',
+                        recipients=[recipient],
+                        body=f'Your OTP code is: {otp}\n\nThis code will expire in 10 minutes.\n\nIf you did not request this code, please ignore this email.\n\nBest regards,\nImpromptuIndian Team'
+                    )
+                    mail.send(msg)
+                    app_logger.info(f"OTP email sent successfully to {recipient}")
+                    
+                    # ✅ Only store OTP after successful send
+                    expires_at = time.time() + OTP_TTL_SECONDS
+                    otp_storage[recipient] = (otp, expires_at)
+                except Exception as email_err:
+                    app_logger.exception("OTP email sending failed", extra={"recipient": recipient})
+                    # Don't store OTP if email send failed - re-raise to trigger outer exception handler
+                    raise
                 
-                # Start email thread (non-blocking)
-                email_thread = threading.Thread(target=send_email_async)
-                email_thread.daemon = True
-                email_thread.start()
+                # Save OTP to Database (after send attempt)
+                try:
+                    new_otp_log = OTPLog(
+                        recipient=recipient,
+                        otp_code=otp,
+                        type=type_,
+                        status='sent',
+                        created_at=datetime.utcnow(),
+                        expires_at=datetime.fromtimestamp(expires_at)
+                    )
+                    db.session.add(new_otp_log)
+                    db.session.commit()
+                except Exception as db_err:
+                    db.session.rollback()
+                    app_logger.warning(f"Failed to log OTP to database: {db_err}")
                 
                 return jsonify({"message": f"OTP sent successfully to {recipient}"}), 200
 
             elif type_ == 'phone':
-                # Phone OTP is disabled
+                # ✅ FIX: Phone OTP is disabled - return clear error
                 return jsonify({"error": "Phone OTP authentication is currently disabled. Please use email for OTP verification."}), 400
             else:
                 return jsonify({"error": "Invalid OTP type. Use 'email' or 'phone'."}), 400
                 
         except Exception as send_err:
+            # ✅ CRITICAL FIX: Return error if sending fails (don't lie to frontend)
             app_logger.exception("OTP sending error", extra={"recipient": recipient, "type": type_})
-            return jsonify({"message": f"OTP sent successfully to {recipient}"}), 200
+            # Clean up stored OTP since send failed
+            if recipient in otp_storage:
+                del otp_storage[recipient]
+            return jsonify({"error": "Failed to send OTP. Please try again later."}), 500
             
     except Exception as e:
         app_logger.exception(f"Send OTP error: {e}")
@@ -858,6 +874,7 @@ def verify_email():
     """
     GET /api/verify-email?token=<token>
     Verify user email using token from verification link
+    ✅ IDEMPOTENT: Can be called multiple times safely
     """
     try:
         token = request.args.get('token')
@@ -865,28 +882,77 @@ def verify_email():
         if not token:
             return jsonify({"error": "Token is required"}), 400
         
-        # Find verification record
-        record = EmailVerificationToken.query.filter_by(
-            token=token,
-            used=False
+        # ✅ SECURITY HARDENING: Find verification record with purpose check
+        # Only allow pre_registration or post_registration tokens (not password_reset, etc.)
+        record = EmailVerificationToken.query.filter(
+            EmailVerificationToken.token == token,
+            EmailVerificationToken.purpose.in_(['pre_registration', 'post_registration'])
         ).first()
         
         if not record:
+            app_logger.warning(f"Email verification attempt with invalid token from IP: {request.remote_addr}")
             return jsonify({"error": "Invalid or expired link"}), 400
         
-        # Check expiration
+        # ✅ IDEMPOTENCY: If already used, return success (link was already clicked)
+        if record.used:
+            app_logger.info(f"Email verification token already used: {record.email} ({record.user_role})")
+            # ✅ SECURITY FIX: Minimize information disclosure for already-used tokens
+            # For pre-registration tokens, we still need email/role for redirect UX
+            # (Token is already used, so minimal additional risk)
+            # For post-registration tokens, return generic success (no redirect needed)
+            if record.user_id is None:
+                # Pre-registration token - include email/role for redirect (needed for UX)
+                return jsonify({
+                    "success": True,
+                    "pre_registration": True,
+                    "email": record.email,  # Needed for redirect to registration page
+                    "role": record.user_role,  # Needed for redirect to registration page
+                    "already_verified": True
+                }), 200
+            else:
+                # Post-registration token - return generic success
+                return jsonify({
+                    "success": True,
+                    "message": "Email already verified",
+                    "already_verified": True
+                }), 200
+        
+        # Check expiration BEFORE marking as used
         if record.expires_at < datetime.utcnow():
+            app_logger.warning(
+                f"Email verification attempt with expired token: {record.email} ({record.user_role}), "
+                f"token_id={record.id}, expired_at={record.expires_at}, now={datetime.utcnow()}"
+            )
             return jsonify({"error": "Invalid or expired link"}), 400
+        
+        # ✅ SECURITY: Log suspicious usage (IP/UA mismatch) but don't reject
+        # This is how real systems work (Stripe, GitHub, etc.) - log but allow
+        current_ua = request.headers.get('User-Agent', '')
+        current_ua_hash = hashlib.sha256(current_ua.encode()).hexdigest() if current_ua else None
+        
+        if record.ip_address and record.ip_address != request.remote_addr:
+            app_logger.warning(
+                f"Email verification IP mismatch: {record.email} ({record.user_role}), "
+                f"token_id={record.id}, created_ip={record.ip_address}, current_ip={request.remote_addr}"
+            )
+        
+        if record.user_agent_hash and record.user_agent_hash != current_ua_hash:
+            app_logger.warning(
+                f"Email verification UA mismatch: {record.email} ({record.user_role}), "
+                f"token_id={record.id}"
+            )
         
         # Handle pre-registration verification (user_id is None)
         if record.user_id is None:
             # ✅ PRE-REGISTRATION VERIFICATION - DB is the single source of truth
             # Mark token as used in database (this is the verification)
+            # ✅ RACE CONDITION FIX: Set used_at timestamp for atomic verification
             record.used = True
-            db.session.commit()  # CRITICAL: Commit immediately
+            record.used_at = datetime.utcnow()  # Timestamp for race condition protection
+            db.session.commit()  # CRITICAL: Commit immediately before response
             
             app_logger.info(
-                f"Email verified via magic link: {record.email} ({record.user_role})"
+                f"Email verified via magic link: {record.email} ({record.user_role}), token_id={record.id}"
             )
             
             # Return JSON immediately - frontend will check DB status
@@ -912,7 +978,8 @@ def verify_email():
         
         user.is_email_verified = True
         record.used = True
-        db.session.commit()
+        record.used_at = datetime.utcnow()  # ✅ CONSISTENCY FIX: Set used_at for post-registration tokens too
+        db.session.commit()  # CRITICAL: Commit immediately before response
         
         log_auth_event('email_verified', True, user.email, user.id, record.user_role, request.remote_addr)
         
@@ -924,43 +991,9 @@ def verify_email():
         return jsonify({"error": "Verification failed. Please try again."}), 500
 
 
-@bp.route('/email-verification-status-by-email', methods=['GET'])
-def email_verification_status_by_email():
-    """
-    GET /api/email-verification-status-by-email
-    Check if email was verified by querying database directly (DB is single source of truth)
-    Query parameters: email, role
-    """
-    try:
-        email = request.args.get('email', '').strip().lower()
-        role = request.args.get('role', '').strip().lower()
-        
-        if not email or not role:
-            return jsonify({"verified": False, "error": "Email and role are required"}), 400
-        
-        # Query database directly - DB is the single source of truth
-        # ✅ IMPORTANT: Once token is used=True, expiration no longer matters
-        # Expiration only applies BEFORE click - after click, it's a permanent verification record
-        record = EmailVerificationToken.query.filter_by(
-            email=email,
-            user_role=role,
-            used=True  # Token must be used (link was clicked - email ownership proven)
-        ).order_by(
-            EmailVerificationToken.created_at.desc()
-        ).first()
-        
-        verified = bool(record)
-        
-        app_logger.debug(f"Email verification check: {email} ({role}) = {verified}")
-        
-        return jsonify({
-            "verified": verified
-        }), 200
-    except Exception as e:
-        app_logger.exception(f"Error checking email verification status: {e}")
-        return jsonify({
-            "verified": False
-        }), 200
+# ✅ REMOVED: /email-verification-status-by-email endpoint
+# No longer needed - frontend doesn't poll. Backend enforces verification at /register endpoint only.
+# Email verification is a backend fact, not a frontend state.
 
 
 @bp.route('/logout', methods=['POST'])

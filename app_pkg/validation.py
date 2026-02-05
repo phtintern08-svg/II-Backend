@@ -213,3 +213,31 @@ def validate_request_data(schema_class, data):
     except ValidationError as err:
         return None, err.messages
 
+
+def is_email_verified(email, role):
+    """
+    Check if email was verified via email verification token
+    DB is the single source of truth - only used=True means verified
+    
+    Args:
+        email: Email address to check
+        role: User role ('customer', 'vendor', 'rider')
+    
+    Returns:
+        bool: True if email is verified, False otherwise
+    """
+    from app_pkg.models import EmailVerificationToken
+    from datetime import datetime
+    
+    # Query database directly - DB is the single source of truth
+    # ✅ IMPORTANT: Once token is used=True, expiration no longer matters
+    # Expiration only applies BEFORE click - after click, it's a permanent verification record
+    verified_token = EmailVerificationToken.query.filter_by(
+        email=email.lower().strip(),
+        user_role=role.lower().strip(),
+        used=True  # Token must be used (link was clicked - email ownership proven)
+    ).order_by(
+        EmailVerificationToken.created_at.desc()
+    ).first()
+    
+    return bool(verified_token)
