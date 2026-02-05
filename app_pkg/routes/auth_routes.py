@@ -909,7 +909,11 @@ def verify_email():
     """
     GET /api/verify-email?token=<token>
     Verify user email using token from verification link
-    ✅ IDEMPOTENT: Can be called multiple times safely
+    
+    ⚠️ NON-IDEMPOTENT:
+    - Token is one-time use (one-way fuse)
+    - Used or expired tokens return 410 Gone
+    - After successful verification, token is marked used and cannot be reused
     """
     try:
         token = request.args.get('token')
@@ -928,9 +932,9 @@ def verify_email():
             app_logger.warning(f"Email verification attempt with invalid token from IP: {request.remote_addr}")
             return jsonify({"error": "Invalid or expired link"}), 400
         
-        # ✅ IDEMPOTENCY: If already used, return success (link was already clicked)
+        # ✅ PART 2: Hard expiry - used tokens are expired (one-time use)
         if record.used:
-            app_logger.info(f"Email verification token already used: {record.email} ({record.user_role})")
+            app_logger.info(f"Email verification token already used (expired): {record.email} ({record.user_role})")
             
             # ✅ FIX #1: Properly detect API requests (not just by Accept header)
             # Browsers send Accept: text/html even for fetch() requests, so we need better detection
@@ -941,38 +945,44 @@ def verify_email():
                 or 'application/json' in accept_header
             )
             
-            # Only redirect for actual browser navigation (not polling/fetch)
-            if not is_api_request and record.user_id is None:
-                # Browser request for pre-registration token - redirect to success page
+            # For browser navigation, redirect to error page
+            if not is_api_request:
                 from flask import redirect
-                redirect_url = f"{Config.APP_BASE_URL}/verify-email.html?token={token}&verified=1&already_verified=1&email={record.email}&role={record.user_role}"
+                redirect_url = f"{Config.APP_BASE_URL}/verify-email.html?error=expired&reason=used"
                 return redirect(redirect_url), 302
             
-            # ✅ ALWAYS return JSON for API/polling requests (even when already used)
-            if record.user_id is None:
-                # Pre-registration token - include email/role for redirect (needed for UX)
-                return jsonify({
-                    "success": True,
-                    "pre_registration": True,
-                    "email": record.email,  # Needed for redirect to registration page
-                    "role": record.user_role,  # Needed for redirect to registration page
-                    "already_verified": True
-                }), 200
-            else:
-                # Post-registration token - return generic success
-                return jsonify({
-                    "success": True,
-                    "message": "Email already verified",
-                    "already_verified": True
-                }), 200
+            # ✅ Return 410 Gone for expired (used) tokens
+            return jsonify({
+                "success": False,
+                "error": "Link expired",
+                "reason": "used"
+            }), 410
         
-        # Check expiration BEFORE marking as used
+        # ✅ PART 2: Hard expiry - check TTL expiration
         if record.expires_at < datetime.utcnow():
             app_logger.warning(
                 f"Email verification attempt with expired token: {record.email} ({record.user_role}), "
                 f"token_id={record.id}, expired_at={record.expires_at}, now={datetime.utcnow()}"
             )
-            return jsonify({"error": "Invalid or expired link"}), 400
+            
+            # For browser navigation, redirect to error page
+            accept_header = request.headers.get('Accept', '')
+            is_api_request = (
+                request.headers.get('X-Requested-With') == 'XMLHttpRequest'
+                or 'application/json' in accept_header
+            )
+            
+            if not is_api_request:
+                from flask import redirect
+                redirect_url = f"{Config.APP_BASE_URL}/verify-email.html?error=expired&reason=timeout"
+                return redirect(redirect_url), 302
+            
+            # ✅ Return 410 Gone for expired (timeout) tokens
+            return jsonify({
+                "success": False,
+                "error": "Link expired",
+                "reason": "timeout"
+            }), 410
         
         # ✅ SECURITY: Log suspicious usage (IP/UA mismatch) but don't reject
         # This is how real systems work (Stripe, GitHub, etc.) - log but allow
