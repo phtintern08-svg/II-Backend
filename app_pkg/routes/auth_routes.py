@@ -630,7 +630,14 @@ def send_email_verification_link():
         existing_vendor = Vendor.query.filter_by(email=email).first()
         
         if existing_customer or existing_rider or existing_vendor:
-            return jsonify({"error": "Email already registered"}), 400
+            # ✅ ISSUE #2 FIX: Return 200 with status (not 400) so frontend can handle it properly
+            # Frontend expects status-based responses, not HTTP error codes for business states
+            return jsonify({
+                "success": True,  # Transport success (request processed)
+                "status": "already_registered",
+                "verified": True,  # If registered, email was verified
+                "message": "This email is already registered. Please log in."
+            }), 200
         
         # ✅ BUG #1 FIX: Check if email is already verified BEFORE creating new tokens
         # Email verification is a boolean fact - once verified, never re-tokenize
@@ -645,7 +652,9 @@ def send_email_verification_link():
             app_logger.info(f"Email verification requested for already-verified email: {email} ({role})")
             return jsonify({
                 "success": True,
-                "message": "Email already verified"
+                "status": "already_verified",
+                "verified": True,
+                "message": "Email already verified. You can proceed to create your account."
             }), 200
         
         # ✅ DATA HYGIENE: Mark expired tokens as used (prevents accumulation of garbage tokens)
@@ -681,6 +690,8 @@ def send_email_verification_link():
                 app_logger.info(f"Resent verification email to {email} (role: {role})")
                 return jsonify({
                     "success": True,
+                    "status": "link_sent",
+                    "verified": False,
                     "message": "Verification link sent"
                 }), 200
             except Exception as email_err:
@@ -722,7 +733,9 @@ def send_email_verification_link():
         
         return jsonify({
             "success": True,
-            "message": "Verification link sent"
+            "status": "link_sent",
+            "verified": False,
+            "message": "Verification link sent. Check your inbox."
         }), 200
         
     except Exception as e:
