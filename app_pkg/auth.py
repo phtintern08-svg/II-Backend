@@ -320,7 +320,13 @@ def send_verification_email(to_email, token):
         msg["From"] = Config.SMTP_USER
         msg["To"] = to_email
 
-        link = f"{Config.APP_BASE_URL}/verify-email.html?token={token}"
+        # ✅ CRITICAL FIX: Link must point to API endpoint, not HTML page
+        # The API endpoint updates the database (used=True, used_at=now())
+        # Option A (Recommended): Direct API link - cleaner, backend-driven
+        link = f"{Config.APP_BASE_URL}/api/verify-email?token={token}"
+        
+        # Calculate expiration time from config (in minutes)
+        expiration_minutes = Config.EMAIL_VERIFICATION_TTL // 60
 
         msg.set_content(
             f"""Welcome to Impromptu Indian 👋
@@ -329,7 +335,7 @@ Please verify your email by clicking the link below:
 
 {link}
 
-This link expires in 30 minutes.
+This link expires in {expiration_minutes} minutes.
 
 If you didn't register, ignore this email.
 """

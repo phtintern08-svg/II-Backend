@@ -476,20 +476,18 @@ def register():
             return jsonify({"error": "Email already registered"}), 400
         
         # ✅ SINGLE SOURCE OF TRUTH: Only backend decides if email is verified
-        # Check for used token with pre_registration purpose
-        # ✅ RACE CONDITION FIX: Only accept tokens that were used before this request
-        request_time = datetime.utcnow()
-        verified_token = EmailVerificationToken.query.filter(
+        # ✅ BUG #2 FIX: Email verification is a boolean fact, not token recency
+        # Check if email was EVER verified (any used token), not "most recent token"
+        verified = db.session.query(
+            EmailVerificationToken.id
+        ).filter(
             EmailVerificationToken.email == email,
             EmailVerificationToken.user_role == role,
             EmailVerificationToken.used == True,
-            EmailVerificationToken.purpose == 'pre_registration',
-            EmailVerificationToken.used_at <= request_time  # Only tokens used before this request
-        ).order_by(
-            EmailVerificationToken.used_at.desc()  # Most recently used token
+            EmailVerificationToken.purpose == 'pre_registration'
         ).first()
         
-        if not verified_token:
+        if not verified:
             return jsonify({
                 "error": "Please verify your email before creating an account. Click the verification link sent to your email."
             }), 403
@@ -559,10 +557,18 @@ def register():
             db.session.flush()  # Get the ID without committing
             user_id = new_user.id
         
-        # Link pre-registration token to user if email was verified before registration
-        # ✅ LOGIC FIX: This branch is always reached because registration requires pre-registration verification
-        # email_was_verified is always True here (we return 403 earlier if no verified token exists)
-        if email_was_verified and verified_token:
+        # ✅ Link any verified pre-registration token to the new user (for audit trail)
+        # Find the most recent verified token to link
+        verified_token = EmailVerificationToken.query.filter(
+            EmailVerificationToken.email == email,
+            EmailVerificationToken.user_role == role,
+            EmailVerificationToken.used == True,
+            EmailVerificationToken.purpose == 'pre_registration'
+        ).order_by(
+            EmailVerificationToken.used_at.desc()
+        ).first()
+        
+        if verified_token and verified_token.user_id is None:
             # Update the pre-registration token to link it to the new user
             # ✅ CRITICAL: Do NOT reset used = False. Token is a one-way fuse - once used, never reset.
             verified_token.user_id = user_id
@@ -625,6 +631,22 @@ def send_email_verification_link():
         
         if existing_customer or existing_rider or existing_vendor:
             return jsonify({"error": "Email already registered"}), 400
+        
+        # ✅ BUG #1 FIX: Check if email is already verified BEFORE creating new tokens
+        # Email verification is a boolean fact - once verified, never re-tokenize
+        already_verified = EmailVerificationToken.query.filter(
+            EmailVerificationToken.email == email,
+            EmailVerificationToken.user_role == role,
+            EmailVerificationToken.used == True,
+            EmailVerificationToken.purpose == 'pre_registration'
+        ).first()
+        
+        if already_verified:
+            app_logger.info(f"Email verification requested for already-verified email: {email} ({role})")
+            return jsonify({
+                "success": True,
+                "message": "Email already verified"
+            }), 200
         
         # ✅ DATA HYGIENE: Mark expired tokens as used (prevents accumulation of garbage tokens)
         expired_tokens = EmailVerificationToken.query.filter_by(
@@ -896,10 +918,16 @@ def verify_email():
         # ✅ IDEMPOTENCY: If already used, return success (link was already clicked)
         if record.used:
             app_logger.info(f"Email verification token already used: {record.email} ({record.user_role})")
-            # ✅ SECURITY FIX: Minimize information disclosure for already-used tokens
-            # For pre-registration tokens, we still need email/role for redirect UX
-            # (Token is already used, so minimal additional risk)
-            # For post-registration tokens, return generic success (no redirect needed)
+            
+            # ✅ UX IMPROVEMENT: Detect browser requests and redirect appropriately
+            accept_header = request.headers.get('Accept', '')
+            if 'text/html' in accept_header and record.user_id is None:
+                # Browser request for pre-registration token - redirect to success page
+                from flask import redirect
+                redirect_url = f"{Config.APP_BASE_URL}/verify-email.html?token={token}&verified=1&already_verified=1&email={record.email}&role={record.user_role}"
+                return redirect(redirect_url), 302
+            
+            # API request or post-registration token - return JSON
             if record.user_id is None:
                 # Pre-registration token - include email/role for redirect (needed for UX)
                 return jsonify({
@@ -955,7 +983,16 @@ def verify_email():
                 f"Email verified via magic link: {record.email} ({record.user_role}), token_id={record.id}"
             )
             
-            # Return JSON immediately - frontend will check DB status
+            # ✅ UX IMPROVEMENT: Detect browser requests and redirect to success page
+            # If Accept header includes text/html, redirect to HTML success page
+            accept_header = request.headers.get('Accept', '')
+            if 'text/html' in accept_header:
+                # Browser request - redirect to success page with email/role for auto-fill
+                from flask import redirect
+                redirect_url = f"{Config.APP_BASE_URL}/verify-email.html?token={token}&verified=1&email={record.email}&role={record.user_role}"
+                return redirect(redirect_url), 302
+            
+            # API request - return JSON
             return jsonify({
                 "success": True,
                 "pre_registration": True,
@@ -982,6 +1019,13 @@ def verify_email():
         db.session.commit()  # CRITICAL: Commit immediately before response
         
         log_auth_event('email_verified', True, user.email, user.id, record.user_role, request.remote_addr)
+        
+        # ✅ UX IMPROVEMENT: Detect browser requests and redirect to success page
+        accept_header = request.headers.get('Accept', '')
+        if 'text/html' in accept_header:
+            from flask import redirect
+            redirect_url = f"{Config.APP_BASE_URL}/verify-email.html?token={token}&verified=1"
+            return redirect(redirect_url), 302
         
         return jsonify({"success": True, "message": "Email verified successfully"}), 200
         
