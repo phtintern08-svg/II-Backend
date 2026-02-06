@@ -11,7 +11,7 @@ from werkzeug.security import check_password_hash, generate_password_hash
 from app_pkg.logger_config import app_logger
 
 # Create blueprint
-bp = Blueprint('customer', __name__, url_prefix='/customer')
+bp = Blueprint('customer', __name__, url_prefix='/api/customer')
 
 
 @bp.route('/profile', methods=['GET'])

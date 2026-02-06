@@ -78,17 +78,23 @@ def create_app(config_class=Config):
         app.register_blueprint(vendor_routes.bp, url_prefix="/api")
         app.register_blueprint(rider_routes.bp, url_prefix="/api")
         app.register_blueprint(admin_routes.bp, url_prefix="/api")
-        app.register_blueprint(customer_routes.bp, url_prefix="/api")
+        app.register_blueprint(customer_routes.bp)  # prefix already in blueprint definition
         app.register_blueprint(support_routes.bp, url_prefix="/api")
         app.register_blueprint(health.bp, url_prefix="/api")
         
         app_logger.info("All blueprints registered successfully")
         
-        # Log registered routes for debugging
+        # Log ALL registered routes for debugging (HARD PROOF)
+        app_logger.info("=== ALL REGISTERED ROUTES ===")
+        for rule in app.url_map.iter_rules():
+            if rule.endpoint.startswith('customer.'):
+                app_logger.info(f"ROUTE: {rule.rule} -> {rule.endpoint} [{', '.join(rule.methods)}]")
+        
+        # Count customer routes
         customer_routes_list = [rule.rule for rule in app.url_map.iter_rules() if rule.endpoint.startswith('customer.')]
         app_logger.info(f"Customer routes registered: {len(customer_routes_list)} routes")
-        for route in customer_routes_list:
-            app_logger.debug(f"  - {route}")
+        if len(customer_routes_list) == 0:
+            app_logger.error("⚠️ WARNING: No customer routes found! Blueprint registration may have failed.")
     except Exception as e:
         app_logger.exception(f"Error registering blueprints: {e}")
         raise
