@@ -91,7 +91,9 @@ def get_addresses():
             "city": a.city,
             "state": a.state,
             "pincode": a.pincode,
-            "landmark": a.landmark
+            "landmark": a.landmark,
+            "country": a.country,
+            "alternative_phone": a.alternative_phone
         } for a in addresses]
         
         return jsonify({
@@ -120,24 +122,48 @@ def add_address():
             if field not in data:
                 return jsonify({"error": f"Missing required field: {field}"}), 400
         
+        # Normalize address type (prevent "Home" vs "home" issues)
+        address_type = data['address_type'].lower().strip()
+        if address_type not in ['home', 'work', 'other']:
+            return jsonify({"error": "Invalid address_type. Must be 'home', 'work', or 'other'"}), 400
+        
+        # Check if address type already exists for this customer
+        existing = Address.query.filter_by(
+            customer_id=request.user_id,
+            address_type=address_type
+        ).first()
+        
+        if existing:
+            return jsonify({"error": f"Address type '{data['address_type']}' already exists. Please update the existing address instead."}), 409
+        
         new_address = Address(
             customer_id=request.user_id,
-            address_type=data['address_type'],
+            address_type=address_type,
             address_line1=data['address_line1'],
             address_line2=data.get('address_line2'),
             city=data['city'],
             state=data['state'],
             pincode=data['pincode'],
             landmark=data.get('landmark'),
-            country=data.get('country', 'India')
+            country=data.get('country', 'India'),
+            alternative_phone=data.get('alternative_phone')
         )
         
         db.session.add(new_address)
         db.session.commit()
         
+        # Return full address object for frontend sync
         return jsonify({
-            "message": "Address added successfully",
-            "address_id": new_address.id
+            "id": new_address.id,
+            "address_type": new_address.address_type,
+            "address_line1": new_address.address_line1,
+            "address_line2": new_address.address_line2,
+            "city": new_address.city,
+            "state": new_address.state,
+            "pincode": new_address.pincode,
+            "landmark": new_address.landmark,
+            "country": new_address.country,
+            "alternative_phone": new_address.alternative_phone
         }), 201
         
     except Exception as e:
@@ -165,14 +191,37 @@ def update_address(address_id):
             return jsonify({"error": "Unauthorized"}), 403
         
         # Update fields
-        updatable_fields = ['address_type', 'address_line1', 'address_line2', 'city', 'state', 'pincode', 'landmark']
+        updatable_fields = ['address_line1', 'address_line2', 'city', 'state', 'pincode', 'landmark', 'country']
         for field in updatable_fields:
             if field in data:
                 setattr(address, field, data[field])
         
+        # Handle address_type separately with normalization
+        if 'address_type' in data:
+            address_type = data['address_type'].lower().strip()
+            if address_type not in ['home', 'work', 'other']:
+                return jsonify({"error": "Invalid address_type. Must be 'home', 'work', or 'other'"}), 400
+            address.address_type = address_type
+        
+        # Also handle alternative_phone if provided
+        if 'alternative_phone' in data:
+            setattr(address, 'alternative_phone', data['alternative_phone'])
+        
         db.session.commit()
         
-        return jsonify({"message": "Address updated successfully"}), 200
+        # Return full address object for frontend sync
+        return jsonify({
+            "id": address.id,
+            "address_type": address.address_type,
+            "address_line1": address.address_line1,
+            "address_line2": address.address_line2,
+            "city": address.city,
+            "state": address.state,
+            "pincode": address.pincode,
+            "landmark": address.landmark,
+            "country": address.country,
+            "alternative_phone": address.alternative_phone
+        }), 200
         
     except Exception as e:
         db.session.rollback()
