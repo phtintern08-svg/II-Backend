@@ -252,6 +252,7 @@ def authenticate():
                 "username": customer.username,
                 "email": customer.email,
                 "phone": customer.phone,
+                "token": token,  # Include token in response for localStorage (cookie is HttpOnly)
                 "redirect_url": "/customer/home.html"
             })
             response.set_cookie(
