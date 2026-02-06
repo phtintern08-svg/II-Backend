@@ -64,7 +64,7 @@ def verify_token(token):
         if not secret_key:
             return None
         
-        payload = jwt.decode(token, secret_key, algorithms=['HS256'])
+        payload = jwt.decode(token, secret_key, algorithms=['HS256'], leeway=10)
         return payload
     except jwt.ExpiredSignatureError:
         return None
@@ -89,29 +89,29 @@ def get_current_user():
 
 def get_token_from_request():
     """
-    Extract JWT token from request (cookie or Authorization header)
+    Extract JWT token from request (Authorization header or cookie)
     
     Priority:
-    1. HttpOnly cookie (access_token) - PRIMARY for subdomain SSO
-    2. Authorization header (Bearer token) - Fallback for API clients
+    1. Authorization header (Bearer token) - PRIMARY for SPA/fetch requests
+    2. HttpOnly cookie (access_token) - Fallback for SSO / browser navigation
     3. Query parameter (token) - Legacy/JSONP support
     
     Returns:
         str: Token or None
     """
-    # 1. Check HttpOnly cookie first (PRIMARY for subdomain SSO)
-    token = request.cookies.get('access_token')
-    if token:
-        return token
-    
-    # 2. Check Authorization header (optional fallback for API clients)
+    # 1️⃣ Authorization header FIRST (SPA-safe)
     auth_header = request.headers.get('Authorization')
     if auth_header and auth_header.startswith('Bearer '):
         try:
-            token = auth_header.split(' ')[1]  # Extract token from "Bearer <token>"
+            token = auth_header.split(' ', 1)[1]  # Extract token from "Bearer <token>"
             return token
         except IndexError:
             pass
+    
+    # 2️⃣ HttpOnly cookie fallback (SSO / browser nav)
+    token = request.cookies.get('access_token')
+    if token:
+        return token
     
     # 3. Fallback: Check for token in request args (for JSONP compatibility)
     token = request.args.get('token')
@@ -135,6 +135,13 @@ def require_auth(f):
         payload = verify_token(token)
         if not payload:
             return jsonify({"error": "Invalid or expired token", "code": "INVALID_TOKEN"}), 401
+        
+        # Verify user still exists in database
+        if not verify_user_exists(payload.get('user_id'), payload.get('role')):
+            return jsonify({
+                "error": "User no longer exists",
+                "code": "USER_NOT_FOUND"
+            }), 401
         
         # Add user info to request context
         request.current_user = payload
@@ -345,9 +352,10 @@ If you didn't register, ignore this email.
         with smtplib.SMTP_SSL(Config.SMTP_HOST, Config.SMTP_PORT, context=context) as server:
             server.login(Config.SMTP_USER, Config.SMTP_PASS)
             server.send_message(msg)
+        return True
     except Exception as e:
         # Log error but don't raise - registration should still succeed
         from app_pkg.logger_config import app_logger
         app_logger.exception(f"Failed to send verification email to {to_email}: {e}")
-        raise  # Re-raise to handle in calling function
+        return False
 

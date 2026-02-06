@@ -14,7 +14,7 @@ import hashlib
 from datetime import datetime, timedelta
 
 from app_pkg.models import db, Admin, Customer, Vendor, Rider, Support, OTPLog, EmailVerificationToken
-from app_pkg.auth import generate_token, verify_token, get_token_from_request, send_verification_email
+from app_pkg.auth import generate_token, verify_token, get_token_from_request, send_verification_email, require_auth
 import secrets
 from app_pkg.validation import sanitize_text
 from config import Config
@@ -23,6 +23,19 @@ from sqlalchemy import or_, and_
 
 # Create blueprint
 bp = Blueprint('auth', __name__)
+
+
+def is_api_request():
+    """
+    Detect if request is from API client (fetch/XMLHttpRequest) vs browser navigation
+    """
+    accept = request.headers.get("Accept", "")
+    content_type = request.headers.get("Content-Type", "")
+    return (
+        request.headers.get("X-Requested-With") == "XMLHttpRequest"
+        or "application/json" in accept
+        or "application/json" in content_type
+    )
 
 # ⚠️ SECURITY NOTE: In-memory OTP storage (will break with multiple workers/restarts)
 # TODO: Migrate to DB-based OTP verification using OTPLog table
@@ -937,17 +950,8 @@ def verify_email():
         if record.used:
             app_logger.info(f"Email verification token already used (expired): {record.email} ({record.user_role})")
             
-            # ✅ FIX #1: Properly detect API requests (not just by Accept header)
-            # Browsers send Accept: text/html even for fetch() requests, so we need better detection
-            # Note: Content-Type is often None on GET requests, so we don't check it
-            accept_header = request.headers.get('Accept', '')
-            is_api_request = (
-                request.headers.get('X-Requested-With') == 'XMLHttpRequest'
-                or 'application/json' in accept_header
-            )
-            
             # For browser navigation, redirect to error page
-            if not is_api_request:
+            if not is_api_request():
                 from flask import redirect
                 redirect_url = f"{Config.APP_BASE_URL}/verify-email.html?error=expired&reason=used"
                 return redirect(redirect_url), 302
@@ -967,13 +971,7 @@ def verify_email():
             )
             
             # For browser navigation, redirect to error page
-            accept_header = request.headers.get('Accept', '')
-            is_api_request = (
-                request.headers.get('X-Requested-With') == 'XMLHttpRequest'
-                or 'application/json' in accept_header
-            )
-            
-            if not is_api_request:
+            if not is_api_request():
                 from flask import redirect
                 redirect_url = f"{Config.APP_BASE_URL}/verify-email.html?error=expired&reason=timeout"
                 return redirect(redirect_url), 302
@@ -1015,17 +1013,8 @@ def verify_email():
                 f"Email verified via magic link: {record.email} ({record.user_role}), token_id={record.id}"
             )
             
-            # ✅ FIX #1: Properly detect API requests (not just by Accept header)
-            # Browsers send Accept: text/html even for fetch() requests, so we need better detection
-            # Note: Content-Type is often None on GET requests, so we don't check it
-            accept_header = request.headers.get('Accept', '')
-            is_api_request = (
-                request.headers.get('X-Requested-With') == 'XMLHttpRequest'
-                or 'application/json' in accept_header
-            )
-            
             # Only redirect for actual browser navigation (not polling/fetch)
-            if not is_api_request:
+            if not is_api_request():
                 # Browser request - redirect to success page with email/role for auto-fill
                 from flask import redirect
                 redirect_url = f"{Config.APP_BASE_URL}/verify-email.html?token={token}&verified=1&email={record.email}&role={record.user_role}"
