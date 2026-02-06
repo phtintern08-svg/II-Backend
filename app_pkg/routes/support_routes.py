@@ -16,8 +16,24 @@ from app_pkg.logger_config import app_logger
 bp = Blueprint('support', __name__)
 
 
-# SECURITY: /config endpoint removed - API keys must never be exposed to frontend
-# Frontend should use proxied endpoints (/geocode, /reverse-geocode) instead
+@bp.route('/config', methods=['GET'])
+@login_required
+def get_config():
+    """
+    GET /api/config
+    Get configuration values needed by frontend (e.g., Mappls API key)
+    Only accessible to authenticated users
+    """
+    try:
+        api_key = os.environ.get('MAPPLS_API_KEY', '')
+        
+        return jsonify({
+            "mapplsApiKey": api_key
+        }), 200
+        
+    except Exception as e:
+        app_logger.exception(f"Get config error: {e}")
+        return jsonify({"error": "Failed to retrieve config"}), 500
 
 
 @bp.route('/reverse-geocode', methods=['GET'])

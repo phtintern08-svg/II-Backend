@@ -61,25 +61,37 @@ def create_app(config_class=Config):
     )
 
     # Register blueprints
-    from app_pkg.routes import (
-        auth_routes,
-        orders_routes,
-        vendor_routes,
-        rider_routes,
-        admin_routes,
-        customer_routes,
-        support_routes,
-        health
-    )
+    try:
+        from app_pkg.routes import (
+            auth_routes,
+            orders_routes,
+            vendor_routes,
+            rider_routes,
+            admin_routes,
+            customer_routes,
+            support_routes,
+            health
+        )
 
-    app.register_blueprint(auth_routes.bp, url_prefix="/api")
-    app.register_blueprint(orders_routes.bp, url_prefix="/api")
-    app.register_blueprint(vendor_routes.bp, url_prefix="/api")
-    app.register_blueprint(rider_routes.bp, url_prefix="/api")
-    app.register_blueprint(admin_routes.bp, url_prefix="/api")
-    app.register_blueprint(customer_routes.bp, url_prefix="/api")
-    app.register_blueprint(support_routes.bp, url_prefix="/api")
-    app.register_blueprint(health.bp, url_prefix="/api")
+        app.register_blueprint(auth_routes.bp, url_prefix="/api")
+        app.register_blueprint(orders_routes.bp, url_prefix="/api")
+        app.register_blueprint(vendor_routes.bp, url_prefix="/api")
+        app.register_blueprint(rider_routes.bp, url_prefix="/api")
+        app.register_blueprint(admin_routes.bp, url_prefix="/api")
+        app.register_blueprint(customer_routes.bp, url_prefix="/api")
+        app.register_blueprint(support_routes.bp, url_prefix="/api")
+        app.register_blueprint(health.bp, url_prefix="/api")
+        
+        app_logger.info("All blueprints registered successfully")
+        
+        # Log registered routes for debugging
+        customer_routes_list = [rule.rule for rule in app.url_map.iter_rules() if rule.endpoint.startswith('customer.')]
+        app_logger.info(f"Customer routes registered: {len(customer_routes_list)} routes")
+        for route in customer_routes_list:
+            app_logger.debug(f"  - {route}")
+    except Exception as e:
+        app_logger.exception(f"Error registering blueprints: {e}")
+        raise
 
     # CSRF is disabled globally for APIs (WTF_CSRF_ENABLED = False in config)
     # No need to exempt blueprints since CSRF is not active
