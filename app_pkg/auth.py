@@ -10,7 +10,7 @@ from functools import wraps
 from flask import request, jsonify, current_app
 from datetime import datetime, timedelta
 from email.message import EmailMessage
-from app_pkg.models import Admin, Customer, Vendor, Rider
+from app_pkg.models import Admin, Customer, Vendor, Rider, Support
 from config import Config
 
 
@@ -295,6 +295,8 @@ def verify_user_exists(user_id, role):
             user = Vendor.query.get(user_id)
         elif role == 'rider':
             user = Rider.query.get(user_id)
+        elif role == 'support':
+            user = Support.query.get(user_id)
         else:
             return False
         

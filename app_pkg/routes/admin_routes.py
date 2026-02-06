@@ -1506,6 +1506,95 @@ def mark_notification_read(notif_id):
         return jsonify({"error": "Failed to mark notification as read"}), 500
 
 
+@bp.route('/profile', methods=['GET'])
+@admin_required
+def get_admin_profile():
+    """
+    GET /api/admin/profile
+    Get admin profile information
+    """
+    try:
+        admin = Admin.query.get(request.user_id)
+        if not admin:
+            return jsonify({"error": "Admin not found"}), 404
+        
+        admin_data = {
+            "id": admin.id,
+            "username": admin.username,
+            "created_at": admin.created_at.isoformat() if admin.created_at else None
+        }
+        
+        return jsonify(admin_data), 200
+        
+    except Exception as e:
+        app_logger.exception(f"Get admin profile error: {e}")
+        return jsonify({"error": "Failed to retrieve profile"}), 500
+
+
+@bp.route('/profile', methods=['PUT'])
+@admin_required
+def update_admin_profile():
+    """
+    PUT /api/admin/profile
+    Update admin profile information
+    """
+    try:
+        data = request.get_json()
+        admin = Admin.query.get(request.user_id)
+        
+        if not admin:
+            return jsonify({"error": "Admin not found"}), 404
+        
+        # Update allowed fields
+        allowed_fields = ['username']
+        for field in allowed_fields:
+            if field in data:
+                setattr(admin, field, data[field])
+        
+        db.session.commit()
+        
+        return jsonify({"message": "Profile updated successfully"}), 200
+        
+    except Exception as e:
+        db.session.rollback()
+        app_logger.exception(f"Update admin profile error: {e}")
+        return jsonify({"error": "Failed to update profile"}), 500
+
+
+@bp.route('/change-password', methods=['PUT'])
+@admin_required
+def change_password():
+    """
+    PUT /api/admin/change-password
+    Change admin password
+    """
+    try:
+        data = request.get_json()
+        current_password = data.get('current_password')
+        new_password = data.get('new_password')
+        
+        if not current_password or not new_password:
+            return jsonify({"error": "Current password and new password are required"}), 400
+        
+        admin = Admin.query.get(request.user_id)
+        if not admin:
+            return jsonify({"error": "Admin not found"}), 404
+        
+        from werkzeug.security import check_password_hash, generate_password_hash
+        if not check_password_hash(admin.password_hash, current_password):
+            return jsonify({"error": "Current password is incorrect"}), 401
+        
+        admin.password_hash = generate_password_hash(new_password)
+        db.session.commit()
+        
+        return jsonify({"message": "Password changed successfully"}), 200
+        
+    except Exception as e:
+        db.session.rollback()
+        app_logger.exception(f"Change password error: {e}")
+        return jsonify({"error": "Failed to change password"}), 500
+
+
 @bp.route('/product-catalog', methods=['GET'])
 @admin_required
 def get_product_catalog():

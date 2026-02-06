@@ -191,6 +191,9 @@ class Config:
     SMTP_PASS = os.getenv("SMTP_PASS")
     APP_BASE_URL = os.getenv("APP_BASE_URL")
     
+    # Mappls (MapmyIndia) API Configuration
+    MAPPLS_API_KEY = os.environ.get('MAPPLS_API_KEY', '')
+    
     # Production Security Settings
     if ENV == 'production':
         # Force HTTPS

@@ -7,7 +7,9 @@ from datetime import datetime
 import os
 import requests
 
-from app_pkg.models import db, Category, Thread, Comment, Customer, Vendor
+from config import Config
+from app_pkg.models import db, Category, Thread, Comment, Customer, Vendor, Support, Notification
+from werkzeug.security import check_password_hash, generate_password_hash
 from app_pkg.auth import login_required, role_required
 from app_pkg.schemas import category_schema, categories_schema, thread_schema, threads_schema, comment_schema, comments_schema
 from app_pkg.logger_config import app_logger
@@ -390,12 +392,162 @@ def update_profile():
         return jsonify({"error": "Failed to update profile"}), 500
 
 
+@bp.route('/support/profile', methods=['GET'])
+@role_required(['support'])
+def get_support_profile():
+    """
+    GET /api/support/profile
+    Get support profile information
+    """
+    try:
+        support = Support.query.get(request.user_id)
+        if not support:
+            return jsonify({"error": "Support user not found"}), 404
+        
+        support_data = {
+            "id": support.id,
+            "username": support.username,
+            "name": support.name,
+            "email": support.email,
+            "phone": support.phone,
+            "is_active": support.is_active,
+            "created_at": support.created_at.isoformat() if support.created_at else None
+        }
+        
+        return jsonify(support_data), 200
+        
+    except Exception as e:
+        app_logger.exception(f"Get support profile error: {e}")
+        return jsonify({"error": "Failed to retrieve profile"}), 500
+
+
+@bp.route('/support/profile', methods=['PUT'])
+@role_required(['support'])
+def update_support_profile():
+    """
+    PUT /api/support/profile
+    Update support profile information
+    """
+    try:
+        data = request.get_json()
+        support = Support.query.get(request.user_id)
+        
+        if not support:
+            return jsonify({"error": "Support user not found"}), 404
+        
+        # Update allowed fields
+        allowed_fields = ['username', 'name', 'phone']
+        for field in allowed_fields:
+            if field in data:
+                setattr(support, field, data[field])
+        
+        support.updated_at = datetime.utcnow()
+        db.session.commit()
+        
+        return jsonify({"message": "Profile updated successfully"}), 200
+        
+    except Exception as e:
+        db.session.rollback()
+        app_logger.exception(f"Update support profile error: {e}")
+        return jsonify({"error": "Failed to update profile"}), 500
+
+
+@bp.route('/support/notifications', methods=['GET'])
+@role_required(['support'])
+def get_support_notifications():
+    """
+    GET /api/support/notifications
+    Get support notifications
+    """
+    try:
+        unread_only = request.args.get('unread_only', 'false').lower() == 'true'
+        
+        query = Notification.query.filter_by(user_id=request.user_id, user_type='support')
+        
+        if unread_only:
+            query = query.filter_by(is_read=False)
+        
+        notifs = query.order_by(Notification.created_at.desc()).limit(50).all()
+        
+        return jsonify([{
+            'id': n.id,
+            'title': n.title,
+            'message': n.message,
+            'type': n.type,
+            'is_read': n.is_read,
+            'created_at': n.created_at.isoformat() if n.created_at else None
+        } for n in notifs]), 200
+        
+    except Exception as e:
+        app_logger.exception(f"Get support notifications error: {e}")
+        return jsonify({"error": "Failed to retrieve notifications"}), 500
+
+
+@bp.route('/support/notifications/<int:notif_id>/read', methods=['POST'])
+@role_required(['support'])
+def mark_support_notification_read(notif_id):
+    """
+    POST /api/support/notifications/<notif_id>/read
+    Mark notification as read
+    """
+    try:
+        notif = Notification.query.get(notif_id)
+        if not notif:
+            return jsonify({"error": "Notification not found"}), 404
+        
+        if notif.user_id != request.user_id:
+            return jsonify({"error": "Unauthorized"}), 403
+        
+        notif.is_read = True
+        db.session.commit()
+        
+        return jsonify({"message": "Notification marked as read"}), 200
+        
+    except Exception as e:
+        db.session.rollback()
+        app_logger.exception(f"Mark notification read error: {e}")
+        return jsonify({"error": "Failed to mark notification as read"}), 500
+
+
+@bp.route('/support/change-password', methods=['PUT'])
+@role_required(['support'])
+def change_support_password():
+    """
+    PUT /api/support/change-password
+    Change support password
+    """
+    try:
+        data = request.get_json()
+        current_password = data.get('current_password')
+        new_password = data.get('new_password')
+        
+        if not current_password or not new_password:
+            return jsonify({"error": "Current password and new password are required"}), 400
+        
+        support = Support.query.get(request.user_id)
+        if not support:
+            return jsonify({"error": "Support user not found"}), 404
+        
+        if not check_password_hash(support.password_hash, current_password):
+            return jsonify({"error": "Current password is incorrect"}), 401
+        
+        support.password_hash = generate_password_hash(new_password)
+        db.session.commit()
+        
+        return jsonify({"message": "Password changed successfully"}), 200
+        
+    except Exception as e:
+        db.session.rollback()
+        app_logger.exception(f"Change password error: {e}")
+        return jsonify({"error": "Failed to change password"}), 500
+
+
 @bp.route('/change-password', methods=['PUT'])
 @login_required
 def change_password():
     """
     PUT /api/change-password
-    Change user password (customer or vendor)
+    Change user password (customer or vendor) - Legacy endpoint for backward compatibility
     """
     try:
         data = request.get_json()
@@ -418,7 +570,6 @@ def change_password():
         if not user:
             return jsonify({"error": "User not found"}), 404
         
-        from werkzeug.security import check_password_hash, generate_password_hash
         if not check_password_hash(user.password_hash, current_password):
             return jsonify({"error": "Current password is incorrect"}), 401
         
