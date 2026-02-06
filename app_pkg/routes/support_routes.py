@@ -27,10 +27,13 @@ def get_config():
     Only accessible to authenticated users
     """
     try:
-        api_key = os.environ.get('MAPPLS_API_KEY', '')
+        from config import Config
+        api_key = Config.MAPPLS_API_KEY
         
         return jsonify({
-            "mapplsApiKey": api_key
+            "mappls": {
+                "apiKey": api_key
+            }
         }), 200
         
     except Exception as e:
