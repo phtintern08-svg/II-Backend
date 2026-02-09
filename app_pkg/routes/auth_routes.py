@@ -412,6 +412,7 @@ def authenticate():
                 "username": support.username,
                 "email": support.email,
                 "phone": support.phone,
+                "token": token,  # Include token in response for localStorage (cookie is HttpOnly)
                 "redirect_url": redirect_url
             })
             response.set_cookie(
