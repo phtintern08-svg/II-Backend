@@ -70,6 +70,7 @@ def create_app(config_class=Config):
             admin_routes,
             customer_routes,
             support_routes,
+            config_routes,
             health
         )
 
@@ -80,6 +81,7 @@ def create_app(config_class=Config):
         app.register_blueprint(admin_routes.bp, url_prefix="/api")
         app.register_blueprint(customer_routes.bp)  # prefix already in blueprint definition
         app.register_blueprint(support_routes.bp, url_prefix="/api")
+        app.register_blueprint(config_routes.bp)  # prefix already in blueprint definition
         app.register_blueprint(health.bp, url_prefix="/api")
         
         app_logger.info("All blueprints registered successfully")

@@ -145,11 +145,11 @@ class Config:
     CSP_DEFAULT_SRC = "'self'"
     # ⚠️ SECURITY NOTE: 'unsafe-eval' weakens CSP but may be needed for some libraries
     # TODO: Remove 'unsafe-eval' once all dependencies are stable and don't require eval
-    CSP_SCRIPT_SRC = "'self' 'unsafe-inline' 'unsafe-eval'"  # Adjust based on your needs
-    CSP_STYLE_SRC = "'self' 'unsafe-inline'"
+    CSP_SCRIPT_SRC = "'self' 'unsafe-inline' 'unsafe-eval' https://apis.mappls.com"
+    CSP_STYLE_SRC = "'self' 'unsafe-inline' https://apis.mappls.com"
     CSP_IMG_SRC = "'self' data: https:"
     CSP_FONT_SRC = "'self' data:"
-    CSP_CONNECT_SRC = "'self'"
+    CSP_CONNECT_SRC = "'self' https://apis.mappls.com https://*.mappls.com"
     CSP_FRAME_ANCESTORS = "'none'"
     
     # CORS Configuration
