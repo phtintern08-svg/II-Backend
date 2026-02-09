@@ -4,6 +4,7 @@ from flask_mail import Mail
 from flask_limiter import Limiter
 from flask_limiter.util import get_remote_address
 from flask_wtf.csrf import CSRFProtect
+from flask_talisman import Talisman
 
 from config import Config
 from app_pkg.models import db
@@ -43,6 +44,49 @@ def create_app(config_class=Config):
     # Only initialize CSRF if explicitly enabled (for future HTML form support if needed)
     if app.config.get('WTF_CSRF_ENABLED', False):
         csrf.init_app(app)
+
+    # Content Security Policy (CSP) - CRITICAL for Mappls SDK to load sub-scripts
+    # Without this, browser silently blocks Mappls internal scripts
+    # Flask-Talisman expects snake_case keys, not kebab-case
+    csp = {
+        "default-src": "'self'",
+        "script-src": [
+            "'self'",
+            "'unsafe-inline'",
+            "'unsafe-eval'",
+            "https://apis.mappls.com",
+            "https://cdn.mappls.com",
+            "https://*.mappls.com"
+        ],
+        "style-src": [
+            "'self'",
+            "'unsafe-inline'",
+            "https://apis.mappls.com",
+            "https://cdn.mappls.com",
+            "https://*.mappls.com"
+        ],
+        "connect-src": [
+            "'self'",
+            "https://apis.mappls.com",
+            "https://cdn.mappls.com",
+            "https://*.mappls.com"
+        ],
+        "img-src": [
+            "'self'",
+            "data:",
+            "blob:",
+            "https:"
+        ],
+        "font-src": [
+            "'self'",
+            "data:",
+            "https:"
+        ],
+        "frame_ancestors": "'none'"  # Flask-Talisman uses snake_case, not kebab-case
+    }
+    
+    # Apply CSP using Talisman
+    Talisman(app, content_security_policy=csp, force_https=False)
 
     # Enable CORS with explicit origins for cross-subdomain cookie support
     # When using credentials, must specify exact origins (cannot use *)
