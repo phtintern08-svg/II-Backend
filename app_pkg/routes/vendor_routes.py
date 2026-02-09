@@ -38,9 +38,17 @@ def get_vendor_profile():
             "business_name": vendor.business_name,
             "business_type": vendor.business_type,
             "address": vendor.address,
+            "bio": vendor.bio,
+            "avatar_url": vendor.avatar_url,
             "verification_status": vendor.verification_status,
             "commission_rate": float(vendor.commission_rate) if vendor.commission_rate else 0,
             "service_zone": vendor.service_zone,
+            "city": vendor.city,
+            "state": vendor.state,
+            "pincode": vendor.pincode,
+            "latitude": float(vendor.latitude) if vendor.latitude else None,
+            "longitude": float(vendor.longitude) if vendor.longitude else None,
+            "current_address": vendor.current_address,
             "created_at": vendor.created_at.isoformat() if vendor.created_at else None
         }
         

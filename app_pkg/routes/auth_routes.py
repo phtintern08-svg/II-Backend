@@ -317,6 +317,7 @@ def authenticate():
                 "username": vendor.username,
                 "email": vendor.email,
                 "phone": vendor.phone,
+                "token": token,  # Include token in response for localStorage (cookie is HttpOnly)
                 "redirect_url": redirect_url
             })
             response.set_cookie(
