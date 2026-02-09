@@ -19,6 +19,7 @@ bp = Blueprint('vendor', __name__, url_prefix='/vendor')
 
 
 @bp.route('/profile', methods=['GET'])
+@login_required
 @role_required(['vendor'])
 def get_vendor_profile():
     """
@@ -26,10 +27,16 @@ def get_vendor_profile():
     Get vendor profile information
     """
     try:
-        # Debug: Verify request.user_id is set
-        app_logger.debug(f"Vendor profile request - user_id={getattr(request, 'user_id', None)}, role={getattr(request, 'role', None)}")
+        # ✅ CRITICAL: Verify request.user_id is set by @login_required decorator
+        user_id = getattr(request, 'user_id', None)
+        role = getattr(request, 'role', None)
+        app_logger.info(f"Vendor profile request - user_id={user_id}, role={role}")
         
-        vendor = Vendor.query.get(request.user_id)
+        if not user_id:
+            app_logger.error("CRITICAL: request.user_id is None! @login_required may not be working correctly.")
+            return jsonify({"error": "Authentication failed", "code": "USER_ID_NOT_SET"}), 401
+        
+        vendor = Vendor.query.get(user_id)
         if not vendor:
             return jsonify({"error": "Vendor not found"}), 404
         
@@ -63,6 +70,7 @@ def get_vendor_profile():
 
 
 @bp.route('/profile', methods=['PUT'])
+@login_required
 @role_required(['vendor'])
 def update_vendor_profile():
     """
@@ -135,6 +143,7 @@ def update_vendor_profile():
 
 
 @bp.route('/quotations', methods=['GET'])
+@login_required
 @role_required(['vendor'])
 def get_vendor_quotations():
     """
@@ -163,6 +172,7 @@ def get_vendor_quotations():
 
 
 @bp.route('/quotations', methods=['POST'])
+@login_required
 @role_required(['vendor'])
 def submit_quotation():
     """
@@ -226,6 +236,7 @@ def submit_quotation():
 
 
 @bp.route('/orders/all', methods=['GET'])
+@login_required
 @role_required(['vendor'])
 def get_vendor_orders():
     """
@@ -264,6 +275,7 @@ def get_vendor_orders():
 
 
 @bp.route('/verification/upload', methods=['POST'])
+@login_required
 @role_required(['vendor'])
 def upload_verification_document():
     """
@@ -358,6 +370,7 @@ def upload_verification_document():
 
 
 @bp.route('/verification/submit', methods=['POST'])
+@login_required
 @role_required(['vendor'])
 def submit_verification():
     """
@@ -406,6 +419,7 @@ def submit_verification():
 
 
 @bp.route('/verification/status', methods=['GET'])
+@login_required
 @role_required(['vendor'])
 def get_verification_status():
     """
@@ -468,6 +482,7 @@ def get_verification_status():
 
 
 @bp.route('/verification/document/<doc_type>', methods=['GET'])
+@login_required
 @role_required(['vendor'])
 def get_verification_document(doc_type):
     """
@@ -504,6 +519,7 @@ def get_verification_document(doc_type):
 
 
 @bp.route('/quotation/submit', methods=['POST'])
+@login_required
 @role_required(['vendor'])
 def submit_quotation_file():
     """
@@ -576,6 +592,7 @@ def submit_quotation_file():
 
 
 @bp.route('/quotation/status', methods=['GET'])
+@login_required
 @role_required(['vendor'])
 def get_quotation_status():
     """
@@ -606,6 +623,7 @@ def get_quotation_status():
 
 
 @bp.route('/orders', methods=['GET'])
+@login_required
 @role_required(['vendor'])
 def get_vendor_orders_filtered():
     """
@@ -674,6 +692,7 @@ def get_vendor_orders_filtered():
 
 
 @bp.route('/dashboard/stats', methods=['GET'])
+@login_required
 @role_required(['vendor'])
 def get_dashboard_stats():
     """
@@ -711,6 +730,7 @@ def get_dashboard_stats():
 
 
 @bp.route('/notifications', methods=['GET'])
+@login_required
 @role_required(['vendor'])
 def get_notifications():
     """
@@ -738,6 +758,7 @@ def get_notifications():
 
 
 @bp.route('/notifications/<int:notif_id>/read', methods=['POST'])
+@login_required
 @role_required(['vendor'])
 def mark_notification_read(notif_id):
     """
@@ -764,6 +785,7 @@ def mark_notification_read(notif_id):
 
 
 @bp.route('/change-password', methods=['PUT'])
+@login_required
 @role_required(['vendor'])
 def change_password():
     """
@@ -801,6 +823,7 @@ def change_password():
 
 
 @bp.route('/orders/<int:order_id>/production-stage', methods=['PUT'])
+@login_required
 @role_required(['vendor'])
 def update_production_stage(order_id):
     """
@@ -900,6 +923,7 @@ def update_production_stage(order_id):
 
 
 @bp.route('/orders/<int:order_id>/move-to-production', methods=['POST'])
+@login_required
 @role_required(['vendor'])
 def move_to_production(order_id):
     """
@@ -956,6 +980,7 @@ def move_to_production(order_id):
 
 
 @bp.route('/orders/<int:order_id>/reject', methods=['POST'])
+@login_required
 @role_required(['vendor'])
 def reject_order(order_id):
     """
@@ -1012,6 +1037,7 @@ def reject_order(order_id):
 
 
 @bp.route('/update-location', methods=['POST'])
+@login_required
 @role_required(['vendor'])
 def update_location():
     """
@@ -1041,6 +1067,7 @@ def update_location():
 
 
 @bp.route('/update-location-details', methods=['POST'])
+@login_required
 @role_required(['vendor'])
 def update_location_details():
     """
@@ -1077,6 +1104,7 @@ def update_location_details():
 
 
 @bp.route('/order-stats', methods=['GET'])
+@login_required
 @role_required(['vendor'])
 def get_order_stats():
     """
@@ -1119,6 +1147,7 @@ def get_order_stats():
 
 
 @bp.route('/track-delivery/<int:delivery_id>', methods=['GET'])
+@login_required
 @role_required(['vendor', 'admin', 'customer'])
 def track_delivery(delivery_id):
     """
@@ -1172,6 +1201,7 @@ def track_delivery(delivery_id):
 
 
 @bp.route('/new-orders', methods=['GET'])
+@login_required
 @role_required(['vendor'])
 def get_new_orders():
     """
