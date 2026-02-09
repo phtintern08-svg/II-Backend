@@ -173,6 +173,15 @@ def create_app(config_class=Config):
     app_logger.info("Flask application initialized successfully")
     app_logger.info(f"Environment: {app.config.get('ENV')}")
     app_logger.info(f"Debug mode: {app.config.get('DEBUG')}")
+    
+    # CRITICAL: Verify MAPPLS_API_KEY is loaded at startup
+    mappls_key = app.config.get('MAPPLS_API_KEY', '')
+    if mappls_key:
+        app_logger.info("✅ MAPPLS_API_KEY loaded at startup (length: %d)", len(mappls_key))
+    else:
+        app_logger.error("❌ MAPPLS_API_KEY is EMPTY at startup!")
+        app_logger.error("   PRODUCTION FIX: Set MAPPLS_API_KEY in cPanel → Setup Python App → Environment Variables")
+        app_logger.error("   Then restart the application")
 
     return app
 

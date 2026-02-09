@@ -20,19 +20,28 @@ def get_frontend_config():
         # Get API key from app config (loaded from environment)
         api_key = current_app.config.get("MAPPLS_API_KEY", "")
         
-        # Log for debugging (without exposing full key)
+        # CRITICAL DEBUG LOGGING - Log what we're sending to frontend
         if api_key:
-            app_logger.info("Mappls API key found in config (length: %d)", len(api_key))
+            app_logger.info("✅ /api/config: Mappls API key found (length: %d, first 4 chars: %s)", 
+                          len(api_key), api_key[:4] if len(api_key) >= 4 else "N/A")
         else:
-            app_logger.warning("Mappls API key is empty or not set in environment")
+            app_logger.error("❌ /api/config: MAPPLS_API_KEY is EMPTY or NOT SET in environment!")
+            app_logger.error("   Check: 1) .env file exists, 2) Environment variable in cPanel, 3) Passenger restart")
         
-        return jsonify({
+        # Build response
+        response_data = {
             "mappls": {
                 "apiKey": api_key
             }
-        })
+        }
+        
+        # Log the response structure being sent
+        app_logger.info("📤 /api/config response: %s", 
+                       {"mappls": {"apiKey": api_key[:10] + "..." if len(api_key) > 10 else api_key}})
+        
+        return jsonify(response_data)
     except Exception as e:
-        app_logger.error("Error in /api/config endpoint: %s", str(e))
+        app_logger.error("❌ /api/config ERROR: %s", str(e), exc_info=True)
         # Return empty key rather than failing completely
         return jsonify({
             "mappls": {
