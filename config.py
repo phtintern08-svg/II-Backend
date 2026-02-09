@@ -192,7 +192,14 @@ class Config:
     APP_BASE_URL = os.getenv("APP_BASE_URL")
     
     # Mappls (MapmyIndia) API Configuration
-    MAPPLS_API_KEY = os.environ.get('MAPPLS_API_KEY', '')
+    # Mappls API Keys - Separate keys for JS (frontend) and REST (backend)
+    # MAPPLS_JS_KEY: Used for frontend map rendering (maps-js-key)
+    # MAPPLS_REST_KEY: Used for backend reverse geocoding (Default Key)
+    MAPPLS_JS_KEY = os.environ.get('MAPPLS_JS_KEY', '')
+    MAPPLS_REST_KEY = os.environ.get('MAPPLS_REST_KEY', '')
+    
+    # Legacy support: MAPPLS_API_KEY defaults to JS_KEY for backward compatibility
+    MAPPLS_API_KEY = os.environ.get('MAPPLS_API_KEY', os.environ.get('MAPPLS_JS_KEY', ''))
     
     # Production Security Settings
     if ENV == 'production':

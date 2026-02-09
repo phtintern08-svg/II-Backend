@@ -174,13 +174,23 @@ def create_app(config_class=Config):
     app_logger.info(f"Environment: {app.config.get('ENV')}")
     app_logger.info(f"Debug mode: {app.config.get('DEBUG')}")
     
-    # CRITICAL: Verify MAPPLS_API_KEY is loaded at startup
-    mappls_key = app.config.get('MAPPLS_API_KEY', '')
-    if mappls_key:
-        app_logger.info("✅ MAPPLS_API_KEY loaded at startup (length: %d)", len(mappls_key))
+    # CRITICAL: Verify Mappls keys are loaded at startup
+    mappls_js_key = app.config.get('MAPPLS_JS_KEY', '')
+    mappls_rest_key = app.config.get('MAPPLS_REST_KEY', '')
+    
+    if mappls_js_key:
+        app_logger.info("✅ MAPPLS_JS_KEY loaded at startup (length: %d)", len(mappls_js_key))
     else:
-        app_logger.error("❌ MAPPLS_API_KEY is EMPTY at startup!")
-        app_logger.error("   PRODUCTION FIX: Set MAPPLS_API_KEY in cPanel → Setup Python App → Environment Variables")
+        app_logger.error("❌ MAPPLS_JS_KEY is EMPTY at startup!")
+        app_logger.error("   PRODUCTION FIX: Set MAPPLS_JS_KEY in cPanel → Setup Python App → Environment Variables")
+    
+    if mappls_rest_key:
+        app_logger.info("✅ MAPPLS_REST_KEY loaded at startup (length: %d)", len(mappls_rest_key))
+    else:
+        app_logger.error("❌ MAPPLS_REST_KEY is EMPTY at startup!")
+        app_logger.error("   PRODUCTION FIX: Set MAPPLS_REST_KEY in cPanel → Setup Python App → Environment Variables")
+    
+    if not mappls_js_key and not mappls_rest_key:
         app_logger.error("   Then restart the application")
 
     return app

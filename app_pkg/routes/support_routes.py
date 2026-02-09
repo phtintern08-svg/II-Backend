@@ -28,7 +28,8 @@ def get_config():
     """
     try:
         from config import Config
-        api_key = Config.MAPPLS_API_KEY
+        # Use JS key for frontend map rendering (maps-js-key)
+        api_key = Config.MAPPLS_JS_KEY or Config.MAPPLS_API_KEY
         
         return jsonify({
             "mappls": {
@@ -94,14 +95,16 @@ def reverse_geocode():
         except ValueError:
             return jsonify({"error": "Latitude and longitude must be valid numbers"}), 400
         
-        api_key = current_app.config.get('MAPPLS_API_KEY') or os.environ.get('MAPPLS_API_KEY')
+        # Use REST key for backend reverse geocoding (not JS key)
+        api_key = current_app.config.get('MAPPLS_REST_KEY') or os.environ.get('MAPPLS_REST_KEY')
         if not api_key:
-            app_logger.error("MAPPLS_API_KEY not configured")
+            app_logger.error("MAPPLS_REST_KEY not configured")
             return jsonify({"error": "Map service not configured"}), 500
         
-        url = f"https://apis.mappls.com/advancedmaps/v1/{api_key}/rev_geocode?lat={lat}&lng={lng}"
+        url = f"https://apis.mappls.com/advancedmaps/v1/{api_key}/rev_geocode"
+        params = {"lat": lat, "lng": lng}
         
-        response = requests.get(url, timeout=10)
+        response = requests.get(url, params=params, timeout=10)
         if response.status_code != 200:
             app_logger.warning(f"Mappls reverse geocode API returned {response.status_code}: {response.text[:200]}")
             return jsonify({"error": "Failed to fetch from MapmyIndia"}), response.status_code
@@ -148,9 +151,10 @@ def geocode():
         if not query:
             return jsonify({"error": "Query parameter required"}), 400
         
-        api_key = os.environ.get('MAPPLS_API_KEY')
+        # Use REST key for backend geocoding (Default Key)
+        api_key = current_app.config.get('MAPPLS_REST_KEY') or os.environ.get('MAPPLS_REST_KEY')
         if not api_key:
-            return jsonify({"error": "MAPPLS_API_KEY environment variable is required"}), 500
+            return jsonify({"error": "MAPPLS_REST_KEY environment variable is required"}), 500
         
         headers = {
             'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36',

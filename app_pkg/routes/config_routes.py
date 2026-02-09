@@ -18,14 +18,15 @@ def get_frontend_config():
     """
     try:
         # Get API key from app config (loaded from environment)
-        api_key = current_app.config.get("MAPPLS_API_KEY", "")
+        # Use JS key for frontend map rendering (maps-js-key)
+        api_key = current_app.config.get("MAPPLS_JS_KEY", "") or current_app.config.get("MAPPLS_API_KEY", "")
         
         # CRITICAL DEBUG LOGGING - Log what we're sending to frontend
         if api_key:
-            app_logger.info("✅ /api/config: Mappls API key found (length: %d, first 4 chars: %s)", 
+            app_logger.info("✅ /api/config: Mappls JS key found (length: %d, first 4 chars: %s)", 
                           len(api_key), api_key[:4] if len(api_key) >= 4 else "N/A")
         else:
-            app_logger.error("❌ /api/config: MAPPLS_API_KEY is EMPTY or NOT SET in environment!")
+            app_logger.error("❌ /api/config: MAPPLS_JS_KEY is EMPTY or NOT SET in environment!")
             app_logger.error("   Check: 1) .env file exists, 2) Environment variable in cPanel, 3) Passenger restart")
         
         # Build response
