@@ -2,7 +2,7 @@
 Support Routes Blueprint
 Handles support endpoints like config, geocoding, categories, threads, and profile updates
 """
-from flask import Blueprint, request, jsonify
+from flask import Blueprint, request, jsonify, current_app
 from datetime import datetime
 import os
 import requests
@@ -42,40 +42,41 @@ def get_config():
 
 
 @bp.route('/reverse-geocode', methods=['GET'])
-@login_required
 def reverse_geocode():
     """
     GET /api/reverse-geocode
     Reverse geocode coordinates to address
     Rate limited to prevent abuse of paid API
+    Public endpoint - no authentication required
     """
-    # Rate limit: 10 requests per minute per user
+    # Rate limit: 10 requests per minute per IP address
     # This prevents abuse of paid Mappls API
     if not hasattr(reverse_geocode, '_last_requests'):
         reverse_geocode._last_requests = {}
     
-    user_id = request.user_id
+    # Use IP address for rate limiting instead of user_id (works for unauthenticated requests)
+    client_ip = request.remote_addr or request.environ.get('HTTP_X_FORWARDED_FOR', 'unknown').split(',')[0].strip()
     current_time = datetime.utcnow().timestamp()
     
     # Clean old entries (older than 1 minute)
     reverse_geocode._last_requests = {
-        uid: times for uid, times in reverse_geocode._last_requests.items()
+        ip: times for ip, times in reverse_geocode._last_requests.items()
         if any(t > current_time - 60 for t in times)
     }
     
-    # Get user's request times in last minute
-    user_requests = reverse_geocode._last_requests.get(user_id, [])
-    user_requests = [t for t in user_requests if t > current_time - 60]
+    # Get IP's request times in last minute
+    ip_requests = reverse_geocode._last_requests.get(client_ip, [])
+    ip_requests = [t for t in ip_requests if t > current_time - 60]
     
-    if len(user_requests) >= 10:
+    if len(ip_requests) >= 10:
         return jsonify({
             "error": "Rate limit exceeded. Maximum 10 requests per minute.",
-            "retry_after": max(1, int(60 - (current_time - user_requests[0])))
+            "retry_after": max(1, int(60 - (current_time - ip_requests[0])))
         }), 429
     
     # Add current request
-    user_requests.append(current_time)
-    reverse_geocode._last_requests[user_id] = user_requests
+    ip_requests.append(current_time)
+    reverse_geocode._last_requests[client_ip] = ip_requests
     
     try:
         lat = request.args.get('lat')
@@ -84,18 +85,52 @@ def reverse_geocode():
         if not lat or not lng:
             return jsonify({"error": "Latitude and longitude required"}), 400
         
-        api_key = os.environ.get('MAPPLS_API_KEY')
+        # Validate lat/lng are numeric
+        try:
+            lat_float = float(lat)
+            lng_float = float(lng)
+            if not (-90 <= lat_float <= 90) or not (-180 <= lng_float <= 180):
+                return jsonify({"error": "Invalid latitude or longitude values"}), 400
+        except ValueError:
+            return jsonify({"error": "Latitude and longitude must be valid numbers"}), 400
+        
+        api_key = current_app.config.get('MAPPLS_API_KEY') or os.environ.get('MAPPLS_API_KEY')
         if not api_key:
-            return jsonify({"error": "MAPPLS_API_KEY environment variable is required"}), 500
+            app_logger.error("MAPPLS_API_KEY not configured")
+            return jsonify({"error": "Map service not configured"}), 500
         
         url = f"https://apis.mappls.com/advancedmaps/v1/{api_key}/rev_geocode?lat={lat}&lng={lng}"
         
         response = requests.get(url, timeout=10)
         if response.status_code != 200:
+            app_logger.warning(f"Mappls reverse geocode API returned {response.status_code}: {response.text[:200]}")
             return jsonify({"error": "Failed to fetch from MapmyIndia"}), response.status_code
         
-        return jsonify(response.json()), 200
+        data = response.json()
         
+        # Validate response structure
+        if not data or not isinstance(data, dict):
+            app_logger.warning(f"Invalid Mappls response format: {type(data)}")
+            return jsonify({"error": "Invalid response from map service"}), 502
+        
+        # Ensure response has results array (Mappls format)
+        if "results" not in data:
+            # Some Mappls responses might have different structure, try to normalize
+            if "responseCode" in data and data.get("responseCode") != 200:
+                error_msg = data.get("error", "Unknown error from map service")
+                app_logger.warning(f"Mappls API error: {error_msg}")
+                return jsonify({"error": error_msg}), 502
+            # If no results key, wrap the response
+            data = {"results": [data]} if data else {"results": []}
+        
+        return jsonify(data), 200
+        
+    except requests.exceptions.Timeout:
+        app_logger.error("Mappls reverse geocode timeout")
+        return jsonify({"error": "Request timeout. Please try again."}), 504
+    except requests.exceptions.RequestException as e:
+        app_logger.exception(f"Network error in reverse geocode: {e}")
+        return jsonify({"error": "Network error connecting to map service"}), 503
     except Exception as e:
         app_logger.exception(f"Reverse geocode error: {e}")
         return jsonify({"error": "Failed to reverse geocode"}), 500
