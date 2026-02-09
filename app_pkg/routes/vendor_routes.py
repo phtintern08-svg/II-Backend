@@ -26,6 +26,9 @@ def get_vendor_profile():
     Get vendor profile information
     """
     try:
+        # Debug: Verify request.user_id is set
+        app_logger.debug(f"Vendor profile request - user_id={getattr(request, 'user_id', None)}, role={getattr(request, 'role', None)}")
+        
         vendor = Vendor.query.get(request.user_id)
         if not vendor:
             return jsonify({"error": "Vendor not found"}), 404
@@ -73,16 +76,57 @@ def update_vendor_profile():
         if not vendor:
             return jsonify({"error": "Vendor not found"}), 404
         
-        # Update allowed fields
-        allowed_fields = ['business_name', 'phone', 'address', 'service_zone']
+        # Update allowed fields - expanded to match frontend expectations
+        allowed_fields = [
+            'business_name',
+            'phone',
+            'address',
+            'service_zone',
+            'business_type',
+            'bio',
+            'city',
+            'state',
+            'pincode',
+            'latitude',
+            'longitude',
+            'current_address'
+        ]
         for field in allowed_fields:
             if field in data:
-                setattr(vendor, field, data[field])
+                # Handle latitude/longitude conversion
+                if field in ['latitude', 'longitude'] and data[field] is not None:
+                    try:
+                        setattr(vendor, field, float(data[field]))
+                    except (ValueError, TypeError):
+                        app_logger.warning(f"Invalid {field} value: {data[field]}")
+                else:
+                    setattr(vendor, field, data[field])
         
-        vendor.updated_at = datetime.utcnow()
         db.session.commit()
         
-        return jsonify({"message": "Profile updated successfully"}), 200
+        # Return updated profile data to frontend for sync
+        vendor_data = {
+            "id": vendor.id,
+            "username": vendor.username,
+            "email": vendor.email,
+            "phone": vendor.phone,
+            "business_name": vendor.business_name,
+            "business_type": vendor.business_type,
+            "address": vendor.address,
+            "bio": vendor.bio,
+            "avatar_url": vendor.avatar_url,
+            "city": vendor.city,
+            "state": vendor.state,
+            "pincode": vendor.pincode,
+            "latitude": float(vendor.latitude) if vendor.latitude else None,
+            "longitude": float(vendor.longitude) if vendor.longitude else None,
+            "service_zone": vendor.service_zone
+        }
+        
+        return jsonify({
+            "message": "Profile updated successfully",
+            "profile": vendor_data
+        }), 200
         
     except Exception as e:
         db.session.rollback()
@@ -181,12 +225,12 @@ def submit_quotation():
         return jsonify({"error": "Failed to submit quotation"}), 500
 
 
-@bp.route('/orders', methods=['GET'])
+@bp.route('/orders/all', methods=['GET'])
 @role_required(['vendor'])
 def get_vendor_orders():
     """
-    GET /api/vendor/orders
-    Get all orders assigned to this vendor
+    GET /api/vendor/orders/all
+    Get all orders assigned to this vendor (without filtering)
     """
     try:
         # Get orders assigned to this vendor
