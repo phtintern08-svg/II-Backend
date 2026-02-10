@@ -230,7 +230,7 @@ def get_rider_delivery_stats(rider_id):
     }
 
 # Create blueprint
-bp = Blueprint('admin', __name__, url_prefix='/admin')
+bp = Blueprint('admin', __name__, url_prefix='/api/admin')
 
 
 @bp.route('/dashboard/stats', methods=['GET'])
