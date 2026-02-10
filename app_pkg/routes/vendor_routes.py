@@ -30,11 +30,12 @@ def get_vendor_profile():
         # ✅ CRITICAL: Verify request.user_id is set by @login_required decorator
         user_id = getattr(request, 'user_id', None)
         role = getattr(request, 'role', None)
-        app_logger.info(f"Vendor profile request - user_id={user_id}, role={role}")
         
         if not user_id:
-            app_logger.error("CRITICAL: request.user_id is None! @login_required may not be working correctly.")
+            app_logger.error("CRITICAL: request.user_id is None! Token authentication failed.")
             return jsonify({"error": "Authentication failed", "code": "USER_ID_NOT_SET"}), 401
+        
+        app_logger.info(f"TOKEN OK → user_id={user_id}, role={role}")
         
         vendor = Vendor.query.get(user_id)
         if not vendor:
