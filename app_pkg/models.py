@@ -1,5 +1,6 @@
 from flask_sqlalchemy import SQLAlchemy
 from datetime import datetime
+from sqlalchemy.dialects.mysql import JSON as MySQLJSON
 
 db = SQLAlchemy()
 
@@ -117,33 +118,34 @@ class VendorDocument(db.Model):
     vendor_id = db.Column(db.Integer, db.ForeignKey('vendors.id'), nullable=False, unique=True)
     
     # Documents (Binary Data) and Metadata (JSON: filename, mimetype, size, status, remarks)
+    # Using MySQL JSON type explicitly for proper JSON storage
     pan = db.Column(db.LargeBinary)
-    pan_meta = db.Column(db.JSON)
+    pan_meta = db.Column(MySQLJSON)
     pan_number = db.Column(db.String(20))
     
     aadhar = db.Column(db.LargeBinary)
-    aadhar_meta = db.Column(db.JSON)
+    aadhar_meta = db.Column(MySQLJSON)
     aadhar_number = db.Column(db.String(20))
     
     gst = db.Column(db.LargeBinary)
-    gst_meta = db.Column(db.JSON)
+    gst_meta = db.Column(MySQLJSON)
     gst_number = db.Column(db.String(20))
     
     business = db.Column(db.LargeBinary)
-    business_meta = db.Column(db.JSON)
+    business_meta = db.Column(MySQLJSON)
     
     bank = db.Column(db.LargeBinary)
-    bank_meta = db.Column(db.JSON)
+    bank_meta = db.Column(MySQLJSON)
     bank_account_number = db.Column(db.String(50))
     bank_holder_name = db.Column(db.String(100))
     bank_branch = db.Column(db.String(100))
     ifsc_code = db.Column(db.String(20))
     
     workshop = db.Column(db.LargeBinary)
-    workshop_meta = db.Column(db.JSON)
+    workshop_meta = db.Column(MySQLJSON)
     
     signature = db.Column(db.LargeBinary)
-    signature_meta = db.Column(db.JSON)
+    signature_meta = db.Column(MySQLJSON)
     
     
     updated_at = db.Column(db.DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
@@ -192,33 +194,34 @@ class RiderDocument(db.Model):
     rider_id = db.Column(db.Integer, db.ForeignKey('riders.id'), nullable=False, unique=True)
     
     # Documents (Binary Data) and Metadata (JSON: filename, mimetype, size, status, remarks)
+    # Using MySQL JSON type explicitly for proper JSON storage
     aadhar = db.Column(db.LargeBinary)
-    aadhar_meta = db.Column(db.JSON)
+    aadhar_meta = db.Column(MySQLJSON)
     aadhar_number = db.Column(db.String(20))
     
     dl = db.Column(db.LargeBinary)  # Driving License
-    dl_meta = db.Column(db.JSON)
+    dl_meta = db.Column(MySQLJSON)
     dl_number = db.Column(db.String(50))
     dl_name = db.Column(db.String(100))
     dl_validity = db.Column(db.String(50))
     
     pan = db.Column(db.LargeBinary)
-    pan_meta = db.Column(db.JSON)
+    pan_meta = db.Column(MySQLJSON)
     pan_number = db.Column(db.String(20))
     
     photo = db.Column(db.LargeBinary)  # Profile Photo
-    photo_meta = db.Column(db.JSON)
+    photo_meta = db.Column(MySQLJSON)
     
     vehicle_rc = db.Column(db.LargeBinary)  # Vehicle Registration Certificate
-    vehicle_rc_meta = db.Column(db.JSON)
+    vehicle_rc_meta = db.Column(MySQLJSON)
     vehicle_rc_number = db.Column(db.String(50))
     
     insurance = db.Column(db.LargeBinary)  # Vehicle Insurance
-    insurance_meta = db.Column(db.JSON)
+    insurance_meta = db.Column(MySQLJSON)
     insurance_policy_number = db.Column(db.String(50))
 
     bank = db.Column(db.LargeBinary)
-    bank_meta = db.Column(db.JSON)
+    bank_meta = db.Column(MySQLJSON)
     bank_account_number = db.Column(db.String(50))
     bank_holder_name = db.Column(db.String(100))
     bank_branch = db.Column(db.String(100))
