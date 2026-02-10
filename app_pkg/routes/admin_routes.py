@@ -1151,6 +1151,51 @@ def update_vendor_document_status(vendor_id, doc_type):
         return jsonify({"error": "Failed to update document status"}), 500
 
 
+@bp.route('/vendor-requests/<int:vendor_id>/document/<doc_type>', methods=['GET'])
+@admin_required
+def view_vendor_document(vendor_id, doc_type):
+    """
+    GET /api/admin/vendor-requests/<vendor_id>/document/<doc_type>
+    View vendor verification document (admin access)
+    """
+    try:
+        vendor = Vendor.query.get(vendor_id)
+        if not vendor:
+            return jsonify({"error": "Vendor not found"}), 404
+        
+        doc_row = VendorDocument.query.filter_by(vendor_id=vendor_id).first()
+        
+        if not doc_row or not hasattr(doc_row, doc_type):
+            return jsonify({"error": "Document not found"}), 404
+        
+        file_path = getattr(doc_row, doc_type)
+        meta = getattr(doc_row, f"{doc_type}_meta")
+        
+        if not file_path:
+            return jsonify({"error": "Document file path not found"}), 404
+        
+        if not meta:
+            return jsonify({"error": "Document metadata not found"}), 404
+        
+        # Get absolute file path
+        absolute_path = get_file_path_from_db(file_path)
+        
+        if not absolute_path or not os.path.exists(absolute_path):
+            return jsonify({"error": "File not found on disk"}), 404
+        
+        # Return file with proper MIME type
+        return send_file(
+            absolute_path,
+            mimetype=meta.get('mimetype', 'application/octet-stream') if isinstance(meta, dict) else 'application/octet-stream',
+            as_attachment=False,
+            download_name=meta.get('filename', f'{doc_type}.pdf') if isinstance(meta, dict) else f'{doc_type}.pdf'
+        )
+        
+    except Exception as e:
+        app_logger.exception(f"View vendor document error: {e}")
+        return jsonify({"error": "Failed to retrieve document"}), 500
+
+
 @bp.route('/verified-vendors', methods=['GET'])
 @admin_required
 def get_verified_vendors():
