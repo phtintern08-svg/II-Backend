@@ -15,7 +15,7 @@ from app_pkg.file_upload import validate_and_save_file, delete_file, get_file_pa
 from app_pkg.logger_config import app_logger
 
 # Create blueprint
-bp = Blueprint('vendor', __name__, url_prefix='/vendor')
+bp = Blueprint('vendor', __name__, url_prefix='/api/vendor')
 
 
 @bp.route('/profile', methods=['GET'])
