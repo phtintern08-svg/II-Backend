@@ -192,6 +192,26 @@ def create_app(config_class=Config):
     
     if not mappls_js_key and not mappls_rest_key:
         app_logger.error("   Then restart the application")
+    
+    # CRITICAL: Verify UPLOAD_FOLDER is configured
+    upload_folder = app.config.get('UPLOAD_FOLDER')
+    if upload_folder:
+        app_logger.info(f"✅ UPLOAD_FOLDER configured: {upload_folder}")
+        # Verify folder exists or can be created
+        import os
+        try:
+            os.makedirs(upload_folder, exist_ok=True)
+            # Create subdirectories
+            os.makedirs(os.path.join(upload_folder, 'vendor'), exist_ok=True)
+            os.makedirs(os.path.join(upload_folder, 'rider'), exist_ok=True)
+            app_logger.info("✅ Upload directories created/verified")
+        except Exception as e:
+            app_logger.error(f"❌ Failed to create upload directory: {e}")
+            app_logger.error("   PRODUCTION FIX: Ensure UPLOAD_FOLDER path is writable")
+    else:
+        app_logger.error("❌ UPLOAD_FOLDER is NOT configured!")
+        app_logger.error("   PRODUCTION FIX: Set UPLOAD_FOLDER in cPanel → Setup Python App → Environment Variables")
+        app_logger.error("   Example: /home/impromptuindian/uploads")
 
     return app
 

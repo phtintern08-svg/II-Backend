@@ -162,6 +162,32 @@ class Config:
     MAX_CONTENT_LENGTH = 16 * 1024 * 1024  # 16MB max file size
     UPLOAD_EXTENSIONS = {'.jpg', '.jpeg', '.png', '.gif', '.pdf', '.doc', '.docx'}
     
+    # Upload Folder Configuration
+    # For cPanel/Passenger: Use absolute path outside public_html for security
+    # Example: /home/impromptuindian/uploads
+    # For development: Use relative path from backend directory
+    UPLOAD_FOLDER = os.environ.get('UPLOAD_FOLDER')
+    if not UPLOAD_FOLDER:
+        # Default: Use absolute path in home directory (production) or relative (development)
+        if ENV == 'production':
+            # Production: Assume cPanel structure - use home directory
+            # This will be set via environment variable in cPanel
+            # Fallback to /home/username/uploads (will need to be set in cPanel env vars)
+            home_dir = os.path.expanduser('~')
+            UPLOAD_FOLDER = os.path.join(home_dir, 'uploads')
+        else:
+            # Development: Relative to backend directory
+            # config.py is in backend/, so go up one level to get project root, then into backend/uploads
+            config_dir = os.path.dirname(os.path.abspath(__file__))  # backend/
+            BASE_DIR = os.path.dirname(config_dir)  # project root
+            UPLOAD_FOLDER = os.path.join(BASE_DIR, 'backend', 'uploads')
+    
+    # Ensure UPLOAD_FOLDER is an absolute path
+    if not os.path.isabs(UPLOAD_FOLDER):
+        config_dir = os.path.dirname(os.path.abspath(__file__))  # backend/
+        BASE_DIR = os.path.dirname(config_dir)  # project root
+        UPLOAD_FOLDER = os.path.join(BASE_DIR, 'backend', UPLOAD_FOLDER)
+    
     # MSG91 Configuration - DISABLED
     # Get credentials from https://msg91.com
     # Authkey is required for MSG91 SMS API
