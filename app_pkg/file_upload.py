@@ -59,9 +59,15 @@ ALLOWED_MIME_TYPES = {
 
 # Endpoint-specific file type and size limits
 ENDPOINT_LIMITS = {
+    '/api/vendor/verification/upload': {
+        'allowed_types': ['image', 'document'],
+        'max_size': 2 * 1024 * 1024,  # 2MB
+        'restrict_to': ['application/pdf', 'image/jpeg'],  # Only PDF and JPG/JPEG
+    },
     '/vendor/verification/upload': {
         'allowed_types': ['image', 'document'],
-        'max_size': 10 * 1024 * 1024,  # 10MB
+        'max_size': 2 * 1024 * 1024,  # 2MB
+        'restrict_to': ['application/pdf', 'image/jpeg'],  # Only PDF and JPG/JPEG
     },
     '/rider/verification/upload': {
         'allowed_types': ['image', 'document'],
@@ -299,6 +305,12 @@ def validate_and_save_file(
     
     # Get detected MIME type
     detected_mime = get_file_mime_type(file_data, file.filename)
+    
+    # Additional restriction check for specific endpoints (e.g., vendor verification)
+    restrict_to = limits.get('restrict_to')
+    if restrict_to and detected_mime:
+        if detected_mime not in restrict_to:
+            return None, f"File type not allowed. Only {', '.join(restrict_to)} files are permitted."
     
     # Save file to disk
     file_path, save_error = save_file_to_disk(file, subfolder, user_id, doc_type)
