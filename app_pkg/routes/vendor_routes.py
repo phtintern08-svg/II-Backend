@@ -541,7 +541,11 @@ def submit_quotation_file():
     Submit quotation file after approval
     """
     try:
+        # Debug logging
+        app_logger.info(f"Quotation submit request - vendor_id={request.user_id}, files={list(request.files.keys())}, form_keys={list(request.form.keys())}")
+        
         if 'file' not in request.files:
+            app_logger.warning(f"Quotation submit failed: No file part in request")
             return jsonify({"error": "No file part"}), 400
         
         file = request.files['file']
@@ -549,17 +553,34 @@ def submit_quotation_file():
         vendor_id = request.user_id
         commission_rate = request.form.get('commission_rate')
         
-        if not file or not commission_rate:
-            return jsonify({"error": "Missing required data"}), 400
+        # Debug logging
+        app_logger.info(f"Quotation submit - file={file.filename if file else None}, commission_rate={commission_rate}, file_size={file.content_length if file else None}")
         
-        if float(commission_rate) < 15:
+        if not file or file.filename == '':
+            app_logger.warning(f"Quotation submit failed: File is empty or missing")
+            return jsonify({"error": "File is required"}), 400
+        
+        if not commission_rate:
+            app_logger.warning(f"Quotation submit failed: Commission rate missing")
+            return jsonify({"error": "Commission rate is required"}), 400
+        
+        try:
+            commission_float = float(commission_rate)
+        except (ValueError, TypeError):
+            app_logger.warning(f"Quotation submit failed: Invalid commission rate format: {commission_rate}")
+            return jsonify({"error": "Commission rate must be a valid number"}), 400
+        
+        if commission_float < 15:
+            app_logger.warning(f"Quotation submit failed: Commission rate too low: {commission_float}")
             return jsonify({"error": "Commission rate must be at least 15%"}), 400
         
         vendor = Vendor.query.get(vendor_id)
         if not vendor:
+            app_logger.warning(f"Quotation submit failed: Vendor not found: {vendor_id}")
             return jsonify({"error": "Vendor not found"}), 404
         
         if vendor.verification_status != 'approved':
+            app_logger.warning(f"Quotation submit failed: Vendor not approved: status={vendor.verification_status}")
             return jsonify({"error": "Vendor must be approved first"}), 403
         
         # Validate and save file
@@ -573,6 +594,7 @@ def submit_quotation_file():
         )
         
         if error:
+            app_logger.warning(f"Quotation submit failed: File validation error: {error}")
             return jsonify({"error": error}), 400
         
         # Check if submission already exists
@@ -583,7 +605,7 @@ def submit_quotation_file():
             existing.quotation_file = file_info['path']
             existing.quotation_filename = file_info['filename']
             existing.quotation_mimetype = file_info['mimetype']
-            existing.proposed_commission_rate = float(commission_rate)
+            existing.proposed_commission_rate = commission_float
             existing.status = 'pending'
             existing.submitted_at = datetime.utcnow()
         else:
@@ -592,7 +614,7 @@ def submit_quotation_file():
                 quotation_file=file_info['path'],
                 quotation_filename=file_info['filename'],
                 quotation_mimetype=file_info['mimetype'],
-                proposed_commission_rate=float(commission_rate)
+                proposed_commission_rate=commission_float
             )
             db.session.add(submission)
         
