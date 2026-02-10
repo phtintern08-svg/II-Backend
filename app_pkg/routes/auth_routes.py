@@ -151,6 +151,7 @@ def authenticate():
         # Extract and validate required fields
         identifier = data.get('identifier')
         password = data.get('password')
+        role_hint = data.get('role')  # Optional role hint from frontend
         
         # Check for missing required fields
         if not identifier or not password:
@@ -166,7 +167,7 @@ def authenticate():
             }, 400)
         
         # Ensure fields are strings and trim
-        identifier = str(identifier).strip()
+        identifier = str(identifier).strip().lower()  # ✅ FIX: Normalize to lowercase for case-insensitive matching
         password = str(password)
         
         if not identifier:
@@ -194,17 +195,148 @@ def authenticate():
                 "message": "Password must be 255 characters or less"
             }, 400)
         
-        # 1. Check Admin table (by username only) - impromptuindian_admin.admins
-        admin = Admin.query.filter_by(username=identifier).first()
-        if admin:
-            if not check_password_hash(admin.password_hash, password):
-                # Wrong password for existing admin
-                log_auth_event('login', False, identifier, admin.id, 'admin', request.remote_addr, error="Wrong password")
-                return json_response({
-                    "error": "Invalid credentials",
-                    "message": "Email or password incorrect"
-                }, 401)
-
+        # ✅ FIX: Improved authentication - search across all tables with case-insensitive matching
+        # If role_hint is provided, try that table first, then fallback to all tables
+        user = None
+        role_found = None
+        
+        # Normalize role_hint
+        if role_hint:
+            role_hint = role_hint.lower().strip()
+        
+        # Define search order: if role_hint provided, prioritize that table
+        search_order = []
+        if role_hint == 'admin':
+            search_order = ['admin', 'customer', 'vendor', 'rider', 'support']
+        elif role_hint == 'vendor':
+            search_order = ['vendor', 'customer', 'admin', 'rider', 'support']
+        elif role_hint == 'customer':
+            search_order = ['customer', 'vendor', 'admin', 'rider', 'support']
+        elif role_hint == 'rider':
+            search_order = ['rider', 'customer', 'vendor', 'admin', 'support']
+        elif role_hint == 'support':
+            search_order = ['support', 'admin', 'customer', 'vendor', 'rider']
+        else:
+            # Default search order if no hint
+            search_order = ['admin', 'customer', 'vendor', 'rider', 'support']
+        
+        # Search across tables
+        for table_role in search_order:
+            if table_role == 'admin':
+                # Admin: username only (case-insensitive)
+                admin = Admin.query.filter(Admin.username.ilike(identifier)).first()
+                if admin:
+                    if check_password_hash(admin.password_hash, password):
+                        user = admin
+                        role_found = 'admin'
+                        break
+                    else:
+                        # Wrong password - don't continue searching
+                        log_auth_event('login', False, identifier, admin.id, 'admin', request.remote_addr, error="Wrong password")
+                        return json_response({
+                            "error": "Invalid credentials",
+                            "message": "Email or password incorrect"
+                        }, 401)
+            
+            elif table_role == 'customer':
+                # Customer: email or phone (case-insensitive)
+                customer = Customer.query.filter(
+                    (Customer.email.ilike(identifier)) | (Customer.phone == identifier)
+                ).first()
+                if customer:
+                    if check_password_hash(customer.password_hash, password):
+                        # Check email verification
+                        if not customer.is_email_verified:
+                            return json_response({
+                                "error": "Email not verified",
+                                "message": "Please verify your email before logging in"
+                            }, 403)
+                        user = customer
+                        role_found = 'customer'
+                        break
+                    else:
+                        log_auth_event('login', False, identifier, customer.id, 'customer', request.remote_addr, error="Wrong password")
+                        return json_response({
+                            "error": "Invalid credentials",
+                            "message": "Email or password incorrect"
+                        }, 401)
+            
+            elif table_role == 'vendor':
+                # Vendor: email, phone, or username (case-insensitive)
+                vendor = Vendor.query.filter(
+                    (Vendor.email.ilike(identifier)) | 
+                    (Vendor.phone == identifier) |
+                    (Vendor.username.ilike(identifier))
+                ).first()
+                if vendor:
+                    if check_password_hash(vendor.password_hash, password):
+                        # Check email verification
+                        if not vendor.is_email_verified:
+                            return json_response({
+                                "error": "Email not verified",
+                                "message": "Please verify your email before logging in"
+                            }, 403)
+                        user = vendor
+                        role_found = 'vendor'
+                        break
+                    else:
+                        log_auth_event('login', False, identifier, vendor.id, 'vendor', request.remote_addr, error="Wrong password")
+                        return json_response({
+                            "error": "Invalid credentials",
+                            "message": "Email or password incorrect"
+                        }, 401)
+            
+            elif table_role == 'rider':
+                # Rider: email or phone (case-insensitive)
+                rider = Rider.query.filter(
+                    (Rider.email.ilike(identifier)) | (Rider.phone == identifier)
+                ).first()
+                if rider:
+                    if check_password_hash(rider.password_hash, password):
+                        # Check email verification
+                        if not rider.is_email_verified:
+                            return json_response({
+                                "error": "Email not verified",
+                                "message": "Please verify your email before logging in"
+                            }, 403)
+                        user = rider
+                        role_found = 'rider'
+                        break
+                    else:
+                        log_auth_event('login', False, identifier, rider.id, 'rider', request.remote_addr, error="Wrong password")
+                        return json_response({
+                            "error": "Invalid credentials",
+                            "message": "Email or password incorrect"
+                        }, 401)
+            
+            elif table_role == 'support':
+                # Support: email or phone (case-insensitive)
+                support = Support.query.filter(
+                    (Support.email.ilike(identifier)) | (Support.phone == identifier)
+                ).first()
+                if support:
+                    if check_password_hash(support.password_hash, password):
+                        user = support
+                        role_found = 'support'
+                        break
+                    else:
+                        log_auth_event('login', False, identifier, support.id, 'support', request.remote_addr, error="Wrong password")
+                        return json_response({
+                            "error": "Invalid credentials",
+                            "message": "Email or password incorrect"
+                        }, 401)
+        
+        # If no user found after searching all tables
+        if not user:
+            log_auth_event('login', False, identifier, None, None, request.remote_addr, error="Email/phone/username not found")
+            return json_response({
+                "error": "Invalid credentials",
+                "message": "Email/phone/username not found"
+            }, 401)
+        
+        # Generate token and response based on found user
+        if role_found == 'admin':
+            admin = user
             token = generate_token(
                 user_id=admin.id,
                 role="admin",
@@ -218,38 +350,8 @@ def authenticate():
                 "username": admin.username,
                 "redirect_url": "/admin/home.html"
             })
-            response.set_cookie(
-                "access_token",
-                token,
-                domain=f".{Config.BASE_DOMAIN}",  # .impromptuindian.com
-                httponly=True,
-                secure=True,  # REQUIRED when SameSite=None
-                samesite="None",  # Allows cross-subdomain POST requests
-                max_age=7 * 24 * 60 * 60  # 7 days
-            )
-            response.headers['Content-Type'] = 'application/json'
-            return response, 200
-        
-        # 2. Check Customer table (by email or phone) - impromptuindian_customer.customers
-        customer = Customer.query.filter(
-            (Customer.email == identifier) | (Customer.phone == identifier)
-        ).first()
-        if customer:
-            if not check_password_hash(customer.password_hash, password):
-                # Wrong password for existing customer
-                log_auth_event('login', False, identifier, customer.id, 'customer', request.remote_addr, error="Wrong password")
-                return json_response({
-                    "error": "Invalid credentials",
-                    "message": "Email or password incorrect"
-                }, 401)
-            
-            # Check email verification
-            if not customer.is_email_verified:
-                return json_response({
-                    "error": "Email not verified",
-                    "message": "Please verify your email before logging in"
-                }, 403)
-
+        elif role_found == 'customer':
+            customer = user
             token = generate_token(
                 user_id=customer.id,
                 role="customer",
@@ -268,38 +370,8 @@ def authenticate():
                 "token": token,  # Include token in response for localStorage (cookie is HttpOnly)
                 "redirect_url": "/customer/home.html"
             })
-            response.set_cookie(
-                "access_token",
-                token,
-                domain=f".{Config.BASE_DOMAIN}",  # .impromptuindian.com
-                httponly=True,
-                secure=True,  # REQUIRED when SameSite=None
-                samesite="None",  # Allows cross-subdomain POST requests
-                max_age=7 * 24 * 60 * 60  # 7 days
-            )
-            response.headers['Content-Type'] = 'application/json'
-            return response, 200
-        
-        # 3. Check Vendor table (by email or phone) - impromptuindian_vendor.vendors
-        vendor = Vendor.query.filter(
-            (Vendor.email == identifier) | (Vendor.phone == identifier)
-        ).first()
-        if vendor:
-            if not check_password_hash(vendor.password_hash, password):
-                # Wrong password for existing vendor
-                log_auth_event('login', False, identifier, vendor.id, 'vendor', request.remote_addr, error="Wrong password")
-                return json_response({
-                    "error": "Invalid credentials",
-                    "message": "Email or password incorrect"
-                }, 401)
-            
-            # Check email verification
-            if not vendor.is_email_verified:
-                return json_response({
-                    "error": "Email not verified",
-                    "message": "Please verify your email before logging in"
-                }, 403)
-
+        elif role_found == 'vendor':
+            vendor = user
             token = generate_token(
                 user_id=vendor.id,
                 role="vendor",
@@ -320,38 +392,8 @@ def authenticate():
                 "token": token,  # Include token in response for localStorage (cookie is HttpOnly)
                 "redirect_url": redirect_url
             })
-            response.set_cookie(
-                "access_token",
-                token,
-                domain=f".{Config.BASE_DOMAIN}",  # .impromptuindian.com
-                httponly=True,
-                secure=True,  # REQUIRED when SameSite=None
-                samesite="None",  # Allows cross-subdomain POST requests
-                max_age=7 * 24 * 60 * 60  # 7 days
-            )
-            response.headers['Content-Type'] = 'application/json'
-            return response, 200
-        
-        # 4. Check Rider table (by email or phone) - impromptuindian_rider.riders
-        rider = Rider.query.filter(
-            (Rider.email == identifier) | (Rider.phone == identifier)
-        ).first()
-        if rider:
-            if not check_password_hash(rider.password_hash, password):
-                # Wrong password for existing rider
-                log_auth_event('login', False, identifier, rider.id, 'rider', request.remote_addr, error="Wrong password")
-                return json_response({
-                    "error": "Invalid credentials",
-                    "message": "Email or password incorrect"
-                }, 401)
-            
-            # Check email verification
-            if not rider.is_email_verified:
-                return json_response({
-                    "error": "Email not verified",
-                    "message": "Please verify your email before logging in"
-                }, 403)
-
+        elif role_found == 'rider':
+            rider = user
             token = generate_token(
                 user_id=rider.id,
                 role="rider",
@@ -371,31 +413,8 @@ def authenticate():
                 "verification_status": rider.verification_status,
                 "redirect_url": redirect_url
             })
-            response.set_cookie(
-                "access_token",
-                token,
-                domain=f".{Config.BASE_DOMAIN}",  # .impromptuindian.com
-                httponly=True,
-                secure=True,  # REQUIRED when SameSite=None
-                samesite="None",  # Allows cross-subdomain POST requests
-                max_age=7 * 24 * 60 * 60  # 7 days
-            )
-            response.headers['Content-Type'] = 'application/json'
-            return response, 200
-        
-        # 5. Check Support table (by email or phone) - impromptuindian_support.support
-        support = Support.query.filter(
-            (Support.email == identifier) | (Support.phone == identifier)
-        ).first()
-        if support:
-            if not check_password_hash(support.password_hash, password):
-                # Wrong password for existing support user
-                log_auth_event('login', False, identifier, support.id, 'support', request.remote_addr, error="Wrong password")
-                return json_response({
-                    "error": "Invalid credentials",
-                    "message": "Email or password incorrect"
-                }, 401)
-
+        elif role_found == 'support':
+            support = user
             token = generate_token(
                 user_id=support.id,
                 role="support",
@@ -415,24 +434,26 @@ def authenticate():
                 "token": token,  # Include token in response for localStorage (cookie is HttpOnly)
                 "redirect_url": redirect_url
             })
-            response.set_cookie(
-                "access_token",
-                token,
-                domain=f".{Config.BASE_DOMAIN}",  # .impromptuindian.com
-                httponly=True,
-                secure=True,  # REQUIRED when SameSite=None
-                samesite="None",  # Allows cross-subdomain POST requests
-                max_age=7 * 24 * 60 * 60  # 7 days
-            )
-            response.headers['Content-Type'] = 'application/json'
-            return response, 200
+        else:
+            # This should never happen, but handle it gracefully
+            log_auth_event('login', False, identifier, None, None, request.remote_addr, error="Unknown role after authentication")
+            return json_response({
+                "error": "Internal server error",
+                "message": "Authentication succeeded but role could not be determined"
+            }, 500)
         
-        # If we reached here, identifier was not found in any table
-        log_auth_event('login', False, identifier, None, None, request.remote_addr, error="Email/phone/username not found")
-        return json_response({
-            "error": "Invalid credentials",
-            "message": "Email or password incorrect"
-        }, 401)
+        # Set cookie for all successful logins
+        response.set_cookie(
+            "access_token",
+            token,
+            domain=f".{Config.BASE_DOMAIN}",  # .impromptuindian.com
+            httponly=True,
+            secure=True,  # REQUIRED when SameSite=None
+            samesite="None",  # Allows cross-subdomain POST requests
+            max_age=7 * 24 * 60 * 60  # 7 days
+        )
+        response.headers['Content-Type'] = 'application/json'
+        return response, 200
         
     except Exception as e:
         # Log full exception details server-side only
