@@ -61,13 +61,13 @@ ALLOWED_MIME_TYPES = {
 ENDPOINT_LIMITS = {
     '/api/vendor/verification/upload': {
         'allowed_types': ['image', 'document'],
-        'max_size': 2 * 1024 * 1024,  # 2MB
-        'restrict_to': ['application/pdf', 'image/jpeg'],  # Only PDF and JPG/JPEG
+        'max_size': int(2.2 * 1024 * 1024),  # 2.2MB (allows for metadata/EXIF)
+        'restrict_to': ['application/pdf', 'image/jpeg', 'image/jpg'],  # PDF and JPG/JPEG variants
     },
     '/vendor/verification/upload': {
         'allowed_types': ['image', 'document'],
-        'max_size': 2 * 1024 * 1024,  # 2MB
-        'restrict_to': ['application/pdf', 'image/jpeg'],  # Only PDF and JPG/JPEG
+        'max_size': int(2.2 * 1024 * 1024),  # 2.2MB (allows for metadata/EXIF)
+        'restrict_to': ['application/pdf', 'image/jpeg', 'image/jpg'],  # PDF and JPG/JPEG variants
     },
     '/rider/verification/upload': {
         'allowed_types': ['image', 'document'],
@@ -309,8 +309,34 @@ def validate_and_save_file(
     # Additional restriction check for specific endpoints (e.g., vendor verification)
     restrict_to = limits.get('restrict_to')
     if restrict_to and detected_mime:
-        if detected_mime not in restrict_to:
-            return None, f"File type not allowed. Only {', '.join(restrict_to)} files are permitted."
+        # Normalize MIME type (remove charset/parameters, lowercase)
+        normalized_detected = detected_mime.split(';')[0].strip().lower()
+        
+        # Check against allowed MIME types (normalized)
+        normalized_allowed = [mime.split(';')[0].strip().lower() for mime in restrict_to]
+        
+        # Also check file extension as fallback
+        file_ext = os.path.splitext(file.filename)[1].lower()
+        extension_map = {
+            '.pdf': ['application/pdf'],
+            '.jpg': ['image/jpeg', 'image/jpg'],
+            '.jpeg': ['image/jpeg', 'image/jpg']
+        }
+        
+        # Check MIME type match
+        mime_match = normalized_detected in normalized_allowed
+        
+        # Check extension match (if MIME didn't match, try extension)
+        ext_match = False
+        if file_ext in extension_map:
+            ext_match = any(mime in normalized_allowed for mime in extension_map[file_ext])
+        
+        is_allowed = mime_match or ext_match
+        
+        if not is_allowed:
+            # Log for debugging
+            log_warning(f"File type rejected: detected_mime={detected_mime}, normalized={normalized_detected}, filename={file.filename}, ext={file_ext}, allowed={restrict_to}")
+            return None, f"File type not allowed. Detected: {detected_mime}. Only PDF, JPG, and JPEG files are permitted."
     
     # Save file to disk
     file_path, save_error = save_file_to_disk(file, subfolder, user_id, doc_type)

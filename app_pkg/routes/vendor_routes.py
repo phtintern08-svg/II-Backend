@@ -295,6 +295,16 @@ def upload_verification_document():
         if not file or not doc_type:
             return jsonify({"error": "Missing required data"}), 400
         
+        # Debug logging
+        file.seek(0)
+        file_data = file.read()
+        file.seek(0)  # Reset for validation
+        file_size = len(file_data)
+        file_ext = os.path.splitext(file.filename)[1].lower() if file.filename else ''
+        
+        app_logger.info(f"Upload attempt: vendor_id={vendor_id}, doc_type={doc_type}, filename={file.filename}, "
+                       f"content_type={file.content_type}, size={file_size}, ext={file_ext}")
+        
         vendor = Vendor.query.get(vendor_id)
         if not vendor:
             return jsonify({"error": "Vendor not found"}), 404
@@ -310,6 +320,8 @@ def upload_verification_document():
         )
         
         if error:
+            app_logger.warning(f"Upload validation failed: vendor_id={vendor_id}, doc_type={doc_type}, "
+                             f"filename={file.filename}, error={error}")
             return jsonify({"error": error}), 400
         
         # Get or create document row
