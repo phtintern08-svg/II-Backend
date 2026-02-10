@@ -2,15 +2,17 @@
 Admin Routes Blueprint
 Handles admin-specific endpoints for managing users, orders, and system settings
 """
-from flask import Blueprint, request, jsonify, send_file
+from flask import Blueprint, request, jsonify, send_file, current_app
 from datetime import datetime
 import os
 import math
+import csv
+from sqlalchemy import text
 
 from app_pkg.models import (
     db, Admin, Customer, Vendor, Rider, Order, OTPLog, Payment, 
     VendorDocument, VendorQuotationSubmission, RiderDocument, Notification,
-    VendorOrderAssignment, OrderStatusHistory, DeliveryLog
+    VendorOrderAssignment, OrderStatusHistory, DeliveryLog, ProductCatalog
 )
 from app_pkg.auth import login_required, admin_required
 from app_pkg.file_upload import get_file_path_from_db
@@ -811,6 +813,162 @@ def get_quotation_submissions():
         return jsonify({"error": "Failed to retrieve quotation submissions"}), 500
 
 
+# CSV Header Mapping: Maps CSV column names to database column names
+CSV_HEADER_MAP = {
+    "Product Type": "product_type",
+    "Category": "category",
+    "Neck Type": "neck_type",
+    "Fabric": "fabric",
+    "Size": "size",
+    "Base Cost": "base_cost",
+    "Notes": "notes"
+}
+
+
+def upsert_product_catalog(product_type, category, neck_type, fabric, size, price, notes=None):
+    """
+    Insert or update product catalog entry.
+    If product variant exists, update average_price and vendor_count.
+    If new, create with initial values.
+    
+    Args:
+        product_type: Product type (e.g., "T-Shirt")
+        category: Category (e.g., "Regular Fit")
+        neck_type: Neck type (e.g., "Crew Neck")
+        fabric: Fabric type (e.g., "Cotton")
+        size: Size (e.g., "M")
+        price: Base cost from vendor
+        notes: Optional notes
+    """
+    # Use MySQL's VALUES() function to reference the inserted value
+    # This works with MySQL 8.0.19+ and is the standard way to reference new values
+    sql = text("""
+        INSERT INTO product_catalog
+        (
+            product_type, category, neck_type, fabric, size,
+            notes, average_price, final_price, vendor_count
+        )
+        VALUES
+        (
+            :product_type, :category, :neck_type, :fabric, :size,
+            :notes, :price, :price, 1
+        )
+        ON DUPLICATE KEY UPDATE
+            average_price =
+              ((average_price * vendor_count) + :price)
+              / (vendor_count + 1),
+            vendor_count = vendor_count + 1,
+            final_price = :price,
+            notes = COALESCE(:notes, notes)
+    """)
+    
+    db.session.execute(sql, {
+        "product_type": product_type,
+        "category": category,
+        "neck_type": neck_type,
+        "fabric": fabric,
+        "size": size,
+        "price": price,
+        "notes": notes
+    })
+
+
+def process_quotation_csv(submission):
+    """
+    Process quotation CSV file and update product catalog.
+    
+    Args:
+        submission: VendorQuotationSubmission object with quotation_file path
+    """
+    try:
+        upload_root = current_app.config.get('UPLOAD_FOLDER')
+        if not upload_root:
+            app_logger.error("UPLOAD_FOLDER not configured")
+            raise ValueError("Upload folder not configured")
+        
+        csv_path = get_file_path_from_db(submission.quotation_file)
+        if not csv_path or not os.path.exists(csv_path):
+            app_logger.error(f"CSV file not found: {submission.quotation_file}")
+            raise FileNotFoundError(f"CSV file not found: {submission.quotation_file}")
+        
+        app_logger.info(f"Processing quotation CSV: {csv_path}")
+        
+        processed_count = 0
+        error_count = 0
+        
+        # Open CSV with UTF-8-sig encoding to handle BOM from Excel
+        with open(csv_path, newline='', encoding='utf-8-sig') as f:
+            reader = csv.DictReader(f)
+            
+            # Validate headers
+            csv_headers = reader.fieldnames
+            if not csv_headers:
+                raise ValueError("CSV file has no headers")
+            
+            # Check for required headers
+            required_headers = list(CSV_HEADER_MAP.keys())
+            missing_headers = [h for h in required_headers if h not in csv_headers]
+            if missing_headers:
+                app_logger.warning(f"Missing CSV headers: {missing_headers}. Available: {csv_headers}")
+            
+            for row_num, row in enumerate(reader, start=2):  # Start at 2 (header is row 1)
+                try:
+                    # Map CSV headers to database columns
+                    product = {}
+                    for csv_key, db_key in CSV_HEADER_MAP.items():
+                        if csv_key in row and row[csv_key]:
+                            product[db_key] = row[csv_key].strip()
+                    
+                    # Extract base_cost (required)
+                    if 'base_cost' not in product or not product['base_cost']:
+                        app_logger.warning(f"Row {row_num}: Missing Base Cost, skipping")
+                        error_count += 1
+                        continue
+                    
+                    try:
+                        base_cost = float(product.pop('base_cost'))
+                    except (ValueError, TypeError):
+                        app_logger.warning(f"Row {row_num}: Invalid Base Cost '{product.get('base_cost')}', skipping")
+                        error_count += 1
+                        continue
+                    
+                    # Validate required fields
+                    required_fields = ['product_type', 'category', 'neck_type', 'fabric', 'size']
+                    missing_fields = [f for f in required_fields if not product.get(f)]
+                    if missing_fields:
+                        app_logger.warning(f"Row {row_num}: Missing required fields {missing_fields}, skipping")
+                        error_count += 1
+                        continue
+                    
+                    # Extract notes (optional)
+                    notes = product.pop('notes', None)
+                    
+                    # Upsert product catalog
+                    upsert_product_catalog(
+                        product_type=product['product_type'],
+                        category=product['category'],
+                        neck_type=product['neck_type'],
+                        fabric=product['fabric'],
+                        size=product['size'],
+                        price=base_cost,
+                        notes=notes
+                    )
+                    
+                    processed_count += 1
+                    
+                except Exception as e:
+                    app_logger.warning(f"Row {row_num}: Error processing row: {e}")
+                    error_count += 1
+                    continue
+        
+        app_logger.info(f"CSV processing complete: {processed_count} rows processed, {error_count} errors")
+        return processed_count, error_count
+        
+    except Exception as e:
+        app_logger.exception(f"Error processing quotation CSV: {e}")
+        raise
+
+
 @bp.route('/quotation-submissions/<int:submission_id>/approve', methods=['POST'])
 @admin_required
 def approve_quotation_submission(submission_id):
@@ -844,6 +1002,22 @@ def approve_quotation_submission(submission_id):
         # Update vendor's commission rate
         vendor.commission_rate = float(final_commission_rate)
         
+        # Process CSV and update product catalog
+        processed_count = 0
+        error_count = 0
+        try:
+            processed_count, error_count = process_quotation_csv(submission)
+            app_logger.info(f"Quotation CSV processed: {processed_count} rows processed, {error_count} errors")
+        except Exception as csv_error:
+            app_logger.exception(f"Error processing quotation CSV: {csv_error}")
+            # Don't fail approval if CSV processing fails, but log it
+            # Admin can manually fix CSV issues
+            db.session.rollback()
+            return jsonify({
+                "error": "Failed to process quotation CSV",
+                "details": str(csv_error)
+            }), 500
+        
         db.session.commit()
         
         # Create notification
@@ -857,7 +1031,11 @@ def approve_quotation_submission(submission_id):
         db.session.add(notif)
         db.session.commit()
         
-        return jsonify({"message": "Quotation approved successfully"}), 200
+        return jsonify({
+            "message": "Quotation approved successfully",
+            "csv_processed": processed_count,
+            "csv_errors": error_count
+        }), 200
         
     except Exception as e:
         db.session.rollback()
