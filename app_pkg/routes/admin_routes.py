@@ -903,6 +903,40 @@ def reject_quotation_submission(submission_id):
         return jsonify({"error": "Failed to reject quotation"}), 500
 
 
+@bp.route('/quotation-submissions/<int:submission_id>/download', methods=['GET'])
+@admin_required
+def download_quotation(submission_id):
+    """
+    GET /api/admin/quotation-submissions/<submission_id>/download
+    Download quotation file (admin access)
+    """
+    try:
+        submission = VendorQuotationSubmission.query.get(submission_id)
+        if not submission:
+            return jsonify({"error": "Quotation submission not found"}), 404
+        
+        if not submission.quotation_file:
+            return jsonify({"error": "Quotation file not found"}), 404
+        
+        # Get absolute file path from relative path stored in database
+        absolute_path = get_file_path_from_db(submission.quotation_file)
+        
+        if not absolute_path or not os.path.exists(absolute_path):
+            return jsonify({"error": "File not found on disk"}), 404
+        
+        # Return file with proper MIME type and filename
+        return send_file(
+            absolute_path,
+            mimetype=submission.quotation_mimetype or 'text/csv',
+            as_attachment=True,
+            download_name=submission.quotation_filename or 'quotation.csv'
+        )
+        
+    except Exception as e:
+        app_logger.exception(f"Download quotation error: {e}")
+        return jsonify({"error": "Failed to download quotation file"}), 500
+
+
 @bp.route('/production-orders', methods=['GET'])
 @admin_required
 def get_production_orders():
