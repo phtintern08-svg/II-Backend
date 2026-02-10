@@ -45,13 +45,11 @@ ALLOWED_MIME_TYPES = {
         'max_size': 10 * 1024 * 1024,  # 10MB
     },
     'quotation': {
-        'mimes': ['application/pdf', 'application/vnd.ms-excel',
-                  'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet'],
-        'extensions': ['.pdf', '.xls', '.xlsx'],
+        'mimes': ['text/csv', 'application/csv', 'text/plain'],
+        'extensions': ['.csv'],
         'magic_bytes': {
-            b'%PDF': 'application/pdf',
-            b'\xd0\xcf\x11\xe0\xa1\xb1\x1a\xe1': 'application/vnd.ms-excel',  # XLS
-            b'PK\x03\x04': 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',  # XLSX
+            # CSV files can start with various text patterns, so we'll rely on extension and MIME type
+            # Common CSV patterns: UTF-8 BOM, plain text, or comma-separated content
         },
         'max_size': 10 * 1024 * 1024,  # 10MB
     }
@@ -71,15 +69,21 @@ ENDPOINT_LIMITS = {
     },
     '/rider/verification/upload': {
         'allowed_types': ['image', 'document'],
-        'max_size': 10 * 1024 * 1024,  # 10MB
+        'max_size': 2 * 1024 * 1024,  # 10MB
     },
     '/rider/upload-documents': {
         'allowed_types': ['image', 'document'],
-        'max_size': 10 * 1024 * 1024,  # 10MB
+        'max_size': 2 * 1024 * 1024,  # 10MB
+    },
+    '/api/vendor/quotation/submit': {
+        'allowed_types': ['quotation'],
+        'max_size': 2 * 1024 * 1024,  # 10MB
+        'restrict_to': ['text/csv', 'application/csv'],  # Only CSV files
     },
     '/vendor/submit-quotation': {
         'allowed_types': ['quotation'],
-        'max_size': 10 * 1024 * 1024,  # 10MB
+        'max_size': 2 * 1024 * 1024,  # 10MB
+        'restrict_to': ['text/csv', 'application/csv'],  # Only CSV files
     },
     '/rider/delivery': {
         'allowed_types': ['image'],
@@ -120,6 +124,9 @@ def get_file_mime_type(file_data: bytes, filename: str) -> Optional[str]:
     ext = os.path.splitext(filename.lower())[1]
     for file_type, config in ALLOWED_MIME_TYPES.items():
         if ext in config['extensions']:
+            # For CSV files, return text/csv as primary MIME type
+            if ext == '.csv':
+                return 'text/csv'
             return config['mimes'][0]  # Return first MIME type for this extension
     
     return None
