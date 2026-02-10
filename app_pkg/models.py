@@ -167,8 +167,8 @@ class VendorQuotationSubmission(db.Model):
     id = db.Column(db.Integer, primary_key=True)
     vendor_id = db.Column(db.Integer, db.ForeignKey('vendors.id'), nullable=False, unique=True)
     
-    # Quotation file
-    quotation_file = db.Column(db.LargeBinary)
+    # Quotation file (stores file path, not binary data)
+    quotation_file = db.Column(db.String(255))
     quotation_filename = db.Column(db.String(255))
     quotation_mimetype = db.Column(db.String(100))
     

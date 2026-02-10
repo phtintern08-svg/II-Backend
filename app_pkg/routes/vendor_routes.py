@@ -605,6 +605,9 @@ def submit_quotation_file():
             return jsonify({"error": error}), 400
         
         # Check if submission already exists
+        # Safety check: ensure file_info['path'] is a string, not bytes
+        assert isinstance(file_info['path'], str), f"quotation_file must be a string path, got {type(file_info['path'])}"
+        
         existing = VendorQuotationSubmission.query.filter_by(vendor_id=vendor_id).first()
         if existing:
             if existing.quotation_file:
