@@ -8,7 +8,7 @@ import os
 import requests
 
 from config import Config
-from app_pkg.models import db, Category, Thread, Comment, Customer, Vendor, Support, Notification
+from app_pkg.models import db, Category, Thread, Comment, Customer, Vendor, Support, Notification, ProductCatalog
 from werkzeug.security import check_password_hash, generate_password_hash
 from app_pkg.auth import login_required, role_required
 from app_pkg.schemas import category_schema, categories_schema, thread_schema, threads_schema, comment_schema, comments_schema
@@ -745,3 +745,127 @@ def get_product_price(product_id):
     except Exception as e:
         app_logger.exception(f"Get product price error: {e}")
         return jsonify({"error": "Failed to retrieve product price"}), 500
+
+
+@bp.route('/product-catalog', methods=['GET'])
+@login_required
+@role_required(['admin', 'customer', 'vendor'])
+def get_product_catalog():
+    """
+    GET /api/product-catalog
+    Get all products in catalog (aggregated from approved quotations)
+    Accessible to admin, customer, and vendor
+    
+    Query parameters:
+    - product_type: Filter by product type
+    - category: Filter by category
+    - size: Filter by size
+    - grouped: If 'true', returns grouped view (product_type, category, neck_type, fabric) with size arrays
+    """
+    try:
+        from sqlalchemy import text
+        
+        # Get query parameters
+        product_type = request.args.get('product_type')
+        category = request.args.get('category')
+        size = request.args.get('size')
+        grouped = request.args.get('grouped', 'false').lower() == 'true'
+        
+        # Build WHERE clause
+        where_conditions = ["vendor_count > 0"]
+        params = {}
+        
+        if product_type:
+            where_conditions.append("product_type = :product_type")
+            params['product_type'] = product_type
+        if category:
+            where_conditions.append("category = :category")
+            params['category'] = category
+        if size:
+            where_conditions.append("size = :size")
+            params['size'] = size
+        
+        where_clause = " AND ".join(where_conditions)
+        
+        if grouped:
+            # Grouped view: group by product_type, category, neck_type, fabric
+            # Show sizes as arrays with price ranges
+            sql = text(f"""
+                SELECT
+                    product_type,
+                    category,
+                    neck_type,
+                    fabric,
+                    notes,
+                    MIN(final_price) AS min_price,
+                    MAX(final_price) AS max_price,
+                    AVG(average_price) AS avg_price,
+                    SUM(vendor_count) AS total_vendors,
+                    GROUP_CONCAT(DISTINCT size ORDER BY size SEPARATOR ',') AS sizes,
+                    MAX(updated_at) AS updated_at
+                FROM product_catalog
+                WHERE {where_clause}
+                GROUP BY product_type, category, neck_type, fabric, notes
+                ORDER BY updated_at DESC
+            """)
+            
+            rows = db.session.execute(sql, params).mappings().all()
+            
+            result = []
+            for row in rows:
+                result.append({
+                    'product_type': row['product_type'],
+                    'category': row['category'],
+                    'neck_type': row['neck_type'],
+                    'fabric': row['fabric'],
+                    'notes': row['notes'],
+                    'min_price': float(row['min_price']) if row['min_price'] else 0.0,
+                    'max_price': float(row['max_price']) if row['max_price'] else 0.0,
+                    'avg_price': float(row['avg_price']) if row['avg_price'] else 0.0,
+                    'total_vendors': row['total_vendors'] or 0,
+                    'sizes': row['sizes'].split(',') if row['sizes'] else [],
+                    'updated_at': row['updated_at'].isoformat() if row['updated_at'] else None
+                })
+        else:
+            # Detailed view: all rows with individual sizes
+            sql = text(f"""
+                SELECT
+                    id,
+                    product_type,
+                    category,
+                    neck_type,
+                    fabric,
+                    size,
+                    average_price,
+                    final_price,
+                    vendor_count,
+                    notes,
+                    updated_at
+                FROM product_catalog
+                WHERE {where_clause}
+                ORDER BY updated_at DESC
+            """)
+            
+            rows = db.session.execute(sql, params).mappings().all()
+            
+            result = []
+            for row in rows:
+                result.append({
+                    'id': row['id'],
+                    'product_type': row['product_type'],
+                    'category': row['category'],
+                    'neck_type': row['neck_type'],
+                    'fabric': row['fabric'],
+                    'size': row['size'],
+                    'average_price': float(row['average_price']) if row['average_price'] else 0.0,
+                    'final_price': float(row['final_price']) if row['final_price'] else 0.0,
+                    'vendor_count': row['vendor_count'] or 0,
+                    'notes': row['notes'],
+                    'updated_at': row['updated_at'].isoformat() if row['updated_at'] else None
+                })
+        
+        return jsonify(result), 200
+        
+    except Exception as e:
+        app_logger.exception(f"Get product catalog error: {e}")
+        return jsonify({"error": "Failed to retrieve product catalog"}), 500
