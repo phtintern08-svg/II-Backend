@@ -115,37 +115,40 @@ class VendorDocument(db.Model):
     __tablename__ = 'vendor_documents'
     
     id = db.Column(db.Integer, primary_key=True)
+    # UNIQUE constraint: One row per vendor (re-uploads overwrite, no history)
+    # If document history is needed later, split into vendor_documents + vendor_document_versions
     vendor_id = db.Column(db.Integer, db.ForeignKey('vendors.id'), nullable=False, unique=True)
     
-    # Documents (Binary Data) and Metadata (JSON: filename, mimetype, size, status, remarks)
+    # Documents (File Paths as Strings) and Metadata (JSON: filename, mimetype, size, status, remarks)
+    # File paths are stored as strings, not binary data
     # Using MySQL JSON type explicitly for proper JSON storage
-    pan = db.Column(db.LargeBinary)
-    pan_meta = db.Column(MySQLJSON)
+    pan = db.Column(db.String(500))  # File path string, not binary
+    pan_meta = db.Column(MySQLJSON, default=dict)  # Default to empty dict to avoid null checks
     pan_number = db.Column(db.String(20))
     
-    aadhar = db.Column(db.LargeBinary)
-    aadhar_meta = db.Column(MySQLJSON)
+    aadhar = db.Column(db.String(500))  # File path string, not binary
+    aadhar_meta = db.Column(MySQLJSON, default=dict)  # Default to empty dict to avoid null checks
     aadhar_number = db.Column(db.String(20))
     
-    gst = db.Column(db.LargeBinary)
-    gst_meta = db.Column(MySQLJSON)
+    gst = db.Column(db.String(500))  # File path string, not binary
+    gst_meta = db.Column(MySQLJSON, default=dict)  # Default to empty dict to avoid null checks
     gst_number = db.Column(db.String(20))
     
-    business = db.Column(db.LargeBinary)
-    business_meta = db.Column(MySQLJSON)
+    business = db.Column(db.String(500))  # File path string, not binary
+    business_meta = db.Column(MySQLJSON, default=dict)  # Default to empty dict to avoid null checks
     
-    bank = db.Column(db.LargeBinary)
-    bank_meta = db.Column(MySQLJSON)
+    bank = db.Column(db.String(500))  # File path string, not binary
+    bank_meta = db.Column(MySQLJSON, default=dict)  # Default to empty dict to avoid null checks
     bank_account_number = db.Column(db.String(50))
     bank_holder_name = db.Column(db.String(100))
     bank_branch = db.Column(db.String(100))
     ifsc_code = db.Column(db.String(20))
     
-    workshop = db.Column(db.LargeBinary)
-    workshop_meta = db.Column(MySQLJSON)
+    workshop = db.Column(db.String(500))  # File path string, not binary
+    workshop_meta = db.Column(MySQLJSON, default=dict)  # Default to empty dict to avoid null checks
     
-    signature = db.Column(db.LargeBinary)
-    signature_meta = db.Column(MySQLJSON)
+    signature = db.Column(db.String(500))  # File path string, not binary
+    signature_meta = db.Column(MySQLJSON, default=dict)  # Default to empty dict to avoid null checks
     
     
     updated_at = db.Column(db.DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
@@ -191,37 +194,40 @@ class RiderDocument(db.Model):
     __tablename__ = 'rider_documents'
     
     id = db.Column(db.Integer, primary_key=True)
+    # UNIQUE constraint: One row per rider (re-uploads overwrite, no history)
+    # If document history is needed later, split into rider_documents + rider_document_versions
     rider_id = db.Column(db.Integer, db.ForeignKey('riders.id'), nullable=False, unique=True)
     
-    # Documents (Binary Data) and Metadata (JSON: filename, mimetype, size, status, remarks)
+    # Documents (File Paths as Strings) and Metadata (JSON: filename, mimetype, size, status, remarks)
+    # File paths are stored as strings, not binary data
     # Using MySQL JSON type explicitly for proper JSON storage
-    aadhar = db.Column(db.LargeBinary)
-    aadhar_meta = db.Column(MySQLJSON)
+    aadhar = db.Column(db.String(500))  # File path string, not binary
+    aadhar_meta = db.Column(MySQLJSON, default=dict)  # Default to empty dict to avoid null checks
     aadhar_number = db.Column(db.String(20))
     
-    dl = db.Column(db.LargeBinary)  # Driving License
-    dl_meta = db.Column(MySQLJSON)
+    dl = db.Column(db.String(500))  # Driving License - file path string
+    dl_meta = db.Column(MySQLJSON, default=dict)  # Default to empty dict to avoid null checks
     dl_number = db.Column(db.String(50))
     dl_name = db.Column(db.String(100))
     dl_validity = db.Column(db.String(50))
     
-    pan = db.Column(db.LargeBinary)
-    pan_meta = db.Column(MySQLJSON)
+    pan = db.Column(db.String(500))  # File path string, not binary
+    pan_meta = db.Column(MySQLJSON, default=dict)  # Default to empty dict to avoid null checks
     pan_number = db.Column(db.String(20))
     
-    photo = db.Column(db.LargeBinary)  # Profile Photo
-    photo_meta = db.Column(MySQLJSON)
+    photo = db.Column(db.String(500))  # Profile Photo - file path string
+    photo_meta = db.Column(MySQLJSON, default=dict)  # Default to empty dict to avoid null checks
     
-    vehicle_rc = db.Column(db.LargeBinary)  # Vehicle Registration Certificate
-    vehicle_rc_meta = db.Column(MySQLJSON)
+    vehicle_rc = db.Column(db.String(500))  # Vehicle Registration Certificate - file path string
+    vehicle_rc_meta = db.Column(MySQLJSON, default=dict)  # Default to empty dict to avoid null checks
     vehicle_rc_number = db.Column(db.String(50))
     
-    insurance = db.Column(db.LargeBinary)  # Vehicle Insurance
-    insurance_meta = db.Column(MySQLJSON)
+    insurance = db.Column(db.String(500))  # Vehicle Insurance - file path string
+    insurance_meta = db.Column(MySQLJSON, default=dict)  # Default to empty dict to avoid null checks
     insurance_policy_number = db.Column(db.String(50))
 
-    bank = db.Column(db.LargeBinary)
-    bank_meta = db.Column(MySQLJSON)
+    bank = db.Column(db.String(500))  # File path string, not binary
+    bank_meta = db.Column(MySQLJSON, default=dict)  # Default to empty dict to avoid null checks
     bank_account_number = db.Column(db.String(50))
     bank_holder_name = db.Column(db.String(100))
     bank_branch = db.Column(db.String(100))

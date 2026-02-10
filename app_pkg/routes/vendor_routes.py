@@ -468,7 +468,8 @@ def get_verification_status():
                             'adminRemarks': meta.get('remarks', '')
                         }
                     
-                    # Add manual fields
+                    # Add manual fields (CRITICAL: Frontend expects these after page refresh)
+                    # These fields are used to populate hidden inputs and validate submission
                     if doc_type == 'pan':
                         doc_data['pan_number'] = doc_row.pan_number
                     if doc_type == 'aadhar':
