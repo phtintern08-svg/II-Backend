@@ -15,6 +15,7 @@ bp = Blueprint('customer', __name__, url_prefix='/api/customer')
 
 
 @bp.route('/profile', methods=['GET'])
+@login_required
 @role_required(['customer'])
 def get_customer_profile():
     """
@@ -44,6 +45,7 @@ def get_customer_profile():
 
 
 @bp.route('/profile', methods=['PUT'])
+@login_required
 @role_required(['customer'])
 def update_customer_profile():
     """
@@ -74,6 +76,7 @@ def update_customer_profile():
 
 
 @bp.route('/addresses', methods=['GET'])
+@login_required
 @role_required(['customer'])
 def get_addresses():
     """
@@ -107,6 +110,7 @@ def get_addresses():
 
 
 @bp.route('/addresses', methods=['POST'])
+@login_required
 @role_required(['customer'])
 def add_address():
     """
@@ -175,6 +179,7 @@ def add_address():
 
 
 @bp.route('/addresses/<int:address_id>', methods=['PUT'])
+@login_required
 @role_required(['customer'])
 def update_address(address_id):
     """
@@ -234,6 +239,7 @@ def update_address(address_id):
 
 
 @bp.route('/addresses/<int:address_id>', methods=['DELETE'])
+@login_required
 @role_required(['customer'])
 def delete_address(address_id):
     """
@@ -262,6 +268,7 @@ def delete_address(address_id):
 
 
 @bp.route('/orders', methods=['GET'])
+@login_required
 @role_required(['customer'])
 def get_customer_orders():
     """
@@ -289,6 +296,7 @@ def get_customer_orders():
 
 
 @bp.route('/notifications', methods=['GET'])
+@login_required
 @role_required(['customer'])
 def get_notifications():
     """
@@ -320,6 +328,7 @@ def get_notifications():
 
 
 @bp.route('/notifications/<int:notif_id>/read', methods=['POST'])
+@login_required
 @role_required(['customer'])
 def mark_notification_read(notif_id):
     """
@@ -346,6 +355,7 @@ def mark_notification_read(notif_id):
 
 
 @bp.route('/orders/<int:order_id>', methods=['GET'])
+@login_required
 @role_required(['customer'])
 def get_order_details(order_id):
     """
@@ -369,6 +379,7 @@ def get_order_details(order_id):
 
 
 @bp.route('/change-password', methods=['PUT'])
+@login_required
 @role_required(['customer'])
 def change_password():
     """

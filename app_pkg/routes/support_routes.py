@@ -206,6 +206,7 @@ def get_categories():
 
 
 @bp.route('/categories', methods=['POST'])
+@login_required
 @role_required(['admin'])
 def create_category():
     """
@@ -435,6 +436,7 @@ def update_profile():
 
 
 @bp.route('/support/profile', methods=['GET'])
+@login_required
 @role_required(['support'])
 def get_support_profile():
     """
@@ -464,6 +466,7 @@ def get_support_profile():
 
 
 @bp.route('/support/profile', methods=['PUT'])
+@login_required
 @role_required(['support'])
 def update_support_profile():
     """
@@ -495,6 +498,7 @@ def update_support_profile():
 
 
 @bp.route('/support/notifications', methods=['GET'])
+@login_required
 @role_required(['support'])
 def get_support_notifications():
     """
@@ -526,6 +530,7 @@ def get_support_notifications():
 
 
 @bp.route('/support/notifications/<int:notif_id>/read', methods=['POST'])
+@login_required
 @role_required(['support'])
 def mark_support_notification_read(notif_id):
     """
@@ -552,6 +557,7 @@ def mark_support_notification_read(notif_id):
 
 
 @bp.route('/support/change-password', methods=['PUT'])
+@login_required
 @role_required(['support'])
 def change_support_password():
     """
@@ -627,6 +633,7 @@ def change_password():
 
 
 @bp.route('/estimate-price', methods=['POST'])
+@login_required
 @role_required(['customer', 'vendor', 'admin'])
 def estimate_price():
     """
@@ -714,6 +721,7 @@ def estimate_price():
 
 
 @bp.route('/product-price/<int:product_id>', methods=['GET'])
+@login_required
 @role_required(['customer', 'vendor', 'admin'])
 def get_product_price(product_id):
     """

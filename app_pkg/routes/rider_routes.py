@@ -31,6 +31,7 @@ def get_rider_id_for_rate_limit():
 
 
 @bp.route('/profile', methods=['GET'])
+@login_required
 @role_required(['rider'])
 def get_rider_profile():
     """
@@ -62,6 +63,7 @@ def get_rider_profile():
 
 
 @bp.route('/profile', methods=['PUT'])
+@login_required
 @role_required(['rider'])
 def update_rider_profile():
     """
@@ -93,6 +95,7 @@ def update_rider_profile():
 
 
 @bp.route('/deliveries/history', methods=['GET'])
+@login_required
 @role_required(['rider'])
 def get_delivery_history():
     """
@@ -123,6 +126,7 @@ def get_delivery_history():
 
 
 @bp.route('/earnings', methods=['GET'])
+@login_required
 @role_required(['rider'])
 def get_earnings():
     """
@@ -161,6 +165,7 @@ def get_earnings():
 
 
 @bp.route('/verification/upload', methods=['POST'])
+@login_required
 @role_required(['rider'])
 def upload_verification_document():
     """
@@ -267,6 +272,7 @@ def upload_verification_document():
 
 
 @bp.route('/verification/submit', methods=['POST'])
+@login_required
 @role_required(['rider'])
 def submit_verification():
     """
@@ -325,6 +331,7 @@ def submit_verification():
 
 
 @bp.route('/verification/status', methods=['GET'])
+@login_required
 @role_required(['rider'])
 def get_verification_status():
     """
@@ -397,6 +404,7 @@ def get_verification_status():
 
 
 @bp.route('/verification/document/<doc_type>', methods=['GET'])
+@login_required
 @role_required(['rider'])
 def get_verification_document(doc_type):
     """
@@ -434,6 +442,7 @@ def get_verification_document(doc_type):
 
 
 @bp.route('/update-vehicle', methods=['POST'])
+@login_required
 @role_required(['rider'])
 def update_vehicle():
     """
@@ -467,6 +476,7 @@ def update_vehicle():
 
 
 @bp.route('/update-presence', methods=['GET', 'POST'])
+@login_required
 @role_required(['rider'])
 def update_presence():
     """
@@ -520,6 +530,7 @@ def update_presence():
 
 
 @bp.route('/status', methods=['GET'])
+@login_required
 @role_required(['rider'])
 def get_status():
     """
@@ -600,6 +611,7 @@ def get_status():
 
 
 @bp.route('/deliveries/assigned', methods=['GET'])
+@login_required
 @role_required(['rider'])
 def get_assigned_deliveries():
     """
@@ -645,6 +657,7 @@ def get_assigned_deliveries():
 
 
 @bp.route('/deliveries/<int:delivery_id>/status', methods=['PUT'])
+@login_required
 @role_required(['rider'])
 def update_delivery_status(delivery_id):
     """
@@ -737,6 +750,7 @@ def update_delivery_status(delivery_id):
 
 
 @bp.route('/deliveries/<int:delivery_id>/pickup-proof', methods=['POST'])
+@login_required
 @role_required(['rider'])
 def upload_pickup_proof(delivery_id):
     """
@@ -809,6 +823,7 @@ def upload_pickup_proof(delivery_id):
 
 
 @bp.route('/deliveries/<int:delivery_id>/delivery-proof', methods=['POST'])
+@login_required
 @role_required(['rider'])
 def upload_delivery_proof(delivery_id):
     """
@@ -919,6 +934,7 @@ def upload_delivery_proof(delivery_id):
 
 
 @bp.route('/deliveries/<int:delivery_id>/location', methods=['PUT'])
+@login_required
 @role_required(['rider'])
 def update_live_location(delivery_id):
     """
@@ -971,6 +987,7 @@ def update_live_location(delivery_id):
 
 
 @bp.route('/deliveries/<int:delivery_id>/details', methods=['GET'])
+@login_required
 @role_required(['rider', 'admin', 'vendor', 'customer'])
 def get_delivery_details(delivery_id):
     """
@@ -1026,6 +1043,7 @@ def get_delivery_details(delivery_id):
 
 
 @bp.route('/notifications', methods=['GET'])
+@login_required
 @role_required(['rider'])
 def get_notifications():
     """
@@ -1057,6 +1075,7 @@ def get_notifications():
 
 
 @bp.route('/notifications/<int:notif_id>/read', methods=['POST'])
+@login_required
 @role_required(['rider'])
 def mark_notification_read(notif_id):
     """
@@ -1083,6 +1102,7 @@ def mark_notification_read(notif_id):
 
 
 @bp.route('/change-password', methods=['PUT'])
+@login_required
 @role_required(['rider'])
 def change_password():
     """

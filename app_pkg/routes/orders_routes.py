@@ -83,6 +83,7 @@ def get_order(order_id):
 
 
 @bp.route('/', methods=['POST'])
+@login_required
 @role_required(['customer'])
 def create_order():
     """
@@ -184,6 +185,7 @@ def create_order():
 
 
 @bp.route('/<int:order_id>/status', methods=['PUT'])
+@login_required
 @role_required(['admin', 'vendor'])
 def update_order_status(order_id):
     """
@@ -260,6 +262,7 @@ def get_customer_orders(customer_id):
 
 
 @bp.route('/<int:order_id>/request-bulk', methods=['POST'])
+@login_required
 @role_required(['customer'])
 def request_bulk_order(order_id):
     """
@@ -314,6 +317,7 @@ def request_bulk_order(order_id):
 
 
 @bp.route('/<int:order_id>/assign-vendor', methods=['POST'])
+@login_required
 @role_required(['admin'])
 def assign_vendor_to_order(order_id):
     """
@@ -374,6 +378,7 @@ def assign_vendor_to_order(order_id):
 
 
 @bp.route('/<int:order_id>/quotation-response', methods=['POST'])
+@login_required
 @role_required(['customer'])
 def customer_quotation_response(order_id):
     """
@@ -424,6 +429,7 @@ def customer_quotation_response(order_id):
 
 
 @bp.route('/<int:order_id>/sample-response', methods=['POST'])
+@login_required
 @role_required(['customer'])
 def customer_sample_response(order_id):
     """
@@ -463,6 +469,7 @@ def customer_sample_response(order_id):
 
 
 @bp.route('/<int:order_id>/advance-payment', methods=['POST'])
+@login_required
 @role_required(['customer'])
 def process_advance_payment(order_id):
     """
@@ -525,6 +532,7 @@ def process_advance_payment(order_id):
 
 
 @bp.route('/<int:order_id>/feedback', methods=['POST'])
+@login_required
 @role_required(['customer'])
 def submit_order_feedback(order_id):
     """
