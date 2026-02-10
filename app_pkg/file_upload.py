@@ -77,13 +77,13 @@ ENDPOINT_LIMITS = {
     },
     '/api/vendor/quotation/submit': {
         'allowed_types': ['quotation'],
-        'max_size': 2 * 1024 * 1024,  # 10MB
-        'restrict_to': ['text/csv', 'application/csv'],  # Only CSV files
+        'max_size': 10 * 1024 * 1024,  # 10MB
+        'restrict_to': ['text/csv', 'application/csv', 'text/plain'],  # CSV files (browsers send as text/plain)
     },
     '/vendor/submit-quotation': {
         'allowed_types': ['quotation'],
-        'max_size': 2 * 1024 * 1024,  # 10MB
-        'restrict_to': ['text/csv', 'application/csv'],  # Only CSV files
+        'max_size': 10 * 1024 * 1024,  # 10MB
+        'restrict_to': ['text/csv', 'application/csv', 'text/plain'],  # CSV files (browsers send as text/plain)
     },
     '/rider/delivery': {
         'allowed_types': ['image'],
@@ -147,10 +147,21 @@ def validate_file_content(file_data: bytes, filename: str, allowed_types: List[s
     if not file_data:
         return False, "File is empty"
     
+    # Check file extension first (more reliable for CSV files)
+    file_ext = os.path.splitext(filename.lower())[1]
+    
+    # For quotation files, allow if extension is .csv (browsers send CSV as text/plain)
+    if 'quotation' in allowed_types and file_ext == '.csv':
+        # CSV files are text-based, so allow text/plain, text/csv, application/csv
+        return True, None
+    
     # Detect actual MIME type from content
     detected_mime = get_file_mime_type(file_data, filename)
     
     if not detected_mime:
+        # If we can't detect MIME type but extension matches, allow it for quotation
+        if 'quotation' in allowed_types and file_ext == '.csv':
+            return True, None
         return False, "File type could not be determined from content"
     
     # Check if detected MIME type is in allowed types
@@ -158,6 +169,10 @@ def validate_file_content(file_data: bytes, filename: str, allowed_types: List[s
         if file_type in ALLOWED_MIME_TYPES:
             if detected_mime in ALLOWED_MIME_TYPES[file_type]['mimes']:
                 return True, None
+    
+    # Special case: CSV files detected as text/plain should be allowed for quotation
+    if 'quotation' in allowed_types and file_ext == '.csv' and detected_mime in ['text/plain', 'text/csv', 'application/csv']:
+        return True, None
     
     return False, f"File type {detected_mime} is not allowed. Allowed types: {', '.join(allowed_types)}"
 
@@ -313,36 +328,49 @@ def validate_and_save_file(
     # Get detected MIME type
     detected_mime = get_file_mime_type(file_data, file.filename)
     
-    # Additional restriction check for specific endpoints (e.g., vendor verification)
+    # Additional restriction check for specific endpoints (e.g., vendor verification, quotation)
     restrict_to = limits.get('restrict_to')
-    if restrict_to and detected_mime:
+    if restrict_to:
+        file_ext = os.path.splitext(file.filename)[1].lower()
+        
+        # For quotation endpoint, require .csv extension first (primary check)
+        if '/quotation/submit' in endpoint:
+            if file_ext != '.csv':
+                log_warning(f"Quotation file rejected: wrong extension. filename={file.filename}, ext={file_ext}")
+                return None, "Only CSV files are allowed for quotation submission"
+        
         # Normalize MIME type (remove charset/parameters, lowercase)
-        normalized_detected = detected_mime.split(';')[0].strip().lower()
+        normalized_detected = detected_mime.split(';')[0].strip().lower() if detected_mime else ''
         
         # Check against allowed MIME types (normalized)
         normalized_allowed = [mime.split(';')[0].strip().lower() for mime in restrict_to]
         
-        # Also check file extension as fallback
-        file_ext = os.path.splitext(file.filename)[1].lower()
         extension_map = {
             '.pdf': ['application/pdf'],
             '.jpg': ['image/jpeg', 'image/jpg'],
-            '.jpeg': ['image/jpeg', 'image/jpg']
+            '.jpeg': ['image/jpeg', 'image/jpg'],
+            '.csv': ['text/csv', 'application/csv', 'text/plain']  # CSV files (browsers send as text/plain)
         }
         
         # Check MIME type match
-        mime_match = normalized_detected in normalized_allowed
+        mime_match = normalized_detected in normalized_allowed if normalized_detected else False
         
         # Check extension match (if MIME didn't match, try extension)
         ext_match = False
         if file_ext in extension_map:
             ext_match = any(mime in normalized_allowed for mime in extension_map[file_ext])
         
+        # Special handling for CSV files - allow if extension is .csv (browsers often send as text/plain)
+        if file_ext == '.csv' and any('csv' in mime or 'plain' in mime for mime in normalized_allowed):
+            ext_match = True
+        
         is_allowed = mime_match or ext_match
         
         if not is_allowed:
             # Log for debugging
             log_warning(f"File type rejected: detected_mime={detected_mime}, normalized={normalized_detected}, filename={file.filename}, ext={file_ext}, allowed={restrict_to}")
+            if '/quotation/submit' in endpoint:
+                return None, f"Invalid CSV file type. Detected: {detected_mime or 'unknown'}. Only CSV files are permitted."
             return None, f"File type not allowed. Detected: {detected_mime}. Only PDF, JPG, and JPEG files are permitted."
     
     # Save file to disk

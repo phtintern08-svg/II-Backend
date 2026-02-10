@@ -553,8 +553,15 @@ def submit_quotation_file():
         vendor_id = request.user_id
         commission_rate = request.form.get('commission_rate')
         
-        # Debug logging
-        app_logger.info(f"Quotation submit - file={file.filename if file else None}, commission_rate={commission_rate}, file_size={file.content_length if file else None}")
+        # Debug logging - read file to get actual size
+        if file:
+            file.seek(0, os.SEEK_END)
+            file_size = file.tell()
+            file.seek(0)  # Reset for validation
+        else:
+            file_size = 0
+        
+        app_logger.info(f"Quotation submit - file={file.filename if file else None}, commission_rate={commission_rate}, file_size={file_size}")
         
         if not file or file.filename == '':
             app_logger.warning(f"Quotation submit failed: File is empty or missing")
