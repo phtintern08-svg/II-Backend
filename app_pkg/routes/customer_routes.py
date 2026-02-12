@@ -2,13 +2,15 @@
 Customer Routes Blueprint
 Handles customer-specific endpoints for profile, orders, and addresses
 """
-from flask import Blueprint, request, jsonify
+from flask import Blueprint, request, jsonify, current_app
 from datetime import datetime
+import os
 
 from app_pkg.models import db, Customer, Address, Order, Notification
 from app_pkg.auth import login_required, role_required
 from werkzeug.security import check_password_hash, generate_password_hash
 from app_pkg.logger_config import app_logger
+from app_pkg.file_upload import validate_and_save_file, delete_file
 
 # Create blueprint
 bp = Blueprint('customer', __name__, url_prefix='/api/customer')
@@ -27,13 +29,23 @@ def get_customer_profile():
         if not customer:
             return jsonify({"error": "Customer not found"}), 404
         
+        # Build avatar URL if exists
+        avatar_url = None
+        if customer.avatar_url:
+            base_url = current_app.config.get('BASE_URL', '')
+            if base_url:
+                avatar_url = f"{base_url}/uploads/{customer.avatar_url}"
+            else:
+                avatar_url = f"/uploads/{customer.avatar_url}"
+        
         customer_data = {
             "id": customer.id,
             "username": customer.username,
             "email": customer.email,
             "phone": customer.phone,
             "bio": customer.bio,
-            "avatar_url": customer.avatar_url,
+            "avatar_url": avatar_url,
+            "is_email_verified": customer.is_email_verified if hasattr(customer, 'is_email_verified') else False,
             "created_at": customer.created_at.isoformat() if customer.created_at else None
         }
         
@@ -410,3 +422,110 @@ def change_password():
         db.session.rollback()
         app_logger.exception(f"Change password error: {e}")
         return jsonify({"error": "Failed to change password"}), 500
+
+
+@bp.route('/order-stats', methods=['GET'])
+@login_required
+@role_required(['customer'])
+def get_order_stats():
+    """
+    GET /api/customer/order-stats
+    Get order statistics for customer
+    """
+    try:
+        customer_id = request.user_id
+        
+        total_orders = Order.query.filter_by(customer_id=customer_id).count()
+        
+        pending_orders = Order.query.filter(
+            Order.customer_id == customer_id,
+            Order.status.in_(['pending_admin_review', 'quotation_sent_to_customer', 'sample_payment_received'])
+        ).count()
+        
+        in_progress_orders = Order.query.filter(
+            Order.customer_id == customer_id,
+            Order.status.in_(['sample_requested', 'awaiting_advance_payment', 'in_production', 
+                             'assigned', 'vendor_assigned', 'accepted_by_vendor', 'awaiting_dispatch',
+                             'ready_for_dispatch', 'awaiting_delivery', 'reached_vendor', 'picked_up',
+                             'out_for_delivery', 'packed_ready', 'dispatched'])
+        ).count()
+        
+        completed_orders = Order.query.filter(
+            Order.customer_id == customer_id,
+            Order.status.in_(['completed', 'completed_with_penalty', 'delivered'])
+        ).count()
+        
+        return jsonify({
+            "total": total_orders,
+            "pending": pending_orders,
+            "in_progress": in_progress_orders,
+            "completed": completed_orders
+        }), 200
+        
+    except Exception as e:
+        app_logger.exception(f"Get order stats error: {e}")
+        return jsonify({"error": "Failed to retrieve order stats"}), 500
+
+
+@bp.route('/profile/avatar', methods=['POST'])
+@login_required
+@role_required(['customer'])
+def upload_profile_avatar():
+    """
+    POST /api/customer/profile/avatar
+    Upload customer profile picture
+    """
+    try:
+        if 'file' not in request.files:
+            return jsonify({"error": "No file provided"}), 400
+        
+        file = request.files['file']
+        if not file or not file.filename:
+            return jsonify({"error": "No file selected"}), 400
+        
+        customer = Customer.query.get(request.user_id)
+        if not customer:
+            return jsonify({"error": "Customer not found"}), 404
+        
+        # Validate and save file
+        file_info, error = validate_and_save_file(
+            file=file,
+            endpoint='/api/customer/profile/avatar',
+            subfolder='customer',
+            user_id=request.user_id,
+            doc_type='avatar',
+            scan_virus=False
+        )
+        
+        if error:
+            return jsonify({"error": error}), 400
+        
+        # Delete old avatar if exists
+        if customer.avatar_url:
+            try:
+                upload_folder = current_app.config.get('UPLOAD_FOLDER')
+                if upload_folder:
+                    old_path = os.path.join(upload_folder, customer.avatar_url)
+                    if os.path.exists(old_path):
+                        os.remove(old_path)
+            except Exception as e:
+                app_logger.warning(f"Failed to delete old avatar: {e}")
+        
+        # Update customer avatar URL
+        customer.avatar_url = file_info['path']
+        db.session.commit()
+        
+        # Return full URL for frontend
+        base_url = current_app.config.get('BASE_URL', '')
+        avatar_url = f"{base_url}/uploads/{file_info['path']}" if base_url else f"/uploads/{file_info['path']}"
+        
+        return jsonify({
+            "message": "Avatar uploaded successfully",
+            "avatar_url": avatar_url,
+            "path": file_info['path']
+        }), 200
+        
+    except Exception as e:
+        db.session.rollback()
+        app_logger.exception(f"Upload avatar error: {e}")
+        return jsonify({"error": "Failed to upload avatar"}), 500

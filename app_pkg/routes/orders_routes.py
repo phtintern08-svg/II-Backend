@@ -153,28 +153,22 @@ def create_order():
             f"neck_type={neck_type}, fabric={fabric}, size={sample_size}"
         )
         
-        # Build query with EXACT match - all fields required
+        # Build query with EXACT match
         # DB stores "None" as string for neck_type, not SQL NULL
-        # For fabric, check both NULL and "None" string to be safe
+        # If fabric is not provided, don't filter by fabric (match any fabric for that product)
+        query = ProductCatalog.query.filter_by(
+            product_type=product_type,
+            category=category,
+            neck_type=neck_type,  # "None" string if not provided
+            size=sample_size
+        )
+        
+        # Only filter by fabric if it's provided
         if fabric:
-            # Fabric provided - exact match
-            product = ProductCatalog.query.filter_by(
-                product_type=product_type,
-                category=category,
-                neck_type=neck_type,  # "None" string if not provided
-                fabric=fabric,
-                size=sample_size
-            ).first()
-        else:
-            # Fabric not provided - try both NULL and "None" string
-            product = ProductCatalog.query.filter_by(
-                product_type=product_type,
-                category=category,
-                neck_type=neck_type,  # "None" string if not provided
-                size=sample_size
-            ).filter(
-                (ProductCatalog.fabric.is_(None)) | (ProductCatalog.fabric == "None")
-            ).first()
+            query = query.filter_by(fabric=fabric)
+        # If fabric not provided, don't filter - match any fabric
+        
+        product = query.first()
         
         # Debug logging for query result
         if product:

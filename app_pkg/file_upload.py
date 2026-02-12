@@ -89,6 +89,11 @@ ENDPOINT_LIMITS = {
         'allowed_types': ['image'],
         'max_size': 5 * 1024 * 1024,  # 5MB for proof images
     },
+    '/api/customer/profile/avatar': {
+        'allowed_types': ['image'],
+        'max_size': 5 * 1024 * 1024,  # 5MB for profile pictures
+        'restrict_to': ['image/jpeg', 'image/jpg', 'image/png', 'image/webp'],  # Common image formats
+    },
 }
 
 
