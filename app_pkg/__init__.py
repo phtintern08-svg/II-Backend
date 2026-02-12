@@ -119,7 +119,7 @@ def create_app(config_class=Config):
         )
 
         app.register_blueprint(auth_routes.bp, url_prefix="/api")
-        app.register_blueprint(orders_routes.bp, url_prefix="/api")
+        app.register_blueprint(orders_routes.bp, url_prefix="/api/orders")
         app.register_blueprint(vendor_routes.bp)  # prefix already in blueprint definition
         app.register_blueprint(rider_routes.bp, url_prefix="/api")
         app.register_blueprint(admin_routes.bp)  # prefix already in blueprint definition

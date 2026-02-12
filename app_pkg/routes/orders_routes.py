@@ -12,10 +12,11 @@ from app_pkg.schemas import order_schema, orders_schema
 from app_pkg.logger_config import app_logger
 
 # Create blueprint
-bp = Blueprint('orders', __name__, url_prefix='/orders')
+# Note: url_prefix is set during registration in __init__.py as '/api/orders'
+bp = Blueprint('orders', __name__)
 
 
-@bp.route('/', methods=['GET'])
+@bp.route('/', methods=['GET'], strict_slashes=False)
 @login_required
 def get_orders():
     """
@@ -82,7 +83,7 @@ def get_order(order_id):
         return jsonify({"error": "Failed to retrieve order"}), 500
 
 
-@bp.route('/', methods=['POST'])
+@bp.route('/', methods=['POST'], strict_slashes=False)
 @login_required
 @role_required(['customer'])
 def create_order():
