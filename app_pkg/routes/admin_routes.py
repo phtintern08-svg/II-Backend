@@ -1413,11 +1413,11 @@ def view_vendor_document(vendor_id, doc_type):
 def get_verified_vendors():
     """
     GET /api/admin/verified-vendors
-    Get all verified vendors
+    Get all verified vendors (only vendors with verification_status = 'verified' or 'approved')
     """
     try:
         vendors = Vendor.query.filter(
-            Vendor.verification_status.in_(['approved', 'active'])
+            Vendor.verification_status.in_(['verified', 'approved'])
         ).all()
         
         result = []
