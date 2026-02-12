@@ -152,6 +152,7 @@ class OrderSchema(Schema):
     country = fields.Str(validate=Length(max=100), load_default='India')
     transaction_id = fields.Str(validate=Length(max=255), allow_none=True)
     sample_cost = fields.Decimal(validate=validate.Range(min=0), load_default=0.0)
+    sample_size = fields.Str(validate=Length(max=10), allow_none=True)
     
     @pre_load
     def sanitize_inputs(self, data, **kwargs):

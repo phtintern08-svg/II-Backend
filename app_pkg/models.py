@@ -666,7 +666,7 @@ class ProductCatalog(db.Model):
     
     # Pricing
     average_price = db.Column(db.Float, default=0.0)  # Average price across all vendors
-    final_price = db.Column(db.Float, default=0.0)  # Average price + 40% margin
+    final_price = db.Column(db.Float, default=0.0)  # Average price + 30% margin (average_price * 1.30)
     vendor_count = db.Column(db.Integer, default=0)  # Number of vendors offering this product
     
     created_at = db.Column(db.DateTime, default=datetime.utcnow)

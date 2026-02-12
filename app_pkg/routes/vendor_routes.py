@@ -338,15 +338,26 @@ def upload_verification_document():
             
             setattr(doc_row, doc_type, file_info['path'])
             
+            # Get existing metadata to preserve rejected status if resubmitting
+            existing_meta = getattr(doc_row, f"{doc_type}_meta") or {}
+            existing_meta = dict(existing_meta) if isinstance(existing_meta, dict) else {}
+            was_rejected = existing_meta.get('status') == 'rejected'
+            
             # Update metadata
             meta = {
                 'filename': file_info['filename'],
                 'original_filename': file_info['original_filename'],
                 'mimetype': file_info['mimetype'],
                 'size': file_info['size'],
-                'status': 'uploaded',
-                'uploaded_at': datetime.utcnow().isoformat()
+                'status': 'rejected' if was_rejected else 'uploaded',  # Keep rejected status if resubmitting rejected doc
+                'uploaded_at': datetime.utcnow().isoformat(),
+                'resubmitted': was_rejected  # Flag to indicate this is a resubmission
             }
+            # Preserve admin remarks if resubmitting
+            if was_rejected and existing_meta.get('remarks'):
+                meta['remarks'] = existing_meta.get('remarks')
+                meta['previous_rejection_reason'] = existing_meta.get('remarks')
+            
             setattr(doc_row, f"{doc_type}_meta", meta)
             
             # Save manual fields if provided

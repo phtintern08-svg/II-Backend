@@ -121,6 +121,37 @@ def create_order():
         # Payment details
         transaction_id = validated_data.get('transaction_id')
         sample_cost = validated_data.get('sample_cost', 0.0)
+        sample_size = validated_data.get('sample_size')
+        
+        # Fetch final_price from product_catalog based on exact combination
+        final_price_from_catalog = None
+        if data.get('final_price_from_catalog'):
+            # Use the price sent from frontend (already fetched)
+            final_price_from_catalog = float(data.get('final_price_from_catalog'))
+        else:
+            # Fallback: Fetch from database if not provided
+            try:
+                from app.models import ProductCatalog
+                query = ProductCatalog.query.filter_by(
+                    product_type=product_type,
+                    category=category
+                )
+                
+                if neck_type:
+                    query = query.filter_by(neck_type=neck_type)
+                if fabric:
+                    query = query.filter_by(fabric=fabric)
+                if sample_size:
+                    query = query.filter_by(size=sample_size)
+                
+                product = query.first()
+                if product and product.vendor_count > 0:
+                    final_price_from_catalog = float(product.final_price) if product.final_price else (float(product.average_price) * 1.30 if product.average_price else None)
+            except Exception as e:
+                app_logger.warning(f"Could not fetch final price from catalog: {e}")
+        
+        # Use final_price_from_catalog as quotation_price_per_piece if available
+        quotation_price = final_price_from_catalog if final_price_from_catalog else price_per_piece_offered
         
         # Determine initial status
         initial_status = 'awaiting_sample_payment'
@@ -137,6 +168,8 @@ def create_order():
             print_type=print_type,
             quantity=quantity,
             price_per_piece_offered=price_per_piece_offered,
+            quotation_price_per_piece=quotation_price,  # Set from catalog final_price
+            quotation_total_price=quotation_price * quantity if quotation_price else None,
             delivery_date=delivery_date.isoformat() if isinstance(delivery_date, datetime) else delivery_date,
             address_line1=address_line1,
             address_line2=address_line2,
@@ -145,7 +178,8 @@ def create_order():
             pincode=pincode,
             country=country,
             status=initial_status,
-            sample_cost=sample_cost
+            sample_cost=sample_cost,
+            sample_size=sample_size
         )
         
         db.session.add(new_order)

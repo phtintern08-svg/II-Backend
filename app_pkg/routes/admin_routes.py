@@ -842,6 +842,7 @@ def upsert_product_catalog(product_type, category, neck_type, fabric, size, pric
     """
     # Use MySQL's VALUES() function to reference the inserted value
     # This works with MySQL 8.0.19+ and is the standard way to reference new values
+    # final_price = average_price + 30% of average_price = average_price * 1.30
     sql = text("""
         INSERT INTO product_catalog
         (
@@ -851,14 +852,15 @@ def upsert_product_catalog(product_type, category, neck_type, fabric, size, pric
         VALUES
         (
             :product_type, :category, :neck_type, :fabric, :size,
-            :notes, :price, :price, 1
+            :notes, :price, :price * 1.30, 1
         )
         ON DUPLICATE KEY UPDATE
             average_price =
               ((average_price * vendor_count) + :price)
               / (vendor_count + 1),
             vendor_count = vendor_count + 1,
-            final_price = :price,
+            final_price = 
+              (((average_price * vendor_count) + :price) / (vendor_count + 1)) * 1.30,
             notes = COALESCE(:notes, notes)
     """)
     
@@ -1196,7 +1198,10 @@ def get_vendor_requests():
                                     'status': meta.get('status', 'pending'),
                                     'fileName': meta.get('filename'),
                                     'fileSize': meta.get('size'),
-                                    'uploadedDate': meta.get('uploaded_at')
+                                    'uploadedDate': meta.get('uploaded_at'),
+                                    'resubmitted': meta.get('resubmitted', False),
+                                    'adminRemarks': meta.get('remarks', ''),
+                                    'previousRejectionReason': meta.get('previous_rejection_reason', '')
                                 }
                                 if doc_type == 'pan':
                                     doc_data['pan_number'] = doc_row.pan_number
@@ -1865,6 +1870,10 @@ def get_product_catalog():
         
         result = []
         for p in products:
+            # Calculate final_price if not set (for existing records)
+            avg_price = float(p.average_price) if p.average_price else 0
+            final_price = float(p.final_price) if p.final_price else (avg_price * 1.30)
+            
             result.append({
                 'id': p.id,
                 'product_type': p.product_type,
@@ -1872,7 +1881,8 @@ def get_product_catalog():
                 'neck_type': p.neck_type,
                 'fabric': p.fabric,
                 'size': p.size,
-                'average_price': float(p.average_price) if p.average_price else 0,
+                'average_price': avg_price,
+                'final_price': final_price,
                 'vendor_count': p.vendor_count or 0,
                 'notes': p.notes,
                 'updated_at': p.updated_at.isoformat() if p.updated_at else None
