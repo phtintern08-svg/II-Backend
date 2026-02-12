@@ -651,29 +651,42 @@ def estimate_price():
         if not product_type or not category:
             return jsonify({"error": "Product type and category are required"}), 400
         
-        from app.models import ProductCatalog
+        # Use correct import path
+        from app_pkg.models import ProductCatalog
+        
+        # Build query with NULL handling
         query = ProductCatalog.query.filter_by(
             product_type=product_type,
             category=category
         )
         
-        if neck_type:
+        # Handle neck_type: match NULL if empty string or None
+        if neck_type and neck_type.strip():
             query = query.filter_by(neck_type=neck_type)
-        if fabric:
+        else:
+            query = query.filter(ProductCatalog.neck_type.is_(None))
+        
+        # Handle fabric: match NULL if empty string or None
+        if fabric and fabric.strip():
             query = query.filter_by(fabric=fabric)
+        else:
+            query = query.filter(ProductCatalog.fabric.is_(None))
+        
         if size:
             query = query.filter_by(size=size)
         
         product = query.first()
         
         if product and product.vendor_count > 0:
+            # Calculate final_price if not set
+            final_price = float(product.final_price) if product.final_price else (float(product.average_price) * 1.30 if product.average_price else 0)
             return jsonify({
-                "estimated_price": float(product.final_price) if product.final_price else 0,
+                "estimated_price": final_price,
                 "vendor_count": product.vendor_count,
                 "found": True
             }), 200
         else:
-            # Try to find match with same Product, Category AND Size
+            # Try to find match with same Product, Category AND Size (relaxed matching)
             query_size = ProductCatalog.query.filter_by(
                 product_type=product_type,
                 category=category
@@ -685,13 +698,21 @@ def estimate_price():
             similar_by_size = query_size.all()
             
             if similar_by_size:
-                avg = sum(float(p.final_price) if p.final_price else 0 for p in similar_by_size) / len(similar_by_size)
-                return jsonify({
-                    "estimated_price": round(avg, 2),
-                    "vendor_count": len(similar_by_size),
-                    "found": False,
-                    "message": f"Estimate based on size {size}"
-                }), 200
+                # Calculate average final_price
+                prices = []
+                for p in similar_by_size:
+                    final_price = float(p.final_price) if p.final_price else (float(p.average_price) * 1.30 if p.average_price else 0)
+                    if final_price > 0:
+                        prices.append(final_price)
+                
+                if prices:
+                    avg = sum(prices) / len(prices)
+                    return jsonify({
+                        "estimated_price": round(avg, 2),
+                        "vendor_count": len(similar_by_size),
+                        "found": False,
+                        "message": f"Estimate based on size {size}"
+                    }), 200
             
             # Fallback: Average of all items in this category
             similar = ProductCatalog.query.filter_by(
@@ -700,13 +721,20 @@ def estimate_price():
             ).filter(ProductCatalog.vendor_count > 0).all()
             
             if similar:
-                avg = sum(float(p.final_price) if p.final_price else 0 for p in similar) / len(similar)
-                return jsonify({
-                    "estimated_price": round(avg, 2),
-                    "vendor_count": len(similar),
-                    "found": False,
-                    "message": "Estimate based on category average"
-                }), 200
+                prices = []
+                for p in similar:
+                    final_price = float(p.final_price) if p.final_price else (float(p.average_price) * 1.30 if p.average_price else 0)
+                    if final_price > 0:
+                        prices.append(final_price)
+                
+                if prices:
+                    avg = sum(prices) / len(prices)
+                    return jsonify({
+                        "estimated_price": round(avg, 2),
+                        "vendor_count": len(similar),
+                        "found": False,
+                        "message": "Estimate based on category average"
+                    }), 200
             
             return jsonify({
                 "estimated_price": 0,
@@ -729,7 +757,7 @@ def get_product_price(product_id):
     Get final price for a specific product
     """
     try:
-        from app.models import ProductCatalog
+        from app_pkg.models import ProductCatalog
         product = ProductCatalog.query.get(product_id)
         if not product:
             return jsonify({"error": "Product not found"}), 404

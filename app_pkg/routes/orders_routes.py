@@ -128,27 +128,56 @@ def create_order():
         sample_size = validated_data.get('sample_size')
         
         # SECURITY: Always fetch final_price from database - NEVER trust frontend price
-        from app.models import ProductCatalog
+        from app_pkg.models import ProductCatalog
         from decimal import Decimal
         
         # Build query with exact match
+        # Handle NULL values: if frontend sends empty/None, match NULL in DB
         query = ProductCatalog.query.filter_by(
             product_type=product_type,
             category=category
         )
         
-        if neck_type:
+        # Handle neck_type: match NULL if empty string or None
+        if neck_type and neck_type.strip():
             query = query.filter_by(neck_type=neck_type)
-        if fabric:
+        else:
+            query = query.filter(ProductCatalog.neck_type.is_(None))
+        
+        # Handle fabric: match NULL if empty string or None
+        if fabric and fabric.strip():
             query = query.filter_by(fabric=fabric)
+        else:
+            query = query.filter(ProductCatalog.fabric.is_(None))
+        
+        # Size is required for sample orders
         if sample_size:
             query = query.filter_by(size=sample_size)
+        else:
+            return jsonify({"error": "Sample size is required"}), 400
         
         product = query.first()
         
         # SECURITY: Reject if product not found or no final_price
-        if not product or not product.final_price:
-            return jsonify({"error": "Invalid product configuration. Product not found in catalog."}), 400
+        if not product:
+            app_logger.warning(
+                f"Product not found in catalog: product_type={product_type}, "
+                f"category={category}, neck_type={neck_type}, fabric={fabric}, size={sample_size}"
+            )
+            return jsonify({
+                "error": "Invalid product configuration. Product not found in catalog.",
+                "details": {
+                    "product_type": product_type,
+                    "category": category,
+                    "neck_type": neck_type or None,
+                    "fabric": fabric or None,
+                    "size": sample_size
+                }
+            }), 400
+        
+        if not product.final_price:
+            app_logger.warning(f"Product found but no final_price: product_id={product.id}")
+            return jsonify({"error": "Product price not available. Please contact support."}), 400
         
         final_price_from_catalog = float(product.final_price)
         
