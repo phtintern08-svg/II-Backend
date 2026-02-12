@@ -134,7 +134,7 @@ class AddressSchema(Schema):
 
 class OrderSchema(Schema):
     """Schema for order creation validation"""
-    customer_id = fields.Int(required=True)
+    # SECURITY: customer_id removed - backend gets it from JWT token (request.user_id)
     product_type = fields.Str(required=True, validate=Length(min=1, max=100))
     category = fields.Str(required=True, validate=Length(min=1, max=100))
     neck_type = fields.Str(validate=Length(max=50), allow_none=True)

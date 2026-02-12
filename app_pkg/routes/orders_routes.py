@@ -91,6 +91,11 @@ def create_order():
     Create a new order
     """
     try:
+        # SECURITY: Get customer_id from JWT token, never from frontend
+        customer_id = getattr(request, 'user_id', None)
+        if not customer_id:
+            return jsonify({"error": "Authentication required"}), 401
+        
         # Validate input data
         data = request.get_json() or {}
         validated_data, errors = validate_request_data(OrderSchema, data)
@@ -99,7 +104,6 @@ def create_order():
             return jsonify({"error": "Validation failed", "details": errors}), 400
         
         # Extract validated fields
-        customer_id = validated_data['customer_id']
         product_type = validated_data['product_type']
         category = validated_data['category']
         neck_type = validated_data.get('neck_type')
@@ -123,35 +127,55 @@ def create_order():
         sample_cost = validated_data.get('sample_cost', 0.0)
         sample_size = validated_data.get('sample_size')
         
-        # Fetch final_price from product_catalog based on exact combination
-        final_price_from_catalog = None
-        if data.get('final_price_from_catalog'):
-            # Use the price sent from frontend (already fetched)
-            final_price_from_catalog = float(data.get('final_price_from_catalog'))
-        else:
-            # Fallback: Fetch from database if not provided
-            try:
-                from app.models import ProductCatalog
-                query = ProductCatalog.query.filter_by(
-                    product_type=product_type,
-                    category=category
-                )
-                
-                if neck_type:
-                    query = query.filter_by(neck_type=neck_type)
-                if fabric:
-                    query = query.filter_by(fabric=fabric)
-                if sample_size:
-                    query = query.filter_by(size=sample_size)
-                
-                product = query.first()
-                if product and product.vendor_count > 0:
-                    final_price_from_catalog = float(product.final_price) if product.final_price else (float(product.average_price) * 1.30 if product.average_price else None)
-            except Exception as e:
-                app_logger.warning(f"Could not fetch final price from catalog: {e}")
+        # SECURITY: Always fetch final_price from database - NEVER trust frontend price
+        from app.models import ProductCatalog
+        from decimal import Decimal
         
-        # Use final_price_from_catalog as quotation_price_per_piece if available
-        quotation_price = final_price_from_catalog if final_price_from_catalog else price_per_piece_offered
+        # Build query with exact match
+        query = ProductCatalog.query.filter_by(
+            product_type=product_type,
+            category=category
+        )
+        
+        if neck_type:
+            query = query.filter_by(neck_type=neck_type)
+        if fabric:
+            query = query.filter_by(fabric=fabric)
+        if sample_size:
+            query = query.filter_by(size=sample_size)
+        
+        product = query.first()
+        
+        # SECURITY: Reject if product not found or no final_price
+        if not product or not product.final_price:
+            return jsonify({"error": "Invalid product configuration. Product not found in catalog."}), 400
+        
+        final_price_from_catalog = float(product.final_price)
+        
+        # SECURITY: Validate payment amount matches catalog price
+        # Only validate if transaction_id exists (payment was made)
+        if transaction_id:
+            # Use Decimal for precise money comparison
+            try:
+                catalog_price_decimal = Decimal(str(final_price_from_catalog))
+                sample_cost_decimal = Decimal(str(sample_cost))
+                
+                if sample_cost_decimal != catalog_price_decimal:
+                    app_logger.warning(
+                        f"Price mismatch detected for customer {customer_id}: "
+                        f"paid={sample_cost}, expected={final_price_from_catalog}, transaction_id={transaction_id}"
+                    )
+                    return jsonify({
+                        "error": "Price mismatch detected. Payment amount does not match product price.",
+                        "expected_price": final_price_from_catalog,
+                        "paid_amount": float(sample_cost)
+                    }), 400
+            except (ValueError, TypeError) as e:
+                app_logger.error(f"Invalid price format: {e}")
+                return jsonify({"error": "Invalid price format"}), 400
+        
+        # Use catalog price as the authoritative quotation price
+        quotation_price = final_price_from_catalog
         
         # Determine initial status
         initial_status = 'awaiting_sample_payment'
