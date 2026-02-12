@@ -131,32 +131,62 @@ def create_order():
         from app_pkg.models import ProductCatalog
         from decimal import Decimal
         
-        # Build query with exact match
-        # Handle NULL values: if frontend sends empty/None, match NULL in DB
-        query = ProductCatalog.query.filter_by(
-            product_type=product_type,
-            category=category
+        # Normalize and trim all values
+        product_type = product_type.strip() if product_type and isinstance(product_type, str) else product_type
+        category = category.strip() if category and isinstance(category, str) else category
+        if neck_type:
+            neck_type = neck_type.strip() if isinstance(neck_type, str) else neck_type
+            neck_type = neck_type if neck_type else None
+        else:
+            neck_type = None
+        if fabric:
+            fabric = fabric.strip() if isinstance(fabric, str) else fabric
+            fabric = fabric if fabric else None
+        else:
+            fabric = None
+        if sample_size:
+            sample_size = sample_size.strip() if isinstance(sample_size, str) else sample_size
+        else:
+            return jsonify({"error": "Sample size is required"}), 400
+        
+        # Debug logging
+        app_logger.info(
+            f"Order creation - Fetching catalog price: product_type={product_type}, category={category}, "
+            f"neck_type={neck_type}, fabric={fabric}, size={sample_size}"
         )
         
-        # Handle neck_type: match NULL if empty string or None
-        if neck_type and neck_type.strip():
+        # Build query with exact match
+        query = ProductCatalog.query.filter_by(
+            product_type=product_type,
+            category=category,
+            size=sample_size
+        )
+        
+        # Handle neck_type: match NULL if None, otherwise exact match
+        if neck_type:
             query = query.filter_by(neck_type=neck_type)
         else:
             query = query.filter(ProductCatalog.neck_type.is_(None))
         
-        # Handle fabric: match NULL if empty string or None
-        if fabric and fabric.strip():
+        # Handle fabric: match NULL if None, otherwise exact match
+        if fabric:
             query = query.filter_by(fabric=fabric)
         else:
             query = query.filter(ProductCatalog.fabric.is_(None))
         
-        # Size is required for sample orders
-        if sample_size:
-            query = query.filter_by(size=sample_size)
-        else:
-            return jsonify({"error": "Sample size is required"}), 400
-        
         product = query.first()
+        
+        # Debug logging for query result
+        if product:
+            app_logger.info(
+                f"Product found for order: id={product.id}, final_price={product.final_price}, "
+                f"average_price={product.average_price}"
+            )
+        else:
+            app_logger.warning(
+                f"No product found for order: product_type={product_type}, category={category}, "
+                f"neck_type={neck_type}, fabric={fabric}, size={sample_size}"
+            )
         
         # SECURITY: Reject if product not found or no final_price
         if not product:
