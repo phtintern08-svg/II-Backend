@@ -136,14 +136,12 @@ def create_order():
         category = category.strip() if category and isinstance(category, str) else category
         if neck_type:
             neck_type = neck_type.strip() if isinstance(neck_type, str) else neck_type
-            neck_type = neck_type if neck_type else None
-        else:
-            neck_type = None
+        # Normalize: empty/null becomes "None" (string) to match DB
+        neck_type = neck_type if neck_type else "None"
+        
         if fabric:
             fabric = fabric.strip() if isinstance(fabric, str) else fabric
-            fabric = fabric if fabric else None
-        else:
-            fabric = None
+        
         if sample_size:
             sample_size = sample_size.strip() if isinstance(sample_size, str) else sample_size
         else:
@@ -155,26 +153,28 @@ def create_order():
             f"neck_type={neck_type}, fabric={fabric}, size={sample_size}"
         )
         
-        # Build query with exact match
-        query = ProductCatalog.query.filter_by(
-            product_type=product_type,
-            category=category,
-            size=sample_size
-        )
-        
-        # Handle neck_type: match NULL if None, otherwise exact match
-        if neck_type:
-            query = query.filter_by(neck_type=neck_type)
-        else:
-            query = query.filter(ProductCatalog.neck_type.is_(None))
-        
-        # Handle fabric: match NULL if None, otherwise exact match
+        # Build query with EXACT match - all fields required
+        # DB stores "None" as string for neck_type, not SQL NULL
+        # For fabric, check both NULL and "None" string to be safe
         if fabric:
-            query = query.filter_by(fabric=fabric)
+            # Fabric provided - exact match
+            product = ProductCatalog.query.filter_by(
+                product_type=product_type,
+                category=category,
+                neck_type=neck_type,  # "None" string if not provided
+                fabric=fabric,
+                size=sample_size
+            ).first()
         else:
-            query = query.filter(ProductCatalog.fabric.is_(None))
-        
-        product = query.first()
+            # Fabric not provided - try both NULL and "None" string
+            product = ProductCatalog.query.filter_by(
+                product_type=product_type,
+                category=category,
+                neck_type=neck_type,  # "None" string if not provided
+                size=sample_size
+            ).filter(
+                (ProductCatalog.fabric.is_(None)) | (ProductCatalog.fabric == "None")
+            ).first()
         
         # Debug logging for query result
         if product:

@@ -650,26 +650,23 @@ def estimate_price():
         fabric = data.get('fabric')
         size = data.get('size')
         
-        # Trim strings and convert empty strings to None
+        # Trim strings
         if product_type:
             product_type = product_type.strip() if isinstance(product_type, str) else product_type
         if category:
             category = category.strip() if isinstance(category, str) else category
         if neck_type:
             neck_type = neck_type.strip() if isinstance(neck_type, str) else neck_type
-            neck_type = neck_type if neck_type else None
-        else:
-            neck_type = None
+        # Normalize: empty/null becomes "None" (string) to match DB
+        neck_type = neck_type if neck_type else "None"
+        
         if fabric:
             fabric = fabric.strip() if isinstance(fabric, str) else fabric
-            fabric = fabric if fabric else None
-        else:
-            fabric = None
+        # Fabric should always have a value, but normalize empty to None for now
+        fabric = fabric if fabric else None
+        
         if size:
             size = size.strip() if isinstance(size, str) else size
-            size = size if size else None
-        else:
-            size = None
         
         # Debug logging
         app_logger.info(
@@ -677,35 +674,34 @@ def estimate_price():
             f"neck_type={neck_type}, fabric={fabric}, size={size}"
         )
         
-        if not product_type or not category:
-            return jsonify({"error": "Product type and category are required"}), 400
+        if not product_type or not category or not size:
+            return jsonify({"error": "Product type, category, and size are required"}), 400
         
         # Use correct import path
         from app_pkg.models import ProductCatalog
         
-        # Build query with exact match - size is required for sample orders
-        query = ProductCatalog.query.filter_by(
-            product_type=product_type,
-            category=category
-        )
-        
-        # Handle neck_type: match NULL if None, otherwise exact match
-        if neck_type:
-            query = query.filter_by(neck_type=neck_type)
-        else:
-            query = query.filter(ProductCatalog.neck_type.is_(None))
-        
-        # Handle fabric: match NULL if None, otherwise exact match
+        # Build query with EXACT match - all fields required
+        # DB stores "None" as string for neck_type, not SQL NULL
+        # For fabric, check both NULL and "None" string to be safe
         if fabric:
-            query = query.filter_by(fabric=fabric)
+            # Fabric provided - exact match
+            product = ProductCatalog.query.filter_by(
+                product_type=product_type,
+                category=category,
+                neck_type=neck_type,  # "None" string if not provided
+                fabric=fabric,
+                size=size
+            ).first()
         else:
-            query = query.filter(ProductCatalog.fabric.is_(None))
-        
-        # Size is required for sample price estimation
-        if size:
-            query = query.filter_by(size=size)
-        
-        product = query.first()
+            # Fabric not provided - try both NULL and "None" string
+            product = ProductCatalog.query.filter_by(
+                product_type=product_type,
+                category=category,
+                neck_type=neck_type,  # "None" string if not provided
+                size=size
+            ).filter(
+                (ProductCatalog.fabric.is_(None)) | (ProductCatalog.fabric == "None")
+            ).first()
         
         # Debug logging for query result
         if product:
