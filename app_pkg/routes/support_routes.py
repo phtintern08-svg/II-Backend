@@ -693,6 +693,8 @@ def estimate_price():
         # Normalize all incoming values (lowercase for text, uppercase for size)
         product_type = normalize_text(data.get('product_type'))
         category = normalize_text(data.get('category'))
+        size = normalize_size(data.get('size'))  # 🔥 FIX: size was never defined - this was causing NameError or validation to always fail
+        
         # 🔥 FIX: Handle empty string neck_type properly (frontend might send "" which should become None, not "none")
         neck_type_raw = data.get('neck_type')
         neck_type_normalized = normalize_text(neck_type_raw) if (neck_type_raw and neck_type_raw.strip()) else None
