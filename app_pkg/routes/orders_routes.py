@@ -288,9 +288,12 @@ def create_order():
                 return jsonify({"error": "Duplicate transaction ID detected. This payment has already been processed."}), 400
         
         # Determine initial status
+        # 🔥 FIX: Auto-transition from sample_payment_received to pending_admin_review when payment exists
+        # This prevents orders from getting stuck in sample_payment_received status
         initial_status = 'awaiting_sample_payment'
         if transaction_id:
-            initial_status = 'sample_payment_received'
+            # Payment received - automatically move to pending_admin_review (admin needs to assign vendor)
+            initial_status = 'pending_admin_review'
 
         # Store original validated values (not normalized) to preserve canonical representation
         # Normalization is only for catalog lookup, not storage

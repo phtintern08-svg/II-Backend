@@ -695,21 +695,25 @@ def estimate_price():
         category = normalize_text(data.get('category'))
         # 🔥 FIX: Handle empty string neck_type properly (frontend might send "" which should become None, not "none")
         neck_type_raw = data.get('neck_type')
-        neck_type = normalize_text(neck_type_raw) if (neck_type_raw and neck_type_raw.strip()) else None
-        # If neck_type is None, we'll use "none" in the query to match DB rows with neck_type = "none"
-        if neck_type is None:
+        neck_type_normalized = normalize_text(neck_type_raw) if (neck_type_raw and neck_type_raw.strip()) else None
+        
+        # Validate required fields BEFORE defaulting neck_type (prevents misleading validation)
+        if not product_type or not category or not size:
+            return jsonify({"error": "Product type, category, and size are required"}), 400
+        
+        # If neck_type is None, default to "none" for query matching (DB stores "none" as string)
+        if neck_type_normalized is None:
             neck_type = "none"
+        else:
+            neck_type = neck_type_normalized
+            
         fabric = normalize_text(data.get('fabric')) if data.get('fabric') else None
-        size = normalize_size(data.get('size'))
         
         # Debug logging
         app_logger.info(
             f"Estimate price request: product_type={product_type}, category={category}, "
             f"neck_type={neck_type}, fabric={fabric}, size={size}"
         )
-        
-        if not product_type or not category or not neck_type or not size:
-            return jsonify({"error": "Product type, category, neck type, and size are required"}), 400
         
         # Use correct import path
         from app_pkg.models import ProductCatalog
