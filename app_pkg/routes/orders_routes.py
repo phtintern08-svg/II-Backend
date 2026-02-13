@@ -15,6 +15,29 @@ from app_pkg.logger_config import app_logger
 # Note: url_prefix is set during registration in __init__.py as '/api/orders'
 bp = Blueprint('orders', __name__)
 
+# 🔥 PRODUCTION SAFETY: Order status state machine - defines allowed transitions
+ALLOWED_TRANSITIONS = {
+    'awaiting_sample_payment': ['sample_payment_received'],
+    'sample_payment_received': ['pending_admin_review'],
+    'pending_admin_review': ['quotation_sent_to_customer', 'sample_rejected'],
+    'quotation_sent_to_customer': ['quotation_rejected_by_customer', 'sample_requested'],
+    'quotation_rejected_by_customer': [],  # Terminal state
+    'sample_requested': ['sample_approved', 'sample_rejected'],
+    'sample_rejected': [],  # Terminal state
+    'sample_approved': ['awaiting_advance_payment'],
+    'awaiting_advance_payment': ['in_production'],
+    'in_production': ['quality_check'],
+    'quality_check': ['packed_ready'],
+    'packed_ready': ['out_for_delivery'],
+    'out_for_delivery': ['delivered'],
+    'delivered': ['completed', 'completed_with_penalty'],
+    'completed': [],  # Terminal state
+    'completed_with_penalty': []  # Terminal state
+}
+
+# Valid order statuses (for validation)
+VALID_STATUSES = set(ALLOWED_TRANSITIONS.keys())
+
 
 @bp.route('/', methods=['GET'], strict_slashes=False)
 @login_required
@@ -132,20 +155,31 @@ def create_order():
         from app_pkg.models import ProductCatalog
         from decimal import Decimal
         
-        # Normalize and trim all values
-        product_type = product_type.strip() if product_type and isinstance(product_type, str) else product_type
-        category = category.strip() if category and isinstance(category, str) else category
-        if neck_type:
-            neck_type = neck_type.strip() if isinstance(neck_type, str) else neck_type
-        # Normalize: empty/null becomes "None" (string) to match DB
-        neck_type = neck_type if neck_type else "None"
+        # Normalization helper function
+        def normalize_text(val):
+            """Normalize text fields to lowercase for consistent matching"""
+            if not val:
+                return None
+            if isinstance(val, str):
+                return val.strip().lower()
+            return val
         
-        if fabric:
-            fabric = fabric.strip() if isinstance(fabric, str) else fabric
+        def normalize_size(val):
+            """Normalize size to uppercase for consistent matching"""
+            if not val:
+                return None
+            if isinstance(val, str):
+                return val.strip().upper()
+            return val
         
-        if sample_size:
-            sample_size = sample_size.strip() if isinstance(sample_size, str) else sample_size
-        else:
+        # Normalize all values (lowercase for text, uppercase for size)
+        product_type = normalize_text(product_type)
+        category = normalize_text(category)
+        neck_type = normalize_text(neck_type) if neck_type else "none"  # lowercase "none" to match DB
+        fabric = normalize_text(fabric) if fabric else None
+        sample_size = normalize_size(sample_size)
+        
+        if not sample_size:
             return jsonify({"error": "Sample size is required"}), 400
         
         # Debug logging
@@ -154,19 +188,22 @@ def create_order():
             f"neck_type={neck_type}, fabric={fabric}, size={sample_size}"
         )
         
-        # Build query with EXACT match
-        # DB stores "None" as string for neck_type, not SQL NULL
+        # Build query with CASE-INSENSITIVE match (bulletproof against DB case variations)
+        # All text fields normalized to lowercase, size to uppercase
         # If fabric is not provided, don't filter by fabric (match any fabric for that product)
-        query = ProductCatalog.query.filter_by(
-            product_type=product_type,
-            category=category,
-            neck_type=neck_type,  # "None" string if not provided
-            size=sample_size
+        from sqlalchemy import func
+        
+        query = ProductCatalog.query.filter(
+            func.lower(ProductCatalog.product_type) == product_type,
+            func.lower(ProductCatalog.category) == category,
+            func.lower(ProductCatalog.neck_type) == neck_type,  # lowercase "none" if not provided
+            ProductCatalog.size == sample_size,
+            ProductCatalog.vendor_count > 0  # Only match products with vendors
         )
         
         # Only filter by fabric if it's provided
         if fabric:
-            query = query.filter_by(fabric=fabric)
+            query = query.filter(func.lower(ProductCatalog.fabric) == fabric)
         # If fabric not provided, don't filter - match any fabric
         
         product = query.first()
@@ -236,14 +273,16 @@ def create_order():
         if transaction_id:
             initial_status = 'sample_payment_received'
 
+        # Store original validated values (not normalized) to preserve canonical representation
+        # Normalization is only for catalog lookup, not storage
         new_order = Order(
             customer_id=customer_id,
-            product_type=product_type,
-            category=category,
-            neck_type=neck_type,
-            color=color,
-            fabric=fabric,
-            print_type=print_type,
+            product_type=validated_data['product_type'],  # Original value, not normalized
+            category=validated_data['category'],  # Original value, not normalized
+            neck_type=validated_data.get('neck_type'),  # Original value, not normalized
+            color=validated_data.get('color'),
+            fabric=validated_data.get('fabric'),  # Original value, not normalized
+            print_type=validated_data.get('print_type'),
             quantity=quantity,
             price_per_piece_offered=price_per_piece_offered,
             quotation_price_per_piece=quotation_price,  # Set from catalog final_price
@@ -256,7 +295,7 @@ def create_order():
             pincode=pincode,
             country=country,
             status=initial_status,
-            sample_cost=sample_cost,
+            sample_cost=final_price_from_catalog,  # Use catalog price, not frontend value
             sample_size=sample_size
         )
         
@@ -265,6 +304,13 @@ def create_order():
 
         # Record Payment if transaction_id exists
         if transaction_id:
+            # SECURITY: Check for duplicate transaction_id (prevent replay attacks)
+            existing_payment = Payment.query.filter_by(transaction_id=transaction_id).first()
+            if existing_payment:
+                app_logger.warning(f"Duplicate transaction_id detected: {transaction_id}")
+                db.session.rollback()
+                return jsonify({"error": "Duplicate transaction ID detected. This payment has already been processed."}), 400
+            
             try:
                 payment_method = data.get('payment_method', 'card')
                 payment_details_str = data.get('payment_details', '')
@@ -275,7 +321,7 @@ def create_order():
                     customer_id=customer_id,
                     payment_type='sample',
                     payment_method=payment_method,
-                    amount=float(sample_cost) if sample_cost else 0.0,
+                    amount=float(final_price_from_catalog),  # Use catalog price, not frontend value
                     currency='INR',
                     status='success',
                     payment_details=payment_details_str,
@@ -311,6 +357,10 @@ def update_order_status(order_id):
         if not new_status:
             return jsonify({"error": "Status is required"}), 400
         
+        # 🔥 PRODUCTION SAFETY: Validate status value against allowed list
+        if new_status not in VALID_STATUSES:
+            return jsonify({"error": f"Invalid status value. Allowed statuses: {sorted(VALID_STATUSES)}"}), 400
+        
         order = Order.query.get(order_id)
         if not order:
             return jsonify({"error": "Order not found"}), 404
@@ -322,8 +372,18 @@ def update_order_status(order_id):
         if role == 'vendor' and order.selected_vendor_id != user_id:
             return jsonify({"error": "Unauthorized"}), 403
         
-        # Update order status
+        # 🔥 PRODUCTION SAFETY: Validate state transition (prevent invalid status changes)
         old_status = order.status
+        allowed_next = ALLOWED_TRANSITIONS.get(old_status, [])
+        
+        if new_status not in allowed_next:
+            return jsonify({
+                "error": f"Invalid status transition. Cannot change from '{old_status}' to '{new_status}'.",
+                "current_status": old_status,
+                "allowed_transitions": allowed_next
+            }), 400
+        
+        # Update order status
         order.status = new_status
         
         # Log status change
@@ -388,6 +448,14 @@ def request_bulk_order(order_id):
         
         if order.customer_id != request.user_id:
             return jsonify({"error": "Unauthorized"}), 403
+        
+        # 🔥 PRODUCTION SAFETY: Validate order status before allowing bulk order request
+        if order.status not in ['sample_approved', 'completed']:
+            return jsonify({
+                "error": "Bulk order not allowed at this stage",
+                "current_status": order.status,
+                "allowed_statuses": ["sample_approved", "completed"]
+            }), 400
         
         data = request.get_json()
         quantity = data.get('quantity')
@@ -454,6 +522,9 @@ def assign_vendor_to_order(order_id):
             return jsonify({"error": "Vendor not found"}), 404
         
         order.selected_vendor_id = vendor_id
+        # 🔥 PRODUCTION NOTE: Admin can override pricing during vendor assignment
+        # This is intentional - admin sets quotation based on vendor quote
+        # Catalog price is authoritative for initial order creation, but admin can adjust for vendor quotes
         order.quotation_price_per_piece = float(quotation_price_per_piece)
         order.quotation_total_price = float(quotation_price_per_piece) * order.quantity
         order.sample_cost = float(sample_cost)
@@ -469,7 +540,7 @@ def assign_vendor_to_order(order_id):
         db.session.add(assignment)
         
         # Notify vendor
-        from app.models import Notification
+        from app_pkg.models import Notification
         notif = Notification(
             user_id=vendor_id,
             user_type='vendor',
@@ -565,11 +636,14 @@ def customer_sample_response(order_id):
             return jsonify({"message": "Sample rejected"}), 200
         
         elif action == 'approve':
+            # 🔥 PRODUCTION SAFETY: Import Decimal (was missing)
+            from decimal import Decimal
+            
             order.status = 'awaiting_advance_payment'
             db.session.commit()
             return jsonify({
                 "message": "Sample approved, awaiting 50% advance payment",
-                "advance_amount": order.quotation_total_price * 0.50
+                "advance_amount": float(Decimal(str(order.quotation_total_price)) * Decimal('0.50'))
             }), 200
         else:
             return jsonify({"error": "Invalid action"}), 400
@@ -596,8 +670,32 @@ def process_advance_payment(order_id):
         if order.customer_id != request.user_id:
             return jsonify({"error": "Unauthorized"}), 403
         
-        advance_amount = order.quotation_total_price * 0.50
-        vendor_initial_payout = order.quotation_total_price * 0.25
+        # 🔥 PRODUCTION SAFETY: Validate order status before allowing advance payment
+        if order.status != 'awaiting_advance_payment':
+            return jsonify({
+                "error": "Advance payment not allowed at this stage",
+                "current_status": order.status,
+                "required_status": "awaiting_advance_payment"
+            }), 400
+        
+        # 🔥 PRODUCTION SAFETY: Check for duplicate advance payment (prevent money duplication)
+        existing_payment = CustomerPayment.query.filter_by(
+            order_id=order_id,
+            payment_type='advance_50'
+        ).first()
+        
+        if existing_payment:
+            return jsonify({
+                "error": "Advance payment already processed",
+                "payment_id": existing_payment.id,
+                "processed_at": existing_payment.timestamp.isoformat() if existing_payment.timestamp else None
+            }), 400
+        
+        # Use Decimal for money calculations (never use float for money)
+        from decimal import Decimal
+        total = Decimal(str(order.quotation_total_price))
+        advance_amount = float(total * Decimal('0.50'))
+        vendor_initial_payout = float(total * Decimal('0.25'))
         
         # Record customer's 50% advance payment to admin
         advance_payment = CustomerPayment(
@@ -661,43 +759,53 @@ def submit_order_feedback(order_id):
         if order.customer_id != request.user_id:
             return jsonify({"error": "Unauthorized"}), 403
         
+        # 🔥 PRODUCTION SAFETY: Validate order status before allowing feedback
+        if order.status != 'delivered':
+            return jsonify({
+                "error": "Feedback allowed only after delivery",
+                "current_status": order.status,
+                "required_status": "delivered"
+            }), 400
+        
         order.rating = data.get('rating')
         order.delivery_on_time = data.get('delivery_on_time', True)
         order.delivery_delay_days = data.get('delivery_delay_days', 0)
         order.defect_reported = data.get('defect_reported', False)
         order.feedback_comment = data.get('feedback_comment', '')
         
-        # Calculate penalties
-        total_price = order.quotation_total_price
-        penalty = 0.0
+        # 🔥 PRODUCTION SAFETY: Use Decimal for all money calculations (never use float)
+        from decimal import Decimal
+        total_price_decimal = Decimal(str(order.quotation_total_price))
+        penalty = Decimal('0.00')
         
-        # Late delivery penalty
+        # Late delivery penalty (using Decimal)
         if order.delivery_delay_days > 0:
             if order.delivery_delay_days <= 3:
-                penalty += total_price * 0.05
+                penalty += total_price_decimal * Decimal('0.05')
             elif order.delivery_delay_days <= 7:
-                penalty += total_price * 0.10
+                penalty += total_price_decimal * Decimal('0.10')
             else:
-                penalty += total_price * 0.20
+                penalty += total_price_decimal * Decimal('0.20')
         
-        # Rating penalty
+        # Rating penalty (using Decimal)
         if order.rating == 3:
-            penalty += total_price * 0.05
+            penalty += total_price_decimal * Decimal('0.05')
         elif order.rating == 2:
-            penalty += total_price * 0.10
+            penalty += total_price_decimal * Decimal('0.10')
         elif order.rating == 1:
-            penalty += total_price * 0.20
+            penalty += total_price_decimal * Decimal('0.20')
         
-        # Defect penalty
+        # Defect penalty (using Decimal)
         if order.defect_reported:
-            penalty += total_price * 0.15
+            penalty += total_price_decimal * Decimal('0.15')
         
-        # Calculate final vendor payout
-        vendor_remaining_base = total_price * 0.25
-        vendor_final_payout = max(0, vendor_remaining_base - penalty)
+        # Calculate final vendor payout (using Decimal)
+        vendor_remaining_base = total_price_decimal * Decimal('0.25')
+        vendor_final_payout_decimal = max(Decimal('0.00'), vendor_remaining_base - penalty)
         
-        order.penalty_amount_total = penalty
-        order.vendor_final_payout = vendor_final_payout
+        # Convert to float for storage (Decimal precision maintained in calculation)
+        order.penalty_amount_total = float(penalty)
+        order.vendor_final_payout = float(vendor_final_payout_decimal)
         order.status = 'completed_with_penalty' if penalty > 0 else 'completed'
         
         # Create final vendor payment record
@@ -717,8 +825,8 @@ def submit_order_feedback(order_id):
         
         return jsonify({
             "message": "Feedback submitted successfully",
-            "penalty_applied": penalty,
-            "vendor_final_payout": vendor_final_payout,
+            "penalty_applied": float(penalty),
+            "vendor_final_payout": float(vendor_final_payout_decimal),
             "order_status": order.status
         }), 200
         

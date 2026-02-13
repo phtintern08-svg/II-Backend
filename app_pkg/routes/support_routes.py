@@ -56,7 +56,12 @@ def reverse_geocode():
         reverse_geocode._last_requests = {}
     
     # Use IP address for rate limiting instead of user_id (works for unauthenticated requests)
-    client_ip = request.remote_addr or request.environ.get('HTTP_X_FORWARDED_FOR', 'unknown').split(',')[0].strip()
+    # Proper IP extraction for production (handles Nginx, Cloudflare, load balancers)
+    client_ip = request.headers.get('X-Forwarded-For', request.remote_addr)
+    if client_ip:
+        client_ip = client_ip.split(',')[0].strip()
+    if not client_ip:
+        client_ip = 'unknown'
     current_time = datetime.utcnow().timestamp()
     
     # Clean old entries (older than 1 minute)
@@ -64,6 +69,12 @@ def reverse_geocode():
         ip: times for ip, times in reverse_geocode._last_requests.items()
         if any(t > current_time - 60 for t in times)
     }
+    
+    # 🔥 PRODUCTION SAFETY: Hard cap to prevent memory exhaustion under attack
+    # If dict grows beyond 10,000 IPs, clear it (prevents unbounded memory growth)
+    if len(reverse_geocode._last_requests) > 10000:
+        app_logger.warning("Rate limiter memory cap reached - clearing cache")
+        reverse_geocode._last_requests.clear()
     
     # Get IP's request times in last minute
     ip_requests = reverse_geocode._last_requests.get(client_ip, [])
@@ -106,8 +117,9 @@ def reverse_geocode():
         
         response = requests.get(url, params=params, timeout=10)
         if response.status_code != 200:
+            # Log detailed error internally, but return generic message to client (prevent info leakage)
             app_logger.warning(f"Mappls reverse geocode API returned {response.status_code}: {response.text[:200]}")
-            return jsonify({"error": "Failed to fetch from MapmyIndia"}), response.status_code
+            return jsonify({"error": "Map service error"}), 502
         
         data = response.json()
         
@@ -120,9 +132,10 @@ def reverse_geocode():
         if "results" not in data:
             # Some Mappls responses might have different structure, try to normalize
             if "responseCode" in data and data.get("responseCode") != 200:
+                # Log detailed error internally, but return generic message to client (prevent info leakage)
                 error_msg = data.get("error", "Unknown error from map service")
                 app_logger.warning(f"Mappls API error: {error_msg}")
-                return jsonify({"error": error_msg}), 502
+                return jsonify({"error": "Map service error"}), 502
             # If no results key, wrap the response
             data = {"results": [data]} if data else {"results": []}
         
@@ -150,6 +163,10 @@ def geocode():
         query = request.args.get('query')
         if not query:
             return jsonify({"error": "Query parameter required"}), 400
+        
+        # 🔥 PRODUCTION SAFETY: Restrict query length to prevent abuse/attacks
+        if len(query) > 200:
+            return jsonify({"error": "Query too long. Maximum 200 characters."}), 400
         
         # Use REST key for backend geocoding (Default Key)
         api_key = current_app.config.get('MAPPLS_REST_KEY') or os.environ.get('MAPPLS_REST_KEY')
@@ -394,23 +411,25 @@ def update_profile():
         if not user:
             return jsonify({"error": "User not found"}), 404
         
-        # Check if email already exists for another user
-        if role == 'customer':
-            existing = Customer.query.filter(Customer.email == email, Customer.id != user_id).first()
-        else:
-            existing = Vendor.query.filter(Vendor.email == email, Vendor.id != user_id).first()
+        # Check if email already exists for another user (only if email is provided)
+        if email:
+            if role == 'customer':
+                existing = Customer.query.filter(Customer.email == email, Customer.id != user_id).first()
+            else:
+                existing = Vendor.query.filter(Vendor.email == email, Vendor.id != user_id).first()
+            
+            if existing:
+                return jsonify({"error": "Email already in use"}), 400
         
-        if existing:
-            return jsonify({"error": "Email already in use"}), 400
-        
-        # Check if phone already exists for another user
-        if role == 'customer':
-            existing = Customer.query.filter(Customer.phone == phone, Customer.id != user_id).first()
-        else:
-            existing = Vendor.query.filter(Vendor.phone == phone, Vendor.id != user_id).first()
-        
-        if existing:
-            return jsonify({"error": "Phone number already in use"}), 400
+        # Check if phone already exists for another user (only if phone is provided)
+        if phone:
+            if role == 'customer':
+                existing = Customer.query.filter(Customer.phone == phone, Customer.id != user_id).first()
+            else:
+                existing = Vendor.query.filter(Vendor.phone == phone, Vendor.id != user_id).first()
+            
+            if existing:
+                return jsonify({"error": "Phone number already in use"}), 400
         
         # Update user data
         if username:
@@ -634,39 +653,38 @@ def change_password():
 
 @bp.route('/estimate-price', methods=['POST'])
 @login_required
-@role_required(['customer', 'vendor', 'admin'])
+@role_required(['customer'])  # Restrict to customers only - pricing logic should not be exposed
 def estimate_price():
     """
     POST /api/estimate-price
     Estimate price for a product configuration
     """
     try:
-        data = request.get_json()
+        data = request.get_json() or {}  # Guard against None
         
-        # Normalize and trim all incoming values
-        product_type = data.get('product_type')
-        category = data.get('category')
-        neck_type = data.get('neck_type')
-        fabric = data.get('fabric')
-        size = data.get('size')
+        # Normalization helper functions
+        def normalize_text(val):
+            """Normalize text fields to lowercase for consistent matching"""
+            if not val:
+                return None
+            if isinstance(val, str):
+                return val.strip().lower()
+            return val
         
-        # Trim strings
-        if product_type:
-            product_type = product_type.strip() if isinstance(product_type, str) else product_type
-        if category:
-            category = category.strip() if isinstance(category, str) else category
-        if neck_type:
-            neck_type = neck_type.strip() if isinstance(neck_type, str) else neck_type
-        # Normalize: empty/null becomes "None" (string) to match DB
-        neck_type = neck_type if neck_type else "None"
+        def normalize_size(val):
+            """Normalize size to uppercase for consistent matching"""
+            if not val:
+                return None
+            if isinstance(val, str):
+                return val.strip().upper()
+            return val
         
-        if fabric:
-            fabric = fabric.strip() if isinstance(fabric, str) else fabric
-        # Fabric should always have a value, but normalize empty to None for now
-        fabric = fabric if fabric else None
-        
-        if size:
-            size = size.strip() if isinstance(size, str) else size
+        # Normalize all incoming values (lowercase for text, uppercase for size)
+        product_type = normalize_text(data.get('product_type'))
+        category = normalize_text(data.get('category'))
+        neck_type = normalize_text(data.get('neck_type')) if data.get('neck_type') else "none"  # lowercase "none"
+        fabric = normalize_text(data.get('fabric')) if data.get('fabric') else None
+        size = normalize_size(data.get('size'))
         
         # Debug logging
         app_logger.info(
@@ -674,25 +692,28 @@ def estimate_price():
             f"neck_type={neck_type}, fabric={fabric}, size={size}"
         )
         
-        if not product_type or not category or not size:
-            return jsonify({"error": "Product type, category, and size are required"}), 400
+        if not product_type or not category or not neck_type or not size:
+            return jsonify({"error": "Product type, category, neck type, and size are required"}), 400
         
         # Use correct import path
         from app_pkg.models import ProductCatalog
         
-        # Build query with EXACT match
-        # DB stores "None" as string for neck_type, not SQL NULL
+        # Build query with CASE-INSENSITIVE match (bulletproof against DB case variations)
+        # All text fields normalized to lowercase, size to uppercase
         # If fabric is not provided, don't filter by fabric (match any fabric for that product)
-        query = ProductCatalog.query.filter_by(
-            product_type=product_type,
-            category=category,
-            neck_type=neck_type,  # "None" string if not provided
-            size=size
+        from sqlalchemy import func
+        
+        query = ProductCatalog.query.filter(
+            func.lower(ProductCatalog.product_type) == product_type,
+            func.lower(ProductCatalog.category) == category,
+            func.lower(ProductCatalog.neck_type) == neck_type,  # lowercase "none" if not provided
+            ProductCatalog.size == size,
+            ProductCatalog.vendor_count > 0  # Only match products with vendors
         )
         
         # Only filter by fabric if it's provided
         if fabric:
-            query = query.filter_by(fabric=fabric)
+            query = query.filter(func.lower(ProductCatalog.fabric) == fabric)
         # If fabric not provided, don't filter - match any fabric
         
         product = query.first()
@@ -709,7 +730,7 @@ def estimate_price():
                 f"neck_type={neck_type}, fabric={fabric}, size={size}"
             )
         
-        if product and product.vendor_count > 0:
+        if product:
             # Calculate final_price if not set
             final_price = float(product.final_price) if product.final_price else (float(product.average_price) * 1.30 if product.average_price else 0)
             return jsonify({
@@ -718,14 +739,18 @@ def estimate_price():
                 "found": True
             }), 200
         else:
-            # Try to find match with same Product, Category AND Size (relaxed matching)
-            query_size = ProductCatalog.query.filter_by(
-                product_type=product_type,
-                category=category
-            ).filter(ProductCatalog.vendor_count > 0)
+            # Try to find match with same Product, Category, Neck Type AND Size (relaxed matching)
+            # Use case-insensitive matching for consistency
+            # Include neck_type for more accurate relaxed matching
+            query_size = ProductCatalog.query.filter(
+                func.lower(ProductCatalog.product_type) == product_type,
+                func.lower(ProductCatalog.category) == category,
+                func.lower(ProductCatalog.neck_type) == neck_type,  # Match neck_type in relaxed too
+                ProductCatalog.vendor_count > 0
+            )
             
             if size:
-                query_size = query_size.filter_by(size=size)
+                query_size = query_size.filter(ProductCatalog.size == size)
             
             similar_by_size = query_size.all()
             
@@ -746,11 +771,15 @@ def estimate_price():
                         "message": f"Estimate based on size {size}"
                     }), 200
             
-            # Fallback: Average of all items in this category
-            similar = ProductCatalog.query.filter_by(
-                product_type=product_type,
-                category=category
-            ).filter(ProductCatalog.vendor_count > 0).all()
+            # Fallback: Average of all items in this category with same neck_type
+            # Use case-insensitive matching for consistency
+            # Include neck_type in final fallback for better UX integrity
+            similar = ProductCatalog.query.filter(
+                func.lower(ProductCatalog.product_type) == product_type,
+                func.lower(ProductCatalog.category) == category,
+                func.lower(ProductCatalog.neck_type) == neck_type,  # Match neck_type in final fallback too
+                ProductCatalog.vendor_count > 0
+            ).all()
             
             if similar:
                 prices = []
@@ -831,26 +860,26 @@ def get_product_catalog():
         size = request.args.get('size')
         grouped = request.args.get('grouped', 'false').lower() == 'true'
         
-        # Build WHERE clause
-        where_conditions = ["vendor_count > 0"]
+        # 🔥 PRODUCTION SAFETY: Build SQL safely (never interpolate user input into SQL string)
+        # Base SQL with static WHERE condition
+        base_where = "vendor_count > 0"
         params = {}
         
+        # Add conditions safely (each condition is static string, params bound separately)
         if product_type:
-            where_conditions.append("product_type = :product_type")
+            base_where += " AND LOWER(product_type) = LOWER(:product_type)"
             params['product_type'] = product_type
         if category:
-            where_conditions.append("category = :category")
+            base_where += " AND LOWER(category) = LOWER(:category)"
             params['category'] = category
         if size:
-            where_conditions.append("size = :size")
+            base_where += " AND size = :size"  # Size is case-sensitive (uppercase)
             params['size'] = size
-        
-        where_clause = " AND ".join(where_conditions)
         
         if grouped:
             # Grouped view: group by product_type, category, neck_type, fabric
             # Show sizes as arrays with price ranges
-            sql = text(f"""
+            sql = text("""
                 SELECT
                     product_type,
                     category,
@@ -864,7 +893,7 @@ def get_product_catalog():
                     GROUP_CONCAT(DISTINCT size ORDER BY size SEPARATOR ',') AS sizes,
                     MAX(updated_at) AS updated_at
                 FROM product_catalog
-                WHERE {where_clause}
+                WHERE """ + base_where + """
                 GROUP BY product_type, category, neck_type, fabric, notes
                 ORDER BY updated_at DESC
             """)
@@ -888,7 +917,7 @@ def get_product_catalog():
                 })
         else:
             # Detailed view: all rows with individual sizes
-            sql = text(f"""
+            sql = text("""
                 SELECT
                     id,
                     product_type,
@@ -902,7 +931,7 @@ def get_product_catalog():
                     notes,
                     updated_at
                 FROM product_catalog
-                WHERE {where_clause}
+                WHERE """ + base_where + """
                 ORDER BY updated_at DESC
             """)
             
