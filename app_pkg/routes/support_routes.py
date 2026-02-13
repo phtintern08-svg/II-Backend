@@ -673,6 +673,9 @@ def estimate_price():
     try:
         data = request.get_json() or {}  # Guard against None
         
+        # 🔥 DEBUG: Log raw payload to diagnose 400 errors
+        app_logger.info(f"RAW ESTIMATE PAYLOAD RECEIVED: {data}")
+        
         # Normalization helper functions
         def normalize_text(val):
             """Normalize text fields to lowercase for consistent matching"""
@@ -700,8 +703,21 @@ def estimate_price():
         neck_type_normalized = normalize_text(neck_type_raw) if (neck_type_raw and neck_type_raw.strip()) else None
         
         # Validate required fields BEFORE defaulting neck_type (prevents misleading validation)
+        # 🔥 DEBUG: Log received values to diagnose 400 errors
         if not product_type or not category or not size:
-            return jsonify({"error": "Product type, category, and size are required"}), 400
+            app_logger.warning(
+                f"Estimate validation failed - missing required fields: "
+                f"product_type={product_type}, category={category}, size={size}, "
+                f"raw_data={data}"
+            )
+            return jsonify({
+                "error": "Product type, category, and size are required",
+                "received": {
+                    "product_type": product_type,
+                    "category": category,
+                    "size": size
+                }
+            }), 400
         
         # If neck_type is None, default to "none" for query matching (DB stores "none" as string)
         if neck_type_normalized is None:
