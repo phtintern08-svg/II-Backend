@@ -90,7 +90,8 @@ class OrderSchema(ma.SQLAlchemyAutoSchema):
 
     def get_payments(self, obj):
         """Manually fetch payments from both admin and customer Payment models (cross-schema)"""
-        from app.models import Payment, CustomerPayment
+        # 🔥 FIX: Use app_pkg.models, not app.models (package name is app_pkg, not app)
+        from app_pkg.models import Payment, CustomerPayment
         admin_payments = Payment.query.filter_by(order_id=obj.id).all()
         customer_payments = CustomerPayment.query.filter_by(order_id=obj.id).all()
         
