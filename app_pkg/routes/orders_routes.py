@@ -5,7 +5,7 @@ Handles order creation, management, and tracking endpoints
 from flask import Blueprint, request, jsonify
 from datetime import datetime
 
-from app_pkg.models import db, Order, OrderStatusHistory, Customer, Vendor, VendorOrderAssignment, Payment, CustomerPayment
+from app_pkg.models import db, Order, OrderStatusHistory, Customer, Vendor, VendorOrderAssignment, Payment, CustomerPayment, Admin
 from app_pkg.auth import login_required, admin_required, role_required
 from app_pkg.validation import validate_request_data, OrderSchema
 from app_pkg.schemas import order_schema, orders_schema
@@ -14,6 +14,15 @@ from app_pkg.logger_config import app_logger
 # Create blueprint
 # Note: url_prefix is set during registration in __init__.py as '/api/orders'
 bp = Blueprint('orders', __name__)
+
+# 🔥 HELPER: Get admin user ID (prevents hardcoded admin ID = 1)
+def get_admin_id():
+    """Get the first admin user ID. Fail fast if no admin configured (prevents silent money misrouting)."""
+    admin = Admin.query.first()
+    if not admin:
+        app_logger.error("CRITICAL: No admin user configured in database")
+        raise Exception("System configuration error: No admin user found. Please contact system administrator.")
+    return admin.id
 
 # 🔥 PRODUCTION SAFETY: Order status state machine - defines allowed transitions
 ALLOWED_TRANSITIONS = {
@@ -176,7 +185,9 @@ def create_order():
         product_type = normalize_text(product_type)
         category = normalize_text(category)
         neck_type = normalize_text(neck_type) if neck_type else "none"  # lowercase "none" to match DB
-        fabric = normalize_text(fabric) if fabric else None
+        # 🔥 FIX: Handle empty string fabric (frontend might send "" which becomes None after normalization)
+        # Only normalize if fabric is truthy and not empty string
+        fabric = normalize_text(fabric) if (fabric and fabric.strip()) else None
         sample_size = normalize_size(sample_size)
         
         if not sample_size:
@@ -268,6 +279,14 @@ def create_order():
         # Use catalog price as the authoritative quotation price
         quotation_price = final_price_from_catalog
         
+        # 🔥 OPTIMIZATION: Check for duplicate transaction_id BEFORE creating order (earlier validation)
+        # This prevents unnecessary order creation if transaction is duplicate
+        if transaction_id:
+            existing_payment = Payment.query.filter_by(transaction_id=transaction_id).first()
+            if existing_payment:
+                app_logger.warning(f"Duplicate transaction_id detected: {transaction_id}")
+                return jsonify({"error": "Duplicate transaction ID detected. This payment has already been processed."}), 400
+        
         # Determine initial status
         initial_status = 'awaiting_sample_payment'
         if transaction_id:
@@ -301,15 +320,20 @@ def create_order():
         
         db.session.add(new_order)
         db.session.flush()  # Flush to get new_order.id
+        
+        # 🔥 FIX: Create initial status history entry (tracking history was missing first stage)
+        initial_status_history = OrderStatusHistory(
+            order_id=new_order.id,
+            status=initial_status,
+            status_label=initial_status.replace('_', ' ').title(),
+            changed_by_type='system',
+            changed_by_id=customer_id,
+            notes='Order created'
+        )
+        db.session.add(initial_status_history)
 
         # Record Payment if transaction_id exists
         if transaction_id:
-            # SECURITY: Check for duplicate transaction_id (prevent replay attacks)
-            existing_payment = Payment.query.filter_by(transaction_id=transaction_id).first()
-            if existing_payment:
-                app_logger.warning(f"Duplicate transaction_id detected: {transaction_id}")
-                db.session.rollback()
-                return jsonify({"error": "Duplicate transaction ID detected. This payment has already been processed."}), 400
             
             try:
                 payment_method = data.get('payment_method', 'card')
@@ -464,6 +488,7 @@ def request_bulk_order(order_id):
             return jsonify({"error": "Invalid quantity"}), 400
         
         # Create new bulk order based on sample
+        # 🔥 FIX: Copy pricing from original order (was missing quotation_price_per_piece and quotation_total_price)
         new_order = Order(
             customer_id=order.customer_id,
             product_type=order.product_type,
@@ -474,6 +499,8 @@ def request_bulk_order(order_id):
             print_type=order.print_type,
             quantity=quantity,
             price_per_piece_offered=order.price_per_piece_offered,
+            quotation_price_per_piece=order.quotation_price_per_piece,  # Copy from original order
+            quotation_total_price=order.quotation_price_per_piece * quantity if order.quotation_price_per_piece else None,  # Calculate based on new quantity
             delivery_date=order.delivery_date,
             address_line1=order.address_line1,
             address_line2=order.address_line2,
@@ -482,10 +509,23 @@ def request_bulk_order(order_id):
             pincode=order.pincode,
             country=order.country,
             status='pending_admin_review',
-            sample_size=order.sample_size
+            sample_size=order.sample_size,
+            sample_cost=order.sample_cost  # Copy sample cost from original order
         )
         
         db.session.add(new_order)
+        db.session.flush()  # Flush to get new_order.id
+        
+        # 🔥 FIX: Create initial status history entry for bulk order (consistency with create_order)
+        bulk_status_history = OrderStatusHistory(
+            order_id=new_order.id,
+            status='pending_admin_review',
+            status_label='Pending Admin Review',
+            changed_by_type='customer',
+            changed_by_id=request.user_id,
+            notes='Bulk order created from sample order'
+        )
+        db.session.add(bulk_status_history)
         db.session.commit()
         
         return order_schema.jsonify(new_order), 201
@@ -520,6 +560,14 @@ def assign_vendor_to_order(order_id):
         vendor = Vendor.query.get(vendor_id)
         if not vendor:
             return jsonify({"error": "Vendor not found"}), 404
+        
+        # 🔥 FIX: Validate order status before allowing vendor assignment
+        if order.status != 'pending_admin_review':
+            return jsonify({
+                "error": "Vendor assignment not allowed at this stage",
+                "current_status": order.status,
+                "required_status": "pending_admin_review"
+            }), 400
         
         order.selected_vendor_id = vendor_id
         # 🔥 PRODUCTION NOTE: Admin can override pricing during vendor assignment
@@ -579,6 +627,14 @@ def customer_quotation_response(order_id):
         if order.customer_id != request.user_id:
             return jsonify({"error": "Unauthorized"}), 403
         
+        # 🔥 FIX: Validate order status before allowing quotation response
+        if order.status != 'quotation_sent_to_customer':
+            return jsonify({
+                "error": "Quotation response not allowed at this stage",
+                "current_status": order.status,
+                "required_status": "quotation_sent_to_customer"
+            }), 400
+        
         if action == 'reject':
             order.status = 'quotation_rejected_by_customer'
             db.session.commit()
@@ -586,12 +642,13 @@ def customer_quotation_response(order_id):
         
         elif action == 'accept':
             # Create payment record for sample
+            # 🔥 FIX: Use dynamic admin ID instead of hardcoded 1
             sample_payment = CustomerPayment(
                 order_id=order_id,
                 payer_type='customer',
                 payer_id=order.customer_id,
                 receiver_type='admin',
-                receiver_id=1,
+                receiver_id=get_admin_id(),
                 amount=order.sample_cost,
                 payment_type='sample_payment',
                 status='completed'
@@ -629,6 +686,14 @@ def customer_sample_response(order_id):
         
         if order.customer_id != request.user_id:
             return jsonify({"error": "Unauthorized"}), 403
+        
+        # 🔥 FIX: Validate order status before allowing sample response
+        if order.status != 'sample_requested':
+            return jsonify({
+                "error": "Sample response not allowed at this stage",
+                "current_status": order.status,
+                "required_status": "sample_requested"
+            }), 400
         
         if action == 'reject':
             order.status = 'sample_rejected'
@@ -698,12 +763,14 @@ def process_advance_payment(order_id):
         vendor_initial_payout = float(total * Decimal('0.25'))
         
         # Record customer's 50% advance payment to admin
+        # 🔥 FIX: Use dynamic admin ID instead of hardcoded 1
+        admin_id = get_admin_id()
         advance_payment = CustomerPayment(
             order_id=order_id,
             payer_type='customer',
             payer_id=order.customer_id,
             receiver_type='admin',
-            receiver_id=1,
+            receiver_id=admin_id,
             amount=advance_amount,
             payment_type='advance_50',
             status='completed'
@@ -713,7 +780,7 @@ def process_advance_payment(order_id):
         vendor_payment = CustomerPayment(
             order_id=order_id,
             payer_type='admin',
-            payer_id=1,
+            payer_id=admin_id,
             receiver_type='vendor',
             receiver_id=order.selected_vendor_id,
             amount=vendor_initial_payout,
@@ -767,7 +834,12 @@ def submit_order_feedback(order_id):
                 "required_status": "delivered"
             }), 400
         
-        order.rating = data.get('rating')
+        # 🔥 FIX: Validate rating range (1-5) to prevent invalid values like rating=100
+        rating = data.get('rating')
+        if rating is not None and rating not in [1, 2, 3, 4, 5]:
+            return jsonify({"error": "Rating must be between 1 and 5"}), 400
+        
+        order.rating = rating
         order.delivery_on_time = data.get('delivery_on_time', True)
         order.delivery_delay_days = data.get('delivery_delay_days', 0)
         order.defect_reported = data.get('defect_reported', False)
@@ -809,13 +881,16 @@ def submit_order_feedback(order_id):
         order.status = 'completed_with_penalty' if penalty > 0 else 'completed'
         
         # Create final vendor payment record
+        # 🔥 FIX: Use vendor_final_payout_decimal (was using undefined vendor_final_payout)
+        # 🔥 FIX: Use dynamic admin ID instead of hardcoded 1
+        admin_id = get_admin_id()
         final_payment = CustomerPayment(
             order_id=order_id,
             payer_type='admin',
-            payer_id=1,
+            payer_id=admin_id,
             receiver_type='vendor',
             receiver_id=order.selected_vendor_id,
-            amount=vendor_final_payout,
+            amount=float(vendor_final_payout_decimal),  # Use the Decimal variable, convert to float for storage
             payment_type='vendor_final_payout',
             status='completed'
         )

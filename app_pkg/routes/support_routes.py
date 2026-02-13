@@ -289,6 +289,13 @@ def create_thread():
         if not title or not content:
             return jsonify({"error": "Title and content required"}), 400
         
+        # 🔥 FIX: Validate content length to prevent abuse (50MB content attacks)
+        if len(title) > 255:
+            return jsonify({"error": "Title too long. Maximum 255 characters."}), 400
+        
+        if len(content) > 10000:  # Reasonable limit for thread content
+            return jsonify({"error": "Content too long. Maximum 10,000 characters."}), 400
+        
         new_thread = Thread(
             title=title,
             content=content,
@@ -358,6 +365,10 @@ def add_comment(thread_id):
         
         if not content:
             return jsonify({"error": "Content required"}), 400
+        
+        # 🔥 FIX: Validate content length to prevent abuse (50MB content attacks)
+        if len(content) > 5000:  # Reasonable limit for comment content
+            return jsonify({"error": "Content too long. Maximum 5,000 characters."}), 400
         
         # Verify thread exists
         thread = Thread.query.get(thread_id)
@@ -682,7 +693,12 @@ def estimate_price():
         # Normalize all incoming values (lowercase for text, uppercase for size)
         product_type = normalize_text(data.get('product_type'))
         category = normalize_text(data.get('category'))
-        neck_type = normalize_text(data.get('neck_type')) if data.get('neck_type') else "none"  # lowercase "none"
+        # 🔥 FIX: Handle empty string neck_type properly (frontend might send "" which should become None, not "none")
+        neck_type_raw = data.get('neck_type')
+        neck_type = normalize_text(neck_type_raw) if (neck_type_raw and neck_type_raw.strip()) else None
+        # If neck_type is None, we'll use "none" in the query to match DB rows with neck_type = "none"
+        if neck_type is None:
+            neck_type = "none"
         fabric = normalize_text(data.get('fabric')) if data.get('fabric') else None
         size = normalize_size(data.get('size'))
         
@@ -827,7 +843,8 @@ def get_product_price(product_id):
             'id': product.id,
             'product_type': product.product_type,
             'category': product.category,
-            'average_price': float(product.final_price) if product.final_price else 0,
+            'final_price': float(product.final_price) if product.final_price else 0,  # 🔥 FIX: Return final_price (was incorrectly named average_price)
+            'average_price': float(product.average_price) if product.average_price else 0,  # Also include average_price for reference
             'vendor_count': product.vendor_count or 0
         }), 200
         
