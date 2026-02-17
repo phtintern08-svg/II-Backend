@@ -290,10 +290,18 @@ def get_customer_orders():
     try:
         orders = Order.query.filter_by(customer_id=request.user_id).order_by(Order.created_at.desc()).all()
         
+        # 🔥 FIX: Return all fields that frontend orders.js expects
+        # Frontend needs: id, status, product_type, category, fabric, quantity, sample_cost, delivery_date
+        # See: public_html/apparels.impromptuindian.com/customer/js/orders.js renderOrders() function
         orders_data = [{
             "id": order.id,
             "status": order.status,
-            "total_amount": float(order.total_amount) if order.total_amount else 0,
+            "product_type": order.product_type,
+            "category": order.category,
+            "fabric": order.fabric,
+            "quantity": order.quantity,
+            "sample_cost": float(order.sample_cost) if order.sample_cost else 0,
+            "delivery_date": order.delivery_date,  # Frontend expects string or null, not ISO format
             "created_at": order.created_at.isoformat() if order.created_at else None
         } for order in orders]
         
