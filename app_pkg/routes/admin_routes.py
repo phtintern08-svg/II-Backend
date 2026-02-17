@@ -7,6 +7,7 @@ from datetime import datetime
 import os
 import math
 import csv
+import time
 from sqlalchemy import text
 
 from app_pkg.models import (
@@ -295,6 +296,133 @@ def get_dashboard_stats():
             f"❌ Dashboard stats error - Process: {process_id}, Error: {e}"
         )
         return jsonify({"error": "Failed to retrieve statistics"}), 500
+
+
+@bp.route('/system-stats', methods=['GET'])
+@admin_required
+def get_system_stats():
+    """
+    GET /api/admin/system-stats
+    Get process-level system statistics (CPU, RAM, Disk I/O) for the backend application
+    """
+    try:
+        # Try to import psutil, fallback gracefully if not installed
+        try:
+            import psutil
+        except ImportError:
+            app_logger.warning("psutil not installed - system stats unavailable")
+            return jsonify({
+                "error": "System monitoring not available - psutil package required",
+                "code": "PSUTIL_NOT_INSTALLED"
+            }), 503
+        
+        # Get current process
+        current_process = psutil.Process(os.getpid())
+        
+        # Check if we're running under Passenger/Gunicorn (multiple workers)
+        # Passenger typically has a parent process with children
+        parent = current_process.parent()
+        processes = []
+        
+        # Try to detect if we're in a multi-worker setup
+        try:
+            # Check if parent is a worker manager (gunicorn, passenger, etc.)
+            parent_name = parent.name().lower() if parent else ''
+            is_multi_worker = any(name in parent_name for name in ['gunicorn', 'passenger', 'uwsgi', 'supervisord'])
+            
+            if is_multi_worker:
+                # Get all child processes (workers)
+                try:
+                    children = parent.children(recursive=True)
+                    processes = children + [parent]
+                except (psutil.NoSuchProcess, psutil.AccessDenied):
+                    # Fallback to current process only
+                    processes = [current_process]
+            else:
+                # Single process setup
+                processes = [current_process]
+        except (psutil.NoSuchProcess, psutil.AccessDenied):
+            # Fallback to current process only
+            processes = [current_process]
+        
+        # Aggregate metrics across all processes
+        total_cpu = 0.0
+        total_ram_mb = 0.0
+        total_ram_percent = 0.0
+        total_read_bytes = 0
+        total_write_bytes = 0
+        total_threads = 0
+        oldest_create_time = time.time()
+        
+        for proc in processes:
+            try:
+                # CPU (non-blocking)
+                total_cpu += proc.cpu_percent(interval=0.0)
+                
+                # RAM
+                mem_info = proc.memory_info()
+                total_ram_mb += mem_info.rss / 1024 / 1024
+                total_ram_percent += proc.memory_percent()
+                
+                # Disk I/O
+                try:
+                    io = proc.io_counters()
+                    total_read_bytes += io.read_bytes
+                    total_write_bytes += io.write_bytes
+                except (psutil.AccessDenied, AttributeError):
+                    # Some systems don't allow I/O stats
+                    pass
+                
+                # Threads
+                total_threads += proc.num_threads()
+                
+                # Track oldest process (for uptime)
+                try:
+                    create_time = proc.create_time()
+                    if create_time < oldest_create_time:
+                        oldest_create_time = create_time
+                except (psutil.AccessDenied, AttributeError):
+                    pass
+                    
+            except (psutil.NoSuchProcess, psutil.AccessDenied) as e:
+                app_logger.warning(f"Could not access process {proc.pid}: {e}")
+                continue
+        
+        # Calculate uptime
+        uptime_seconds = time.time() - oldest_create_time
+        uptime_hours = uptime_seconds / 3600
+        
+        # Get system CPU count
+        cpu_cores = psutil.cpu_count()
+        
+        # Build response
+        stats = {
+            "cpu": {
+                "percent": round(total_cpu, 2),
+                "cores": cpu_cores
+            },
+            "ram": {
+                "percent": round(total_ram_percent, 2),
+                "used_mb": round(total_ram_mb, 2)
+            },
+            "io": {
+                "read_mb": round(total_read_bytes / 1024 / 1024, 2),
+                "written_mb": round(total_write_bytes / 1024 / 1024, 2),
+                "total_mb": round((total_read_bytes + total_write_bytes) / 1024 / 1024, 2)
+            },
+            "process": {
+                "threads": total_threads,
+                "uptime_hours": round(uptime_hours, 2),
+                "pid": current_process.pid,
+                "worker_count": len(processes)
+            }
+        }
+        
+        return jsonify(stats), 200
+        
+    except Exception as e:
+        app_logger.exception(f"Get system stats error: {e}")
+        return jsonify({"error": "Failed to retrieve system statistics"}), 500
 
 
 @bp.route('/customers', methods=['GET'])
