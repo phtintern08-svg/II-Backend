@@ -343,8 +343,11 @@ def authenticate():
                 username=admin.username
             )
             log_auth_event('login', True, identifier, admin.id, 'admin', request.remote_addr)
+            # 🔥 CRITICAL FIX: Include token in JSON response for localStorage
+            # Frontend needs token in response to store it for API calls
             response = jsonify({
                 "message": "Login successful",
+                "token": token,  # 🔥 FIX: Include token in response (was missing!)
                 "role": "admin",
                 "user_id": admin.id,
                 "username": admin.username,
@@ -403,8 +406,10 @@ def authenticate():
             )
             log_auth_event('login', True, identifier, rider.id, 'rider', request.remote_addr)
             redirect_url = build_subdomain_url('rider', '/home.html')
+            # 🔥 CRITICAL FIX: Include token in JSON response for localStorage
             response = jsonify({
                 "message": "Login successful",
+                "token": token,  # 🔥 FIX: Include token in response (was missing!)
                 "role": "rider",
                 "user_id": rider.id,
                 "username": rider.name,
