@@ -550,6 +550,11 @@ def get_vendors():
     """
     GET /api/admin/vendors
     Get all vendors
+    
+    Query Parameters:
+    - status (optional): Filter by verification status
+      Frontend values: 'verified', 'rejected', 'pending'
+      Maps to DB values: 'approved', 'rejected', 'pending' (or other pending statuses)
     """
     try:
         # Optional status filter
@@ -557,7 +562,24 @@ def get_vendors():
         
         query = Vendor.query
         if status:
-            query = query.filter_by(verification_status=status)
+            # 🔥 FIX: Map frontend status terminology to database values
+            # Frontend uses "verified" but database stores "approved"
+            status_mapping = {
+                'verified': 'approved',  # Frontend "verified" → DB "approved"
+                'rejected': 'rejected',  # Direct mapping
+                'pending': 'pending',   # Direct mapping (or could be 'not-submitted')
+            }
+            
+            # Map frontend status to database status
+            db_status = status_mapping.get(status.lower(), status)
+            
+            # If status is 'pending', also check for other pending-related statuses
+            if status.lower() == 'pending':
+                query = query.filter(
+                    Vendor.verification_status.in_(['pending', 'not-submitted', 'under-review'])
+                )
+            else:
+                query = query.filter_by(verification_status=db_status)
         
         vendors = query.all()
         
