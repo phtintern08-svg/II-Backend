@@ -56,8 +56,17 @@ def log_activity(
             user_name = f"{user_type} #{user_id}"
         
         # Get IP address from request if not provided
+        # Check for proxy headers (X-Forwarded-For, X-Real-IP) for accurate client IP
         if not ip_address and request:
-            ip_address = request.remote_addr
+            # Try to get real IP from proxy headers first
+            if request.headers.get('X-Forwarded-For'):
+                # X-Forwarded-For can contain multiple IPs, take the first one
+                ip_address = request.headers.get('X-Forwarded-For').split(',')[0].strip()
+            elif request.headers.get('X-Real-IP'):
+                ip_address = request.headers.get('X-Real-IP').strip()
+            else:
+                # Fallback to remote_addr
+                ip_address = request.remote_addr
         
         # Create activity log entry
         activity_log = ActivityLog(

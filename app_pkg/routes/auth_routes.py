@@ -19,6 +19,7 @@ import secrets
 from app_pkg.validation import sanitize_text
 from config import Config
 from app_pkg.logger_config import app_logger
+from app_pkg.activity_logger import log_activity
 from sqlalchemy import or_, and_
 
 # Create blueprint
@@ -343,6 +344,27 @@ def authenticate():
                 username=admin.username
             )
             log_auth_event('login', True, identifier, admin.id, 'admin', request.remote_addr)
+            
+            # Get IP address (check proxy headers)
+            ip_address = None
+            if request.headers.get('X-Forwarded-For'):
+                ip_address = request.headers.get('X-Forwarded-For').split(',')[0].strip()
+            elif request.headers.get('X-Real-IP'):
+                ip_address = request.headers.get('X-Real-IP').strip()
+            else:
+                ip_address = request.remote_addr
+            
+            # Log activity
+            log_activity(
+                user_id=admin.id,
+                user_type='admin',
+                action=f"Logged in as admin: {admin.username}",
+                action_type="login",
+                entity_type="admin",
+                entity_id=admin.id,
+                ip_address=ip_address
+            )
+            
             # 🔥 CRITICAL FIX: Include token in JSON response for localStorage
             # Frontend needs token in response to store it for API calls
             response = jsonify({
@@ -363,6 +385,27 @@ def authenticate():
                 phone=customer.phone
             )
             log_auth_event('login', True, identifier, customer.id, 'customer', request.remote_addr)
+            
+            # Get IP address (check proxy headers)
+            ip_address = None
+            if request.headers.get('X-Forwarded-For'):
+                ip_address = request.headers.get('X-Forwarded-For').split(',')[0].strip()
+            elif request.headers.get('X-Real-IP'):
+                ip_address = request.headers.get('X-Real-IP').strip()
+            else:
+                ip_address = request.remote_addr
+            
+            # Log activity
+            log_activity(
+                user_id=customer.id,
+                user_type='customer',
+                action=f"Logged in as customer: {customer.username or customer.email}",
+                action_type="login",
+                entity_type="customer",
+                entity_id=customer.id,
+                ip_address=ip_address
+            )
+            
             response = jsonify({
                 "message": "Login successful",
                 "role": "customer",
@@ -383,6 +426,28 @@ def authenticate():
                 phone=vendor.phone
             )
             log_auth_event('login', True, identifier, vendor.id, 'vendor', request.remote_addr)
+            
+            # Get IP address (check proxy headers)
+            ip_address = None
+            if request.headers.get('X-Forwarded-For'):
+                ip_address = request.headers.get('X-Forwarded-For').split(',')[0].strip()
+            elif request.headers.get('X-Real-IP'):
+                ip_address = request.headers.get('X-Real-IP').strip()
+            else:
+                ip_address = request.remote_addr
+            
+            # Log activity
+            vendor_name = vendor.business_name or vendor.username or vendor.email
+            log_activity(
+                user_id=vendor.id,
+                user_type='vendor',
+                action=f"Logged in as vendor: {vendor_name}",
+                action_type="login",
+                entity_type="vendor",
+                entity_id=vendor.id,
+                ip_address=ip_address
+            )
+            
             redirect_url = build_subdomain_url('vendor', '/home.html')
             response = jsonify({
                 "message": "Login successful",
@@ -405,6 +470,27 @@ def authenticate():
                 phone=rider.phone
             )
             log_auth_event('login', True, identifier, rider.id, 'rider', request.remote_addr)
+            
+            # Get IP address (check proxy headers)
+            ip_address = None
+            if request.headers.get('X-Forwarded-For'):
+                ip_address = request.headers.get('X-Forwarded-For').split(',')[0].strip()
+            elif request.headers.get('X-Real-IP'):
+                ip_address = request.headers.get('X-Real-IP').strip()
+            else:
+                ip_address = request.remote_addr
+            
+            # Log activity
+            log_activity(
+                user_id=rider.id,
+                user_type='rider',
+                action=f"Logged in as rider: {rider.name or rider.email}",
+                action_type="login",
+                entity_type="rider",
+                entity_id=rider.id,
+                ip_address=ip_address
+            )
+            
             redirect_url = build_subdomain_url('rider', '/home.html')
             # 🔥 CRITICAL FIX: Include token in JSON response for localStorage
             response = jsonify({
@@ -428,6 +514,26 @@ def authenticate():
                 phone=support.phone
             )
             log_auth_event('login', True, identifier, support.id, 'support', request.remote_addr)
+            
+            # Get IP address (check proxy headers)
+            ip_address = None
+            if request.headers.get('X-Forwarded-For'):
+                ip_address = request.headers.get('X-Forwarded-For').split(',')[0].strip()
+            elif request.headers.get('X-Real-IP'):
+                ip_address = request.headers.get('X-Real-IP').strip()
+            else:
+                ip_address = request.remote_addr
+            
+            # Log activity
+            log_activity(
+                user_id=support.id,
+                user_type='support',
+                action=f"Logged in as support: {support.username or support.email}",
+                action_type="login",
+                entity_type="support",
+                entity_id=support.id,
+                ip_address=ip_address
+            )
             redirect_url = build_subdomain_url('support', '/home.html')
             response = jsonify({
                 "message": "Login successful",
@@ -625,6 +731,35 @@ def register():
         # If post-registration verification is needed in the future, implement a separate flow
         
         log_auth_event('register', True, email, user_id, user_role, request.remote_addr)
+        
+        # Get IP address (check proxy headers)
+        ip_address = None
+        if request.headers.get('X-Forwarded-For'):
+            ip_address = request.headers.get('X-Forwarded-For').split(',')[0].strip()
+        elif request.headers.get('X-Real-IP'):
+            ip_address = request.headers.get('X-Real-IP').strip()
+        else:
+            ip_address = request.remote_addr
+        
+        # Log activity
+        user_name = email
+        if role == 'customer':
+            user_name = new_user.username or email
+        elif role == 'rider':
+            user_name = new_user.name or email
+        elif role == 'vendor':
+            user_name = new_user.business_name or new_user.username or email
+        
+        log_activity(
+            user_id=user_id,
+            user_type=user_role,
+            action=f"Registered new {user_role} account: {user_name}",
+            action_type="registration",
+            entity_type=user_role,
+            entity_id=user_id,
+            details=f"Email: {email}",
+            ip_address=ip_address
+        )
         
         # ✅ LOGIC FIX: email_was_verified is always True here (we return 403 earlier if not verified)
         # Removed unreachable else branch for cleaner code
@@ -1107,6 +1242,8 @@ def logout():
     """
     try:
         # Try to get user info for logging (optional - don't fail if token is expired)
+        user_id = None
+        role = None
         try:
             token = get_token_from_request()
             if token:
@@ -1118,6 +1255,27 @@ def logout():
         except Exception:
             # Token might be expired/invalid - that's okay, just log without user info
             log_auth_event('logout', True, 'unknown', None, None, request.remote_addr)
+        
+        # Get IP address (check proxy headers)
+        ip_address = None
+        if request.headers.get('X-Forwarded-For'):
+            ip_address = request.headers.get('X-Forwarded-For').split(',')[0].strip()
+        elif request.headers.get('X-Real-IP'):
+            ip_address = request.headers.get('X-Real-IP').strip()
+        else:
+            ip_address = request.remote_addr
+        
+        # Log activity if we have user info
+        if user_id and role:
+            log_activity(
+                user_id=user_id,
+                user_type=role,
+                action=f"Logged out",
+                action_type="logout",
+                entity_type=role,
+                entity_id=user_id,
+                ip_address=ip_address
+            )
         
         # Delete the access_token cookie from all subdomains
         # IMPORTANT: Return JSON only - NEVER redirect from API endpoints

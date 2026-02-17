@@ -865,6 +865,15 @@ def process_advance_payment(order_id):
         db.session.add(vendor_payment)
         db.session.commit()
         
+        # Log activity for advance payment
+        log_activity_from_request(
+            action=f"Made advance payment of ₹{advance_amount} for Order #{order_id}",
+            action_type="payment",
+            entity_type="order",
+            entity_id=order_id,
+            details=f"Advance payment: ₹{advance_amount}, Vendor initial payout: ₹{vendor_initial_payout}"
+        )
+        
         return jsonify({
             "message": "Advance payment processed successfully",
             "customer_paid": advance_amount,
@@ -967,6 +976,15 @@ def submit_order_feedback(order_id):
         
         db.session.add(final_payment)
         db.session.commit()
+        
+        # Log activity for final payment
+        log_activity_from_request(
+            action=f"Processed final payment of ₹{float(vendor_final_payout_decimal)} for Order #{order_id}",
+            action_type="payment",
+            entity_type="order",
+            entity_id=order_id,
+            details=f"Final vendor payout: ₹{float(vendor_final_payout_decimal)}, Penalty: ₹{float(penalty)}"
+        )
         
         return jsonify({
             "message": "Feedback submitted successfully",
