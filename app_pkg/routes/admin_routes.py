@@ -12,7 +12,8 @@ from sqlalchemy import text
 from app_pkg.models import (
     db, Admin, Customer, Vendor, Rider, Order, OTPLog, Payment, 
     VendorDocument, VendorQuotationSubmission, RiderDocument, Notification,
-    VendorOrderAssignment, OrderStatusHistory, DeliveryLog, ProductCatalog
+    VendorOrderAssignment, OrderStatusHistory, DeliveryLog, ProductCatalog,
+    DeliveryPartner, Support
 )
 from app_pkg.auth import login_required, admin_required
 from app_pkg.file_upload import get_file_path_from_db
@@ -506,34 +507,50 @@ def get_otp_logs():
 def get_activity_logs():
     """
     GET /api/admin/activity-logs
-    Get activity logs showing who did what
-    Aggregates data from OrderStatusHistory, Notifications, and admin actions
+    Get activity logs showing who did what across all user types
+    Aggregates data from:
+    - OrderStatusHistory (all roles: admin, vendor, customer, system)
+    - Order creation (customer actions)
+    - VendorQuotationSubmission (vendor actions)
+    - CustomerPayment (customer/admin actions)
+    - DeliveryLog (rider actions)
+    - Thread (customer/support actions)
+    - Comment (customer/support actions)
+    - Notification (admin actions)
     """
     try:
-        from app_pkg.models import OrderStatusHistory
+        from app_pkg.models import (
+            OrderStatusHistory, Order, VendorQuotationSubmission,
+            CustomerPayment, DeliveryLog, Thread, Comment
+        )
         from datetime import datetime, timedelta
         
         limit = request.args.get('limit', 50, type=int)
-        
-        # Get recent order status changes (admin actions on orders)
-        status_changes = OrderStatusHistory.query.filter(
-            OrderStatusHistory.changed_by_type == 'admin'
-        ).order_by(OrderStatusHistory.created_at.desc()).limit(limit).all()
-        
-        # Get recent notifications (admin actions that trigger notifications)
-        recent_notifications = Notification.query.filter(
-            Notification.user_type.in_(['vendor', 'rider', 'customer'])
-        ).order_by(Notification.created_at.desc()).limit(limit).all()
-        
         activities = []
         
-        # Process order status changes
+        # 1. ORDER STATUS CHANGES (All roles: admin, vendor, customer, system)
+        status_changes = OrderStatusHistory.query.order_by(
+            OrderStatusHistory.created_at.desc()
+        ).limit(limit * 2).all()  # Get more to account for filtering
+        
         for change in status_changes:
-            admin = Admin.query.get(change.changed_by_id) if change.changed_by_id else None
-            admin_name = admin.username if admin else f"Admin #{change.changed_by_id}"
+            user_name = "System"
+            user_type = change.changed_by_type
+            
+            # Get user name based on role
+            if change.changed_by_type == 'admin' and change.changed_by_id:
+                admin = Admin.query.get(change.changed_by_id)
+                user_name = admin.username if admin else f"Admin #{change.changed_by_id}"
+            elif change.changed_by_type == 'vendor' and change.changed_by_id:
+                vendor = Vendor.query.get(change.changed_by_id)
+                user_name = vendor.business_name or vendor.name or f"Vendor #{change.changed_by_id}"
+            elif change.changed_by_type == 'customer' and change.changed_by_id:
+                customer = Customer.query.get(change.changed_by_id)
+                user_name = customer.username or customer.email or f"Customer #{change.changed_by_id}"
+            elif change.changed_by_type == 'system':
+                user_name = "System"
             
             # Get order details
-            from app_pkg.models import Order
             order = Order.query.get(change.order_id) if change.order_id else None
             order_info = f"Order #{change.order_id}"
             if order:
@@ -542,8 +559,8 @@ def get_activity_logs():
             activities.append({
                 "id": f"status_{change.id}",
                 "timestamp": change.created_at.isoformat() if change.created_at else None,
-                "user_name": admin_name,
-                "user_type": "admin",
+                "user_name": user_name,
+                "user_type": user_type,
                 "action": f"Changed {order_info} status to {change.status_label or change.status}",
                 "action_type": "order_status_change",
                 "entity_type": "order",
@@ -551,12 +568,159 @@ def get_activity_logs():
                 "details": change.notes if change.notes else None
             })
         
-        # Process notifications (admin actions like approvals, rejections)
-        for notif in recent_notifications:
-            admin = Admin.query.get(notif.user_id) if notif.user_type == 'admin' else None
+        # 2. ORDER CREATION (Customer actions)
+        recent_orders = Order.query.order_by(Order.created_at.desc()).limit(limit).all()
+        for order in recent_orders:
+            customer = Customer.query.get(order.customer_id) if order.customer_id else None
+            customer_name = customer.username or customer.email or f"Customer #{order.customer_id}" if customer else "Unknown"
             
-            # Try to find which admin created this notification by checking recent admin actions
-            # For now, we'll use a generic admin name
+            activities.append({
+                "id": f"order_{order.id}",
+                "timestamp": order.created_at.isoformat() if order.created_at else None,
+                "user_name": customer_name,
+                "user_type": "customer",
+                "action": f"Created Order #{order.id} ({order.product_type} - {order.category}, Qty: {order.quantity})",
+                "action_type": "order_creation",
+                "entity_type": "order",
+                "entity_id": order.id,
+                "details": f"Sample cost: ₹{order.sample_cost}" if order.sample_cost else None
+            })
+        
+        # 3. QUOTATION SUBMISSIONS (Vendor actions)
+        quotations = VendorQuotationSubmission.query.order_by(
+            VendorQuotationSubmission.submitted_at.desc()
+        ).limit(limit).all()
+        
+        for quot in quotations:
+            vendor = Vendor.query.get(quot.vendor_id) if quot.vendor_id else None
+            vendor_name = vendor.business_name or vendor.name or f"Vendor #{quot.vendor_id}" if vendor else "Unknown"
+            
+            status_text = "submitted" if quot.status == 'pending' else quot.status
+            activities.append({
+                "id": f"quotation_{quot.id}",
+                "timestamp": quot.submitted_at.isoformat() if quot.submitted_at else None,
+                "user_name": vendor_name,
+                "user_type": "vendor",
+                "action": f"Submitted quotation submission (Status: {status_text})",
+                "action_type": "quotation_submission",
+                "entity_type": "vendor",
+                "entity_id": quot.vendor_id,
+                "details": f"Proposed commission rate: {quot.proposed_commission_rate}%" if quot.proposed_commission_rate else None
+            })
+        
+        # 4. PAYMENTS (Customer/Admin actions)
+        payments = CustomerPayment.query.order_by(
+            CustomerPayment.timestamp.desc()
+        ).limit(limit).all()
+        
+        for payment in payments:
+            payer_name = "Unknown"
+            if payment.payer_type == 'customer' and payment.payer_id:
+                customer = Customer.query.get(payment.payer_id)
+                payer_name = customer.username or customer.email or f"Customer #{payment.payer_id}" if customer else "Unknown"
+            elif payment.payer_type == 'admin' and payment.payer_id:
+                admin = Admin.query.get(payment.payer_id)
+                payer_name = admin.username if admin else f"Admin #{payment.payer_id}"
+            
+            activities.append({
+                "id": f"payment_{payment.id}",
+                "timestamp": payment.timestamp.isoformat() if payment.timestamp else None,
+                "user_name": payer_name,
+                "user_type": payment.payer_type,
+                "action": f"Made {payment.payment_type.replace('_', ' ').title()} payment of ₹{payment.amount} for Order #{payment.order_id}",
+                "action_type": "payment",
+                "entity_type": "order",
+                "entity_id": payment.order_id,
+                "details": f"Payment status: {payment.status}"
+            })
+        
+        # 5. DELIVERY LOGS (Rider actions)
+        delivery_logs = DeliveryLog.query.order_by(
+            DeliveryLog.assigned_at.desc()
+        ).limit(limit).all()
+        
+        for log in delivery_logs:
+            rider_name = "Unknown"
+            if log.assigned_rider_id:
+                rider = Rider.query.get(log.assigned_rider_id)
+                rider_name = rider.name or rider.email or f"Rider #{log.assigned_rider_id}" if rider else "Unknown"
+            elif log.rider_id:
+                delivery_partner = DeliveryPartner.query.get(log.rider_id)
+                rider_name = delivery_partner.name if delivery_partner else f"Rider #{log.rider_id}"
+            
+            # Use the most recent timestamp
+            latest_timestamp = log.delivered_at or log.out_for_delivery_at or log.picked_up_at or log.reached_vendor_at or log.assigned_at
+            timestamp_field = latest_timestamp
+            
+            activities.append({
+                "id": f"delivery_{log.id}",
+                "timestamp": timestamp_field.isoformat() if timestamp_field else None,
+                "user_name": rider_name,
+                "user_type": "rider",
+                "action": f"Updated delivery status to '{log.status.replace('_', ' ').title()}' for Order #{log.order_id}",
+                "action_type": "delivery_update",
+                "entity_type": "order",
+                "entity_id": log.order_id,
+                "details": f"Delivery status: {log.status}"
+            })
+        
+        # 6. SUPPORT THREADS (Customer/Support actions)
+        threads = Thread.query.order_by(Thread.created_at.desc()).limit(limit).all()
+        for thread in threads:
+            # Thread user_id is customer_id
+            customer = Customer.query.get(thread.user_id) if thread.user_id else None
+            user_name = customer.username or customer.email or f"Customer #{thread.user_id}" if customer else "Unknown"
+            
+            activities.append({
+                "id": f"thread_{thread.id}",
+                "timestamp": thread.created_at.isoformat() if thread.created_at else None,
+                "user_name": user_name,
+                "user_type": "customer",
+                "action": f"Created support thread: {thread.title[:50]}{'...' if len(thread.title) > 50 else ''}",
+                "action_type": "support_thread",
+                "entity_type": "thread",
+                "entity_id": thread.id,
+                "details": thread.content[:100] + '...' if len(thread.content) > 100 else thread.content
+            })
+        
+        # 7. SUPPORT COMMENTS (Customer/Support actions)
+        comments = Comment.query.order_by(Comment.created_at.desc()).limit(limit).all()
+        for comment in comments:
+            # Comment user_id could be customer or support
+            customer = Customer.query.get(comment.user_id)
+            support = Support.query.get(comment.user_id) if not customer else None
+            
+            if customer:
+                user_name = customer.username or customer.email or f"Customer #{comment.user_id}"
+                user_type = "customer"
+            elif support:
+                user_name = support.username or support.email or f"Support #{comment.user_id}"
+                user_type = "support"
+            else:
+                user_name = f"User #{comment.user_id}"
+                user_type = "unknown"
+            
+            thread = Thread.query.get(comment.thread_id) if comment.thread_id else None
+            thread_title = thread.title[:30] + '...' if thread and len(thread.title) > 30 else (thread.title if thread else f"Thread #{comment.thread_id}")
+            
+            activities.append({
+                "id": f"comment_{comment.id}",
+                "timestamp": comment.created_at.isoformat() if comment.created_at else None,
+                "user_name": user_name,
+                "user_type": user_type,
+                "action": f"Commented on support thread: {thread_title}",
+                "action_type": "support_comment",
+                "entity_type": "thread",
+                "entity_id": comment.thread_id,
+                "details": comment.content[:100] + '...' if len(comment.content) > 100 else comment.content
+            })
+        
+        # 8. ADMIN ACTIONS (Notifications - approvals, rejections, etc.)
+        recent_notifications = Notification.query.filter(
+            Notification.user_type.in_(['vendor', 'rider', 'customer'])
+        ).order_by(Notification.created_at.desc()).limit(limit).all()
+        
+        for notif in recent_notifications:
             admin_name = "Admin"
             
             # Determine action from notification type and message
@@ -576,6 +740,10 @@ def get_activity_logs():
                 rider = Rider.query.get(notif.user_id)
                 if rider:
                     entity_name = f"Rider: {rider.name or f'#{notif.user_id}'}"
+            elif notif.user_type == 'customer':
+                customer = Customer.query.get(notif.user_id)
+                if customer:
+                    entity_name = f"Customer: {customer.username or customer.email or f'#{notif.user_id}'}"
             
             activities.append({
                 "id": f"notif_{notif.id}",
