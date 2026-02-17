@@ -480,14 +480,15 @@ def get_otp_logs():
         # Optional filters
         limit = request.args.get('limit', 100, type=int)
         
-        logs = OTPLog.query.order_by(OTPLog.timestamp.desc()).limit(limit).all()
+        logs = OTPLog.query.order_by(OTPLog.created_at.desc()).limit(limit).all()
         
         logs_data = [{
             "id": log.id,
             "recipient": log.recipient,
-            "event_type": log.event_type,
-            "success": log.success,
-            "timestamp": log.timestamp.isoformat() if log.timestamp else None
+            "otp_code": log.otp_code,
+            "type": log.type,
+            "status": log.status,
+            "created_at": log.created_at.isoformat() if log.created_at else None
         } for log in logs]
         
         return jsonify({
@@ -498,6 +499,110 @@ def get_otp_logs():
     except Exception as e:
         app_logger.exception(f"Get OTP logs error: {e}")
         return jsonify({"error": "Failed to retrieve OTP logs"}), 500
+
+
+@bp.route('/activity-logs', methods=['GET'])
+@admin_required
+def get_activity_logs():
+    """
+    GET /api/admin/activity-logs
+    Get activity logs showing who did what
+    Aggregates data from OrderStatusHistory, Notifications, and admin actions
+    """
+    try:
+        from app_pkg.models import OrderStatusHistory
+        from datetime import datetime, timedelta
+        
+        limit = request.args.get('limit', 50, type=int)
+        
+        # Get recent order status changes (admin actions on orders)
+        status_changes = OrderStatusHistory.query.filter(
+            OrderStatusHistory.changed_by_type == 'admin'
+        ).order_by(OrderStatusHistory.created_at.desc()).limit(limit).all()
+        
+        # Get recent notifications (admin actions that trigger notifications)
+        recent_notifications = Notification.query.filter(
+            Notification.user_type.in_(['vendor', 'rider', 'customer'])
+        ).order_by(Notification.created_at.desc()).limit(limit).all()
+        
+        activities = []
+        
+        # Process order status changes
+        for change in status_changes:
+            admin = Admin.query.get(change.changed_by_id) if change.changed_by_id else None
+            admin_name = admin.username if admin else f"Admin #{change.changed_by_id}"
+            
+            # Get order details
+            from app_pkg.models import Order
+            order = Order.query.get(change.order_id) if change.order_id else None
+            order_info = f"Order #{change.order_id}"
+            if order:
+                order_info = f"Order #{change.order_id} ({order.product_type} - {order.category})"
+            
+            activities.append({
+                "id": f"status_{change.id}",
+                "timestamp": change.created_at.isoformat() if change.created_at else None,
+                "user_name": admin_name,
+                "user_type": "admin",
+                "action": f"Changed {order_info} status to {change.status_label or change.status}",
+                "action_type": "order_status_change",
+                "entity_type": "order",
+                "entity_id": change.order_id,
+                "details": change.notes if change.notes else None
+            })
+        
+        # Process notifications (admin actions like approvals, rejections)
+        for notif in recent_notifications:
+            admin = Admin.query.get(notif.user_id) if notif.user_type == 'admin' else None
+            
+            # Try to find which admin created this notification by checking recent admin actions
+            # For now, we'll use a generic admin name
+            admin_name = "Admin"
+            
+            # Determine action from notification type and message
+            action = notif.title
+            if "Approved" in notif.title:
+                action = f"Approved {notif.user_type} verification"
+            elif "Rejected" in notif.title:
+                action = f"Rejected {notif.user_type} verification"
+            
+            # Get entity name
+            entity_name = f"{notif.user_type.title()} #{notif.user_id}"
+            if notif.user_type == 'vendor':
+                vendor = Vendor.query.get(notif.user_id)
+                if vendor:
+                    entity_name = f"Vendor: {vendor.business_name or vendor.name or f'#{notif.user_id}'}"
+            elif notif.user_type == 'rider':
+                rider = Rider.query.get(notif.user_id)
+                if rider:
+                    entity_name = f"Rider: {rider.name or f'#{notif.user_id}'}"
+            
+            activities.append({
+                "id": f"notif_{notif.id}",
+                "timestamp": notif.created_at.isoformat() if notif.created_at else None,
+                "user_name": admin_name,
+                "user_type": "admin",
+                "action": f"{action} for {entity_name}",
+                "action_type": notif.type or "admin_action",
+                "entity_type": notif.user_type,
+                "entity_id": notif.user_id,
+                "details": notif.message
+            })
+        
+        # Sort all activities by timestamp (most recent first)
+        activities.sort(key=lambda x: x.get('timestamp') or '', reverse=True)
+        
+        # Limit to requested number
+        activities = activities[:limit]
+        
+        return jsonify({
+            "activities": activities,
+            "count": len(activities)
+        }), 200
+        
+    except Exception as e:
+        app_logger.exception(f"Get activity logs error: {e}")
+        return jsonify({"error": "Failed to retrieve activity logs"}), 500
 
 
 @bp.route('/orders', methods=['GET'])
