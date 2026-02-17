@@ -177,6 +177,12 @@ def require_role(*allowed_roles):
                     "user_role": user_role
                 }), 403
             
+            # 🔥 FIX: Explicitly set request.user_id and request.role for consistency
+            # This ensures all routes using require_role have these attributes set
+            # (require_auth sets them, but being explicit here prevents any edge cases)
+            request.user_id = request.current_user.get('user_id')
+            request.role = user_role
+            
             return f(*args, **kwargs)
         
         return decorated_function

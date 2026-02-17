@@ -243,6 +243,10 @@ def get_dashboard_stats():
     Get dashboard statistics
     """
     try:
+        # 🔥 DEBUG: Log authentication details to help diagnose 401 issues
+        # This helps identify if request.user_id or request.role are missing
+        app_logger.debug(f"Dashboard stats request - user_id: {getattr(request, 'user_id', 'NOT SET')}, role: {getattr(request, 'role', 'NOT SET')}")
+        
         stats = {
             "total_customers": Customer.query.count(),
             "total_vendors": Vendor.query.count(),
