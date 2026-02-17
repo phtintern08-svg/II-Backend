@@ -3,12 +3,12 @@ Admin Routes Blueprint
 Handles admin-specific endpoints for managing users, orders, and system settings
 """
 from flask import Blueprint, request, jsonify, send_file, current_app
-from datetime import datetime
+from datetime import datetime, timedelta
 import os
 import math
 import csv
 import time
-from sqlalchemy import text
+from sqlalchemy import text, func
 
 from app_pkg.models import (
     db, Admin, Customer, Vendor, Rider, Order, OTPLog, Payment, 
@@ -279,13 +279,103 @@ def get_dashboard_stats():
         }), 403
     
     try:
+        # Time-based calculations
+        today = datetime.utcnow().date()
+        week_start = today - timedelta(days=today.weekday())  # Start of current week (Monday)
+        month_start = today.replace(day=1)  # Start of current month
+        
+        # Orders created today
+        today_orders = db.session.query(func.count(Order.id)).filter(
+            func.date(Order.created_at) == today
+        ).scalar() or 0
+        
+        # Orders created this week
+        week_orders = db.session.query(func.count(Order.id)).filter(
+            Order.created_at >= datetime.combine(week_start, datetime.min.time())
+        ).scalar() or 0
+        
+        # Orders created this month
+        month_orders = db.session.query(func.count(Order.id)).filter(
+            Order.created_at >= datetime.combine(month_start, datetime.min.time())
+        ).scalar() or 0
+        
+        # Status-based counts (using same categorization as order-stats endpoint)
+        # Pending orders (new orders awaiting assignment)
+        pending_orders = Order.query.filter(
+            Order.status.in_([
+                'pending_admin_review',
+                'quotation_sent_to_customer',
+                'sample_payment_received'
+            ])
+        ).count()
+        
+        # In production orders
+        in_production = Order.query.filter(
+            Order.status.in_([
+                'sample_requested',
+                'awaiting_advance_payment',
+                'in_production',
+                'assigned',
+                'vendor_assigned',
+                'accepted_by_vendor'
+            ])
+        ).count()
+        
+        # Ready for dispatch orders
+        ready_dispatch = Order.query.filter(
+            Order.status.in_([
+                'awaiting_dispatch',
+                'ready_for_dispatch',
+                'awaiting_delivery',
+                'reached_vendor',
+                'picked_up',
+                'out_for_delivery',
+                'packed_ready',
+                'dispatched'
+            ])
+        ).count()
+        
+        # Completed orders
+        completed_orders = Order.query.filter(
+            Order.status.in_([
+                'completed',
+                'completed_with_penalty',
+                'delivered'
+            ])
+        ).count()
+        
+        # Cancelled/rejected orders
+        cancelled_orders = Order.query.filter(
+            Order.status.in_([
+                'quotation_rejected_by_customer',
+                'sample_rejected'
+            ])
+        ).count()
+        
+        # Additional stats for vendors and riders
+        total_customers = Customer.query.count()
+        total_vendors = Vendor.query.count()
+        total_riders = Rider.query.count()
+        total_orders = Order.query.count()
+        
         stats = {
-            "total_customers": Customer.query.count(),
-            "total_vendors": Vendor.query.count(),
-            "total_riders": Rider.query.count(),
-            "total_orders": Order.query.count(),
-            "pending_orders": Order.query.filter_by(status='pending').count(),
-            "completed_orders": Order.query.filter_by(status='completed').count()
+            # Time-based order counts
+            "today_orders": today_orders,
+            "week_orders": week_orders,
+            "month_orders": month_orders,
+            
+            # Status-based order counts
+            "pending_orders": pending_orders,
+            "in_production": in_production,
+            "ready_dispatch": ready_dispatch,
+            "completed_orders": completed_orders,
+            "cancelled_orders": cancelled_orders,
+            
+            # Additional stats
+            "total_customers": total_customers,
+            "total_vendors": total_vendors,
+            "total_riders": total_riders,
+            "total_orders": total_orders
         }
         
         app_logger.debug(f"✅ Dashboard stats computed successfully - Process: {process_id}")
