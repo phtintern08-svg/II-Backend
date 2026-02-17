@@ -848,7 +848,9 @@ def assign_order_to_vendor(order_id):
         order.quotation_price_per_piece = float(quotation_price)
         order.quotation_total_price = float(quotation_price) * order.quantity
         order.sample_cost = float(sample_cost)
-        order.status = 'quotation_sent_to_customer'
+        # 🔥 FIX: Set status to 'assigned' so vendor dashboard can see it
+        # Vendor cannot reject, so order goes directly to 'assigned' status
+        order.status = 'assigned'
         
         # Create vendor order assignment record
         assignment = VendorOrderAssignment(
@@ -864,7 +866,7 @@ def assign_order_to_vendor(order_id):
             user_id=vendor_id,
             user_type='vendor',
             title='New Order Assigned',
-            message=f'You have been assigned Order ORD-{order_id}. Please review and accept.',
+            message=f'You have been assigned Order ORD-{order_id}. Please start production when ready.',
             type='order'
         )
         db.session.add(notif)
