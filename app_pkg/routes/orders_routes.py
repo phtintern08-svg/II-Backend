@@ -100,16 +100,26 @@ def get_order(order_id):
         if not order:
             return jsonify({"error": "Order not found"}), 404
         
-        # Check authorization
-        role = request.role
-        user_id = request.user_id
+        # 🔥 DEFENSIVE: Check authorization with safe attribute access
+        # Prevents AttributeError if @login_required decorator fails silently
+        role = getattr(request, "role", None)
+        user_id = getattr(request, "user_id", None)
         
+        if not role or not user_id:
+            app_logger.error(f"Authentication attributes missing: role={role}, user_id={user_id}")
+            return jsonify({"error": "Unauthorized - authentication required"}), 401
+        
+        # Check authorization based on role
         if role == 'customer' and order.customer_id != user_id:
             return jsonify({"error": "Unauthorized"}), 403
         
         # Use schema for detailed order information
         return order_schema.jsonify(order), 200
         
+    except AttributeError as e:
+        # 🔥 SPECIFIC: Catch AttributeError for missing request attributes
+        app_logger.exception(f"Get order error - missing request attribute: {e}")
+        return jsonify({"error": "Authentication error - please log in again"}), 401
     except Exception as e:
         app_logger.exception(f"Get order error: {e}")
         return jsonify({"error": "Failed to retrieve order"}), 500

@@ -146,6 +146,11 @@ def require_auth(f):
         # Add user info to request context
         request.current_user = payload
         
+        # 🔥 FIX: Also set request.user_id and request.role for convenience
+        # This prevents AttributeError when routes access request.user_id or request.role directly
+        request.user_id = payload.get('user_id')
+        request.role = payload.get('role')
+        
         return f(*args, **kwargs)
     
     return decorated_function
