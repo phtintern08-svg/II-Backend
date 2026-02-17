@@ -819,4 +819,34 @@ class EmailVerificationToken(db.Model):
     
     def is_expired(self):
         """Check if token has expired"""
-        return datetime.utcnow() > self.expires_at  
+        return datetime.utcnow() > self.expires_at
+
+class ActivityLog(db.Model):
+    """Activity logs for all user actions across the platform"""
+    __bind_key__ = 'admin'  # Store in admin database
+    __tablename__ = 'activity_logs'
+    
+    id = db.Column(db.Integer, primary_key=True)
+    
+    # User Information
+    user_id = db.Column(db.Integer, nullable=False, index=True)  # ID of the user who performed the action
+    user_type = db.Column(db.String(20), nullable=False, index=True)  # 'admin', 'customer', 'vendor', 'rider', 'support'
+    user_name = db.Column(db.String(255), nullable=False)  # Cached user name for quick display
+    
+    # Action Information
+    action = db.Column(db.String(500), nullable=False)  # Human-readable action description
+    action_type = db.Column(db.String(100), nullable=False, index=True)  # 'order_creation', 'order_status_change', 'payment', 'quotation_submission', etc.
+    
+    # Entity Information (what the action was performed on)
+    entity_type = db.Column(db.String(50), nullable=True, index=True)  # 'order', 'payment', 'quotation', 'delivery', 'thread', 'comment', etc.
+    entity_id = db.Column(db.Integer, nullable=True, index=True)  # ID of the entity (order_id, payment_id, etc.)
+    
+    # Additional Details
+    details = db.Column(db.Text, nullable=True)  # Additional context or notes
+    ip_address = db.Column(db.String(45), nullable=True)  # IP address of the user
+    
+    # Timestamp
+    timestamp = db.Column(db.DateTime, default=datetime.utcnow, nullable=False, index=True)
+    
+    def __repr__(self):
+        return f'<ActivityLog {self.user_type} #{self.user_id} - {self.action_type} at {self.timestamp}>'  

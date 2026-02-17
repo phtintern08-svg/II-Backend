@@ -13,6 +13,7 @@ from werkzeug.security import check_password_hash, generate_password_hash
 from app_pkg.auth import login_required, role_required
 from app_pkg.schemas import category_schema, categories_schema, thread_schema, threads_schema, comment_schema, comments_schema
 from app_pkg.logger_config import app_logger
+from app_pkg.activity_logger import log_activity
 
 # Create blueprint
 bp = Blueprint('support', __name__)
@@ -306,6 +307,19 @@ def create_thread():
         db.session.add(new_thread)
         db.session.commit()
         
+        # Determine user type (customer or support)
+        user_type = request.role if hasattr(request, 'role') else 'customer'
+        # Log activity
+        log_activity(
+            user_id=user_id,
+            user_type=user_type,
+            action=f"Created support thread: {title[:50]}{'...' if len(title) > 50 else ''}",
+            action_type="support_thread",
+            entity_type="thread",
+            entity_id=new_thread.id,
+            details=content[:100] + '...' if len(content) > 100 else content
+        )
+        
         return thread_schema.jsonify(new_thread), 201
         
     except Exception as e:
@@ -384,6 +398,20 @@ def add_comment(thread_id):
         
         db.session.add(new_comment)
         db.session.commit()
+        
+        # Determine user type (customer or support)
+        user_type = request.role if hasattr(request, 'role') else 'customer'
+        thread_title = thread.title[:30] + '...' if len(thread.title) > 30 else thread.title
+        # Log activity
+        log_activity(
+            user_id=user_id,
+            user_type=user_type,
+            action=f"Added comment to thread: {thread_title}",
+            action_type="support_comment",
+            entity_type="thread",
+            entity_id=thread_id,
+            details=content[:100] + '...' if len(content) > 100 else content
+        )
         
         return comment_schema.jsonify(new_comment), 201
         

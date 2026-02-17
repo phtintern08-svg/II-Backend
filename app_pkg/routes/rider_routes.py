@@ -13,6 +13,7 @@ from app_pkg.models import (
 from app_pkg.auth import login_required, role_required
 from app_pkg.file_upload import validate_and_save_file, delete_file, get_file_path_from_db
 from app_pkg.logger_config import app_logger
+from app_pkg.activity_logger import log_activity_from_request
 from flask_limiter import Limiter
 from flask_limiter.util import get_remote_address
 
@@ -741,6 +742,17 @@ def update_delivery_status(delivery_id):
         db.session.add(history)
         
         db.session.commit()
+        
+        # Log activity
+        status_label = status_labels.get(status, status.replace('_', ' ').title())
+        log_activity_from_request(
+            action=f"Updated delivery status for Order #{order.id} to {status_label}",
+            action_type="delivery_update",
+            entity_type="order",
+            entity_id=order.id,
+            details=data.get('notes', '')
+        )
+        
         return jsonify({"message": f"Delivery status updated to {status}"}), 200
         
     except Exception as e:
@@ -922,6 +934,16 @@ def upload_delivery_proof(delivery_id):
         db.session.add(history)
         
         db.session.commit()
+        
+        # Log activity
+        log_activity_from_request(
+            action=f"Completed delivery for Order #{order.id} with OTP verification",
+            action_type="delivery_update",
+            entity_type="order",
+            entity_id=order.id,
+            details=f"Delivery proof uploaded, OTP verified, Earnings: ₹50.0"
+        )
+        
         return jsonify({
             "message": "Delivery completed successfully",
             "earnings": {"total": 50.0}

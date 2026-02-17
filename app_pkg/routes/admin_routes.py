@@ -14,12 +14,13 @@ from app_pkg.models import (
     db, Admin, Customer, Vendor, Rider, Order, OTPLog, Payment, 
     VendorDocument, VendorQuotationSubmission, RiderDocument, Notification,
     VendorOrderAssignment, OrderStatusHistory, DeliveryLog, ProductCatalog,
-    DeliveryPartner, Support
+    DeliveryPartner, Support, ActivityLog
 )
 from app_pkg.auth import login_required, admin_required
 from app_pkg.file_upload import get_file_path_from_db
 from app_pkg.logger_config import app_logger
 from app_pkg.error_handler import get_error_message
+from app_pkg.activity_logger import log_activity_from_request
 
 # Helper functions (moved from app/utils/helpers.py)
 def haversine_distance(lat1, lon1, lat2, lon2):
@@ -726,200 +727,38 @@ def get_activity_logs():
     """
     GET /api/admin/activity-logs
     Get activity logs showing who did what across all user types
-    Aggregates data from:
-    - OrderStatusHistory (all roles: admin, vendor, customer, system)
-    - Order creation (customer actions)
-    - VendorQuotationSubmission (vendor actions)
-    - CustomerPayment (customer/admin actions)
-    - DeliveryLog (rider actions)
-    - Thread (customer/support actions)
-    - Comment (customer/support actions)
-    - Notification (admin actions)
+    Returns logs from ActivityLog table which stores all user actions
     """
     try:
-        from app_pkg.models import (
-            OrderStatusHistory, Order, VendorQuotationSubmission,
-            CustomerPayment, DeliveryLog, Thread, Comment
-        )
-        from datetime import datetime, timedelta
-        
         limit = request.args.get('limit', 50, type=int)
+        
+        # Get activity logs from ActivityLog table
+        activity_logs = ActivityLog.query.order_by(
+            ActivityLog.timestamp.desc()
+        ).limit(limit).all()
+        
         activities = []
-        
-        # 1. ORDER STATUS CHANGES (All roles: admin, vendor, customer, system)
-        status_changes = OrderStatusHistory.query.order_by(
-            OrderStatusHistory.created_at.desc()
-        ).limit(limit * 2).all()  # Get more to account for filtering
-        
-        for change in status_changes:
-            user_name = "System"
-            user_type = change.changed_by_type
-            
-            # Get user name based on role
-            if change.changed_by_type == 'admin' and change.changed_by_id:
-                admin = Admin.query.get(change.changed_by_id)
-                user_name = admin.username if admin else f"Admin #{change.changed_by_id}"
-            elif change.changed_by_type == 'vendor' and change.changed_by_id:
-                vendor = Vendor.query.get(change.changed_by_id)
-                user_name = vendor.business_name or vendor.name or f"Vendor #{change.changed_by_id}"
-            elif change.changed_by_type == 'customer' and change.changed_by_id:
-                customer = Customer.query.get(change.changed_by_id)
-                user_name = customer.username or customer.email or f"Customer #{change.changed_by_id}"
-            elif change.changed_by_type == 'system':
-                user_name = "System"
-            
-            # Get order details
-            order = Order.query.get(change.order_id) if change.order_id else None
-            order_info = f"Order #{change.order_id}"
-            if order:
-                order_info = f"Order #{change.order_id} ({order.product_type} - {order.category})"
-            
+        for log in activity_logs:
             activities.append({
-                "id": f"status_{change.id}",
-                "timestamp": change.created_at.isoformat() if change.created_at else None,
-                "user_name": user_name,
-                "user_type": user_type,
-                "action": f"Changed {order_info} status to {change.status_label or change.status}",
-                "action_type": "order_status_change",
-                "entity_type": "order",
-                "entity_id": change.order_id,
-                "details": change.notes if change.notes else None
+                "id": log.id,
+                "timestamp": log.timestamp.isoformat() if log.timestamp else None,
+                "user_name": log.user_name,
+                "user_type": log.user_type,
+                "action": log.action,
+                "action_type": log.action_type,
+                "entity_type": log.entity_type,
+                "entity_id": log.entity_id,
+                "details": log.details
             })
         
-        # 2. ORDER CREATION (Customer actions)
-        recent_orders = Order.query.order_by(Order.created_at.desc()).limit(limit).all()
-        for order in recent_orders:
-            customer = Customer.query.get(order.customer_id) if order.customer_id else None
-            customer_name = customer.username or customer.email or f"Customer #{order.customer_id}" if customer else "Unknown"
-            
-            activities.append({
-                "id": f"order_{order.id}",
-                "timestamp": order.created_at.isoformat() if order.created_at else None,
-                "user_name": customer_name,
-                "user_type": "customer",
-                "action": f"Created Order #{order.id} ({order.product_type} - {order.category}, Qty: {order.quantity})",
-                "action_type": "order_creation",
-                "entity_type": "order",
-                "entity_id": order.id,
-                "details": f"Sample cost: ₹{order.sample_cost}" if order.sample_cost else None
-            })
+        return jsonify({
+            "activities": activities,
+            "count": len(activities)
+        }), 200
         
-        # 3. QUOTATION SUBMISSIONS (Vendor actions)
-        quotations = VendorQuotationSubmission.query.order_by(
-            VendorQuotationSubmission.submitted_at.desc()
-        ).limit(limit).all()
-        
-        for quot in quotations:
-            vendor = Vendor.query.get(quot.vendor_id) if quot.vendor_id else None
-            vendor_name = vendor.business_name or vendor.name or f"Vendor #{quot.vendor_id}" if vendor else "Unknown"
-            
-            status_text = "submitted" if quot.status == 'pending' else quot.status
-            activities.append({
-                "id": f"quotation_{quot.id}",
-                "timestamp": quot.submitted_at.isoformat() if quot.submitted_at else None,
-                "user_name": vendor_name,
-                "user_type": "vendor",
-                "action": f"Submitted quotation submission (Status: {status_text})",
-                "action_type": "quotation_submission",
-                "entity_type": "vendor",
-                "entity_id": quot.vendor_id,
-                "details": f"Proposed commission rate: {quot.proposed_commission_rate}%" if quot.proposed_commission_rate else None
-            })
-        
-        # 4. PAYMENTS (Customer/Admin actions)
-        payments = CustomerPayment.query.order_by(
-            CustomerPayment.timestamp.desc()
-        ).limit(limit).all()
-        
-        for payment in payments:
-            payer_name = "Unknown"
-            if payment.payer_type == 'customer' and payment.payer_id:
-                customer = Customer.query.get(payment.payer_id)
-                payer_name = customer.username or customer.email or f"Customer #{payment.payer_id}" if customer else "Unknown"
-            elif payment.payer_type == 'admin' and payment.payer_id:
-                admin = Admin.query.get(payment.payer_id)
-                payer_name = admin.username if admin else f"Admin #{payment.payer_id}"
-            
-            activities.append({
-                "id": f"payment_{payment.id}",
-                "timestamp": payment.timestamp.isoformat() if payment.timestamp else None,
-                "user_name": payer_name,
-                "user_type": payment.payer_type,
-                "action": f"Made {payment.payment_type.replace('_', ' ').title()} payment of ₹{payment.amount} for Order #{payment.order_id}",
-                "action_type": "payment",
-                "entity_type": "order",
-                "entity_id": payment.order_id,
-                "details": f"Payment status: {payment.status}"
-            })
-        
-        # 5. DELIVERY LOGS (Rider actions)
-        delivery_logs = DeliveryLog.query.order_by(
-            DeliveryLog.assigned_at.desc()
-        ).limit(limit).all()
-        
-        for log in delivery_logs:
-            rider_name = "Unknown"
-            if log.assigned_rider_id:
-                rider = Rider.query.get(log.assigned_rider_id)
-                rider_name = rider.name or rider.email or f"Rider #{log.assigned_rider_id}" if rider else "Unknown"
-            elif log.rider_id:
-                delivery_partner = DeliveryPartner.query.get(log.rider_id)
-                rider_name = delivery_partner.name if delivery_partner else f"Rider #{log.rider_id}"
-            
-            # Use the most recent timestamp
-            latest_timestamp = log.delivered_at or log.out_for_delivery_at or log.picked_up_at or log.reached_vendor_at or log.assigned_at
-            timestamp_field = latest_timestamp
-            
-            activities.append({
-                "id": f"delivery_{log.id}",
-                "timestamp": timestamp_field.isoformat() if timestamp_field else None,
-                "user_name": rider_name,
-                "user_type": "rider",
-                "action": f"Updated delivery status to '{log.status.replace('_', ' ').title()}' for Order #{log.order_id}",
-                "action_type": "delivery_update",
-                "entity_type": "order",
-                "entity_id": log.order_id,
-                "details": f"Delivery status: {log.status}"
-            })
-        
-        # 6. SUPPORT THREADS (Customer/Support actions)
-        threads = Thread.query.order_by(Thread.created_at.desc()).limit(limit).all()
-        for thread in threads:
-            # Thread user_id is customer_id
-            customer = Customer.query.get(thread.user_id) if thread.user_id else None
-            user_name = customer.username or customer.email or f"Customer #{thread.user_id}" if customer else "Unknown"
-            
-            activities.append({
-                "id": f"thread_{thread.id}",
-                "timestamp": thread.created_at.isoformat() if thread.created_at else None,
-                "user_name": user_name,
-                "user_type": "customer",
-                "action": f"Created support thread: {thread.title[:50]}{'...' if len(thread.title) > 50 else ''}",
-                "action_type": "support_thread",
-                "entity_type": "thread",
-                "entity_id": thread.id,
-                "details": thread.content[:100] + '...' if len(thread.content) > 100 else thread.content
-            })
-        
-        # 7. SUPPORT COMMENTS (Customer/Support actions)
-        comments = Comment.query.order_by(Comment.created_at.desc()).limit(limit).all()
-        for comment in comments:
-            # Comment user_id could be customer or support
-            customer = Customer.query.get(comment.user_id)
-            support = Support.query.get(comment.user_id) if not customer else None
-            
-            if customer:
-                user_name = customer.username or customer.email or f"Customer #{comment.user_id}"
-                user_type = "customer"
-            elif support:
-                user_name = support.username or support.email or f"Support #{comment.user_id}"
-                user_type = "support"
-            else:
-                user_name = f"User #{comment.user_id}"
-                user_type = "unknown"
-            
-            thread = Thread.query.get(comment.thread_id) if comment.thread_id else None
-            thread_title = thread.title[:30] + '...' if thread and len(thread.title) > 30 else (thread.title if thread else f"Thread #{comment.thread_id}")
+    except Exception as e:
+        app_logger.exception(f"Get activity logs error: {e}")
+        return jsonify({"error": "Failed to retrieve activity logs"}), 500
             
             activities.append({
                 "id": f"comment_{comment.id}",
@@ -1079,6 +918,16 @@ def assign_order_to_vendor(order_id):
         
         db.session.commit()
         
+        # Log activity
+        vendor_name = vendor.business_name or vendor.username or f"Vendor #{vendor_id}"
+        log_activity_from_request(
+            action=f"Assigned Order #{order_id} to {vendor_name}",
+            action_type="admin_action",
+            entity_type="order",
+            entity_id=order_id,
+            details=f"Quotation price: ₹{quotation_price} per piece, Sample cost: ₹{sample_cost}"
+        )
+        
         return jsonify({
             "message": "Order assigned to vendor successfully",
             "order_id": order_id,
@@ -1174,6 +1023,17 @@ def approve_vendor(vendor_id):
         db.session.add(notif)
         
         db.session.commit()
+        
+        # Log activity
+        vendor_name = vendor.business_name or vendor.username or f"Vendor #{vendor_id}"
+        log_activity_from_request(
+            action=f"Approved vendor verification: {vendor_name}",
+            action_type="verification",
+            entity_type="vendor",
+            entity_id=vendor_id,
+            details=f"Commission rate: {vendor.commission_rate}%, Payment cycle: {vendor.payment_cycle}"
+        )
+        
         return jsonify({"message": "Vendor approved successfully"}), 200
         
     except Exception as e:
@@ -1228,6 +1088,17 @@ def reject_vendor(vendor_id):
                         flag_modified(doc_row, meta_attr)
         
         db.session.commit()
+        
+        # Log activity
+        vendor_name = vendor.business_name or vendor.username or f"Vendor #{vendor_id}"
+        log_activity_from_request(
+            action=f"Rejected vendor verification: {vendor_name}",
+            action_type="verification",
+            entity_type="vendor",
+            entity_id=vendor_id,
+            details=reason
+        )
+        
         return jsonify({"message": "Vendor rejected successfully"}), 200
         
     except Exception as e:
@@ -1275,6 +1146,16 @@ def approve_rider(rider_id):
         db.session.add(notif)
         
         db.session.commit()
+        
+        # Log activity
+        rider_name = rider.name or rider.email or f"Rider #{rider_id}"
+        log_activity_from_request(
+            action=f"Approved rider verification: {rider_name}",
+            action_type="verification",
+            entity_type="rider",
+            entity_id=rider_id
+        )
+        
         return jsonify({"message": "Rider approved successfully"}), 200
         
     except Exception as e:
@@ -1302,6 +1183,17 @@ def reject_rider(rider_id):
         rider.admin_remarks = reason
         
         db.session.commit()
+        
+        # Log activity
+        rider_name = rider.name or rider.email or f"Rider #{rider_id}"
+        log_activity_from_request(
+            action=f"Rejected rider verification: {rider_name}",
+            action_type="verification",
+            entity_type="rider",
+            entity_id=rider_id,
+            details=reason
+        )
+        
         return jsonify({"message": "Rider rejected successfully"}), 200
         
     except Exception as e:

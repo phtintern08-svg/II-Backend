@@ -10,6 +10,7 @@ from app_pkg.auth import login_required, admin_required, role_required
 from app_pkg.validation import validate_request_data, OrderSchema
 from app_pkg.schemas import order_schema, orders_schema
 from app_pkg.logger_config import app_logger
+from app_pkg.activity_logger import log_activity_from_request
 
 # Create blueprint
 # Note: url_prefix is set during registration in __init__.py as '/api/orders'
@@ -371,6 +372,15 @@ def create_order():
 
         db.session.commit()
         
+        # Log activity
+        log_activity_from_request(
+            action=f"Created Order #{new_order.id} ({new_order.product_type} - {new_order.category}, Qty: {new_order.quantity})",
+            action_type="order_creation",
+            entity_type="order",
+            entity_id=new_order.id,
+            details=f"Sample cost: ₹{new_order.sample_cost}" if new_order.sample_cost else None
+        )
+        
         return order_schema.jsonify(new_order), 201
         
     except Exception as e:
@@ -434,6 +444,15 @@ def update_order_status(order_id):
         )
         db.session.add(status_history)
         db.session.commit()
+        
+        # Log activity
+        log_activity_from_request(
+            action=f"Changed Order #{order_id} status to {new_status.replace('_', ' ').title()}",
+            action_type="order_status_change",
+            entity_type="order",
+            entity_id=order_id,
+            details=data.get('remarks', '')
+        )
         
         return jsonify({
             "message": "Order status updated successfully",
@@ -651,6 +670,15 @@ def customer_quotation_response(order_id):
         if action == 'reject':
             order.status = 'quotation_rejected_by_customer'
             db.session.commit()
+            
+            # Log activity
+            log_activity_from_request(
+                action=f"Rejected quotation for Order #{order_id}",
+                action_type="quotation_response",
+                entity_type="order",
+                entity_id=order_id
+            )
+            
             return jsonify({"message": "Quotation rejected"}), 200
         
         elif action == 'accept':
@@ -670,6 +698,15 @@ def customer_quotation_response(order_id):
             db.session.add(sample_payment)
             order.status = 'sample_requested'
             db.session.commit()
+            
+            # Log activity
+            log_activity_from_request(
+                action=f"Accepted quotation and made sample payment of ₹{order.sample_cost} for Order #{order_id}",
+                action_type="payment",
+                entity_type="order",
+                entity_id=order_id,
+                details=f"Sample payment: ₹{order.sample_cost}"
+            )
             
             return jsonify({"message": "Sample payment successful, sample requested"}), 200
         else:
@@ -711,6 +748,15 @@ def customer_sample_response(order_id):
         if action == 'reject':
             order.status = 'sample_rejected'
             db.session.commit()
+            
+            # Log activity
+            log_activity_from_request(
+                action=f"Rejected sample for Order #{order_id}",
+                action_type="sample_response",
+                entity_type="order",
+                entity_id=order_id
+            )
+            
             return jsonify({"message": "Sample rejected"}), 200
         
         elif action == 'approve':
@@ -719,9 +765,20 @@ def customer_sample_response(order_id):
             
             order.status = 'awaiting_advance_payment'
             db.session.commit()
+            
+            # Log activity
+            advance_amount = float(Decimal(str(order.quotation_total_price)) * Decimal('0.50'))
+            log_activity_from_request(
+                action=f"Approved sample for Order #{order_id}, awaiting 50% advance payment",
+                action_type="sample_response",
+                entity_type="order",
+                entity_id=order_id,
+                details=f"Advance amount: ₹{advance_amount}"
+            )
+            
             return jsonify({
                 "message": "Sample approved, awaiting 50% advance payment",
-                "advance_amount": float(Decimal(str(order.quotation_total_price)) * Decimal('0.50'))
+                "advance_amount": advance_amount
             }), 200
         else:
             return jsonify({"error": "Invalid action"}), 400

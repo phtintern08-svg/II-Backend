@@ -13,6 +13,7 @@ from app_pkg.models import (
 from app_pkg.auth import login_required, role_required
 from app_pkg.file_upload import validate_and_save_file, delete_file, get_file_path_from_db
 from app_pkg.logger_config import app_logger
+from app_pkg.activity_logger import log_activity_from_request
 
 # Create blueprint
 bp = Blueprint('vendor', __name__, url_prefix='/api/vendor')
@@ -224,6 +225,15 @@ def submit_quotation():
         
         db.session.add(new_quotation)
         db.session.commit()
+        
+        # Log activity
+        log_activity_from_request(
+            action=f"Submitted quotation for Order #{data['order_id']} (Price: ₹{data['quoted_price']})",
+            action_type="quotation_submission",
+            entity_type="order",
+            entity_id=data['order_id'],
+            details=f"Quoted price: ₹{data['quoted_price']}"
+        )
         
         return jsonify({
             "message": "Quotation submitted successfully",
@@ -967,6 +977,15 @@ def update_production_stage(order_id):
         db.session.add(customer_notif)
         
         db.session.commit()
+        
+        # Log activity
+        log_activity_from_request(
+            action=f"Updated production stage for Order #{order.id} to {stage_label}",
+            action_type="order_status_change",
+            entity_type="order",
+            entity_id=order.id,
+            details=notes if notes else None
+        )
         
         return jsonify({
             "message": "Production stage updated successfully",
