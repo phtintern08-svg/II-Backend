@@ -6,11 +6,14 @@ import jwt
 import smtplib
 import ssl
 import secrets
+import hashlib
+import os
 from functools import wraps
 from flask import request, jsonify, current_app
 from datetime import datetime, timedelta
 from email.message import EmailMessage
 from app_pkg.models import Admin, Customer, Vendor, Rider, Support
+from app_pkg.logger_config import app_logger
 from config import Config
 
 
@@ -62,13 +65,35 @@ def verify_token(token):
     try:
         secret_key = current_app.config.get('SECRET_KEY')
         if not secret_key:
+            # 🔥 DIAGNOSTIC: Log SECRET_KEY missing (critical for Passenger worker consistency)
+            app_logger.error(
+                "SECRET_KEY is missing from app config! "
+                f"Process ID: {os.getpid()}, "
+                f"Environment SECRET_KEY exists: {bool(os.environ.get('SECRET_KEY'))}"
+            )
             return None
+        
+        # 🔥 DIAGNOSTIC: Log SECRET_KEY hash to verify consistency across workers
+        # (Hash only, never log actual key)
+        secret_hash = hashlib.sha256(secret_key.encode()).hexdigest()[:16]
+        app_logger.debug(
+            f"JWT verification - Process ID: {os.getpid()}, "
+            f"SECRET_KEY hash (first 16 chars): {secret_hash}"
+        )
         
         payload = jwt.decode(token, secret_key, algorithms=['HS256'], leeway=10)
         return payload
-    except jwt.ExpiredSignatureError:
+    except jwt.ExpiredSignatureError as e:
+        app_logger.warning(f"JWT token expired: {e}")
         return None
-    except jwt.InvalidTokenError:
+    except jwt.InvalidTokenError as e:
+        # 🔥 DIAGNOSTIC: Log invalid token errors to identify SECRET_KEY mismatch
+        secret_hash = hashlib.sha256(secret_key.encode()).hexdigest()[:16] if secret_key else "MISSING"
+        app_logger.warning(
+            f"JWT token invalid - Process ID: {os.getpid()}, "
+            f"SECRET_KEY hash: {secret_hash}, "
+            f"Error: {type(e).__name__}"
+        )
         return None
 
 
@@ -127,17 +152,34 @@ def require_auth(f):
     """
     @wraps(f)
     def decorated_function(*args, **kwargs):
+        process_id = os.getpid()
+        route_path = request.path
+        
         token = get_token_from_request()
         
         if not token:
+            app_logger.debug(f"Auth failed - No token found (Process: {process_id}, Route: {route_path})")
             return jsonify({"error": "Authentication required", "code": "AUTH_REQUIRED"}), 401
         
         payload = verify_token(token)
         if not payload:
+            # 🔥 DIAGNOSTIC: Log which route failed token verification
+            app_logger.warning(
+                f"Auth failed - Token verification failed "
+                f"(Process: {process_id}, Route: {route_path}, "
+                f"Token length: {len(token) if token else 0})"
+            )
             return jsonify({"error": "Invalid or expired token", "code": "INVALID_TOKEN"}), 401
         
         # Verify user still exists in database
-        if not verify_user_exists(payload.get('user_id'), payload.get('role')):
+        user_id = payload.get('user_id')
+        role = payload.get('role')
+        if not verify_user_exists(user_id, role):
+            app_logger.warning(
+                f"Auth failed - User not found in DB "
+                f"(Process: {process_id}, Route: {route_path}, "
+                f"User ID: {user_id}, Role: {role})"
+            )
             return jsonify({
                 "error": "User no longer exists",
                 "code": "USER_NOT_FOUND"
@@ -148,8 +190,8 @@ def require_auth(f):
         
         # 🔥 FIX: Also set request.user_id and request.role for convenience
         # This prevents AttributeError when routes access request.user_id or request.role directly
-        request.user_id = payload.get('user_id')
-        request.role = payload.get('role')
+        request.user_id = user_id
+        request.role = role
         
         return f(*args, **kwargs)
     
@@ -167,9 +209,53 @@ def require_role(*allowed_roles):
         @wraps(f)
         @require_auth
         def decorated_function(*args, **kwargs):
+            # 🔥 DEFENSIVE: Verify current_user exists and is a dict
+            if not hasattr(request, 'current_user') or not request.current_user:
+                app_logger.error(
+                    f"❌ require_role: current_user missing! "
+                    f"Process: {os.getpid()}, Route: {request.path}, "
+                    f"Has user_id: {hasattr(request, 'user_id')}, "
+                    f"Has role: {hasattr(request, 'role')}"
+                )
+                return jsonify({
+                    "error": "Authentication error - user context missing",
+                    "code": "AUTH_CONTEXT_MISSING"
+                }), 401
+            
+            # 🔥 DEFENSIVE: Verify current_user is a dict-like object
+            if not isinstance(request.current_user, dict):
+                app_logger.error(
+                    f"❌ require_role: current_user is not a dict! "
+                    f"Process: {os.getpid()}, Route: {request.path}, "
+                    f"Type: {type(request.current_user)}"
+                )
+                return jsonify({
+                    "error": "Authentication error - invalid user context",
+                    "code": "AUTH_CONTEXT_INVALID"
+                }), 401
+            
             user_role = request.current_user.get('role')
+            user_id = request.current_user.get('user_id')
+            
+            # 🔥 DEFENSIVE: Verify role exists in token
+            if not user_role:
+                app_logger.error(
+                    f"❌ require_role: role missing from token! "
+                    f"Process: {os.getpid()}, Route: {request.path}, "
+                    f"User ID: {user_id}, "
+                    f"Current user keys: {list(request.current_user.keys()) if isinstance(request.current_user, dict) else 'N/A'}"
+                )
+                return jsonify({
+                    "error": "Authentication error - role missing from token",
+                    "code": "ROLE_MISSING"
+                }), 401
             
             if user_role not in allowed_roles:
+                app_logger.warning(
+                    f"⚠️ require_role: Insufficient permissions - "
+                    f"Process: {os.getpid()}, Route: {request.path}, "
+                    f"User role: {user_role}, Required: {allowed_roles}"
+                )
                 return jsonify({
                     "error": "Insufficient permissions",
                     "code": "INSUFFICIENT_PERMISSIONS",
@@ -180,7 +266,7 @@ def require_role(*allowed_roles):
             # 🔥 FIX: Explicitly set request.user_id and request.role for consistency
             # This ensures all routes using require_role have these attributes set
             # (require_auth sets them, but being explicit here prevents any edge cases)
-            request.user_id = request.current_user.get('user_id')
+            request.user_id = user_id
             request.role = user_role
             
             return f(*args, **kwargs)

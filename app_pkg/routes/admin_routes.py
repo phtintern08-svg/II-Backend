@@ -242,11 +242,41 @@ def get_dashboard_stats():
     GET /api/admin/dashboard/stats
     Get dashboard statistics
     """
+    # 🔥 DIAGNOSTIC: Log BEFORE any processing to verify decorator executed
+    import os
+    process_id = os.getpid()
+    app_logger.info(
+        f"🔵 Dashboard stats route EXECUTED - Process: {process_id}, "
+        f"user_id: {getattr(request, 'user_id', 'NOT SET')}, "
+        f"role: {getattr(request, 'role', 'NOT SET')}, "
+        f"current_user exists: {hasattr(request, 'current_user')}"
+    )
+    
+    # 🔥 DEFENSIVE: Verify authentication attributes are set (should never fail if decorator worked)
+    if not hasattr(request, 'user_id') or not request.user_id:
+        app_logger.error(
+            f"❌ CRITICAL: Dashboard stats route reached but user_id not set! "
+            f"Process: {process_id}, "
+            f"Has current_user: {hasattr(request, 'current_user')}, "
+            f"Has role: {hasattr(request, 'role')}"
+        )
+        return jsonify({
+            "error": "Authentication error - user context missing",
+            "code": "AUTH_CONTEXT_MISSING"
+        }), 401
+    
+    if not hasattr(request, 'role') or request.role != 'admin':
+        app_logger.error(
+            f"❌ CRITICAL: Dashboard stats route reached but role invalid! "
+            f"Process: {process_id}, "
+            f"Role: {getattr(request, 'role', 'NOT SET')}"
+        )
+        return jsonify({
+            "error": "Insufficient permissions",
+            "code": "INSUFFICIENT_PERMISSIONS"
+        }), 403
+    
     try:
-        # 🔥 DEBUG: Log authentication details to help diagnose 401 issues
-        # This helps identify if request.user_id or request.role are missing
-        app_logger.debug(f"Dashboard stats request - user_id: {getattr(request, 'user_id', 'NOT SET')}, role: {getattr(request, 'role', 'NOT SET')}")
-        
         stats = {
             "total_customers": Customer.query.count(),
             "total_vendors": Vendor.query.count(),
@@ -256,10 +286,13 @@ def get_dashboard_stats():
             "completed_orders": Order.query.filter_by(status='completed').count()
         }
         
+        app_logger.debug(f"✅ Dashboard stats computed successfully - Process: {process_id}")
         return jsonify(stats), 200
         
     except Exception as e:
-        app_logger.exception(f"Get dashboard stats error: {e}")
+        app_logger.exception(
+            f"❌ Dashboard stats error - Process: {process_id}, Error: {e}"
+        )
         return jsonify({"error": "Failed to retrieve statistics"}), 500
 
 

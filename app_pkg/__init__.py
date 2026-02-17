@@ -30,8 +30,28 @@ def create_app(config_class=Config):
     """
     Flask application factory
     """
+    import os
+    import hashlib
+    
     app = Flask(__name__)
     app.config.from_object(config_class)
+    
+    # 🔥 DIAGNOSTIC: Log SECRET_KEY status at app startup (critical for Passenger worker consistency)
+    # This helps identify if different workers have different SECRET_KEY values
+    secret_key = app.config.get('SECRET_KEY')
+    if secret_key:
+        secret_hash = hashlib.sha256(secret_key.encode()).hexdigest()[:16]
+        app_logger.info(
+            f"✅ App initialized - Process ID: {os.getpid()}, "
+            f"SECRET_KEY hash (first 16 chars): {secret_hash}, "
+            f"SECRET_KEY length: {len(secret_key)}, "
+            f"Env SECRET_KEY exists: {bool(os.environ.get('SECRET_KEY'))}"
+        )
+    else:
+        app_logger.error(
+            f"❌ CRITICAL: SECRET_KEY is missing! Process ID: {os.getpid()}, "
+            f"Env SECRET_KEY exists: {bool(os.environ.get('SECRET_KEY'))}"
+        )
 
     # Initialize extensions
     db.init_app(app)
