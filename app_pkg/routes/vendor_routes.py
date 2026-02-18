@@ -966,8 +966,11 @@ def update_production_stage(order_id):
         db.session.add(status_record)
         
         # Notify Admin
+        # 🔥 FIX: Use dynamic admin ID instead of hardcoded 1 (prevents money misrouting)
+        from app_pkg.routes.orders_routes import get_admin_id
+        admin_id = get_admin_id()
         admin_notif = Notification(
-            user_id=1,
+            user_id=admin_id,
             user_type='admin',
             title=f'Production Update: ORD-{order.id}',
             message=f'Order ORD-{order.id} has progressed to "{stage_label}". Vendor ID: {request.user_id}.',
