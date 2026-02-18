@@ -642,7 +642,7 @@ def get_assigned_deliveries():
                     "address": d.customer_address,
                     "contact": d.customer_contact
                 },
-                "deadline": order.delivery_date if order and order.delivery_date else None,
+                "deadline": order.delivery_date.isoformat() if order and order.delivery_date else None,
                 "is_urgent": d.is_urgent or False,
                 "product_details": {
                     "type": order.category if order else "Items",

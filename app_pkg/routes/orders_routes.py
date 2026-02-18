@@ -155,8 +155,31 @@ def create_order():
         fabric = validated_data.get('fabric')
         print_type = validated_data.get('print_type')
         quantity = validated_data['quantity']
-        delivery_date = validated_data.get('delivery_date')
+        delivery_date_str = validated_data.get('delivery_date')
         price_per_piece_offered = validated_data['price_per_piece']
+        
+        # 🔥 FIX: Parse delivery_date string to Date object
+        from datetime import date
+        delivery_date = None
+        if delivery_date_str:
+            try:
+                # If it's already a date object from schema, use it directly
+                if isinstance(delivery_date_str, date):
+                    delivery_date = delivery_date_str
+                # If it's a string, parse it
+                elif isinstance(delivery_date_str, str):
+                    delivery_date = datetime.strptime(delivery_date_str, "%Y-%m-%d").date()
+                # If it's a datetime object, convert to date
+                elif isinstance(delivery_date_str, datetime):
+                    delivery_date = delivery_date_str.date()
+                else:
+                    return jsonify({"error": "Invalid delivery_date format. Use YYYY-MM-DD"}), 400
+                
+                # 🔥 VALIDATION: Prevent past date selection
+                if delivery_date < date.today():
+                    return jsonify({"error": "Delivery date cannot be in the past"}), 400
+            except (ValueError, AttributeError) as e:
+                return jsonify({"error": f"Invalid delivery_date format. Use YYYY-MM-DD. Error: {str(e)}"}), 400
         
         # Address fields
         address_line1 = validated_data['address_line1']
@@ -320,7 +343,7 @@ def create_order():
             price_per_piece_offered=price_per_piece_offered,
             quotation_price_per_piece=quotation_price,  # Set from catalog final_price
             quotation_total_price=quotation_price * quantity if quotation_price else None,
-            delivery_date=delivery_date.isoformat() if isinstance(delivery_date, datetime) else delivery_date,
+            delivery_date=delivery_date,  # Now stored as Date object
             address_line1=address_line1,
             address_line2=address_line2,
             city=city,
@@ -920,9 +943,17 @@ def submit_order_feedback(order_id):
         
         order.rating = rating
         order.delivery_on_time = data.get('delivery_on_time', True)
-        order.delivery_delay_days = data.get('delivery_delay_days', 0)
         order.defect_reported = data.get('defect_reported', False)
         order.feedback_comment = data.get('feedback_comment', '')
+        
+        # 🔥 FIX: Automatically compute delivery_delay_days from delivery_date
+        from datetime import date
+        if order.delivery_date and order.status == 'delivered':
+            delivered_date = date.today()
+            delay_days = (delivered_date - order.delivery_date).days
+            order.delivery_delay_days = max(0, delay_days)
+        else:
+            order.delivery_delay_days = 0
         
         # 🔥 PRODUCTION SAFETY: Use Decimal for all money calculations (never use float)
         from decimal import Decimal

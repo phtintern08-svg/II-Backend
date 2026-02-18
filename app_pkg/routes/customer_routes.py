@@ -301,7 +301,7 @@ def get_customer_orders():
             "fabric": order.fabric,
             "quantity": order.quantity,
             "sample_cost": float(order.sample_cost) if order.sample_cost else 0,
-            "delivery_date": order.delivery_date,  # Frontend expects string or null, not ISO format
+            "delivery_date": order.delivery_date.isoformat() if order.delivery_date else None,  # Serialize Date as ISO string
             "created_at": order.created_at.isoformat() if order.created_at else None
         } for order in orders]
         

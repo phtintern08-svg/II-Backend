@@ -141,6 +141,12 @@ def assign_nearest_rider_to_order(order_id, vendor_id, max_search_radius_km=10):
             existing_log.status = 'assigned'
             existing_log.assigned_at = datetime.utcnow()
             
+            # 🔥 FIX: Auto-carry delivery deadline from order.delivery_date
+            if order.delivery_date:
+                from datetime import time
+                delivery_deadline = datetime.combine(order.delivery_date, time(23, 59, 59))
+                existing_log.delivery_deadline = delivery_deadline
+            
             db.session.commit()
             
             return {
@@ -168,6 +174,12 @@ def assign_nearest_rider_to_order(order_id, vendor_id, max_search_radius_km=10):
                 ]
             }
         else:
+            # 🔥 FIX: Auto-carry delivery deadline from order.delivery_date
+            delivery_deadline = None
+            if order.delivery_date:
+                from datetime import time
+                delivery_deadline = datetime.combine(order.delivery_date, time(23, 59, 59))
+            
             # Create new delivery log
             delivery_log = DeliveryLog(
                 order_id=order_id,
@@ -176,7 +188,8 @@ def assign_nearest_rider_to_order(order_id, vendor_id, max_search_radius_km=10):
                 vendor_contact=vendor.phone,
                 customer_address=f"{order.address_line1}, {order.city}, {order.state} - {order.pincode}",
                 status='assigned',
-                assigned_at=datetime.utcnow()
+                assigned_at=datetime.utcnow(),
+                delivery_deadline=delivery_deadline
             )
             
             db.session.add(delivery_log)

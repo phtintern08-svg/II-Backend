@@ -142,7 +142,7 @@ class OrderSchema(Schema):
     fabric = fields.Str(validate=Length(max=100), allow_none=True)
     print_type = fields.Str(validate=Length(max=100), allow_none=True)
     quantity = fields.Int(required=True, validate=validate.Range(min=1, max=10000))
-    delivery_date = fields.DateTime(allow_none=True)
+    delivery_date = fields.Date(format="%Y-%m-%d", allow_none=True)
     price_per_piece = fields.Decimal(required=True, validate=validate.Range(min=0))
     address_line1 = fields.Str(required=True, validate=Length(min=1, max=255))
     address_line2 = fields.Str(validate=Length(max=255), allow_none=True)

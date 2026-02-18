@@ -76,6 +76,8 @@ class OrderSchema(ma.SQLAlchemyAutoSchema):
         model = Order
         load_instance = True
         include_fk = True
+    # 🔥 FIX: Ensure delivery_date is serialized as Date with proper format
+    delivery_date = fields.Date(format="%Y-%m-%d")
     customer = ma.Nested(CustomerSchema, only=('id', 'username', 'email', 'phone'))
     # Cross-schema fetch for vendor
     vendor = fields.Method("get_vendor")

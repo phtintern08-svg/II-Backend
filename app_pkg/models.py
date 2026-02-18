@@ -1,5 +1,5 @@
 from flask_sqlalchemy import SQLAlchemy
-from datetime import datetime
+from datetime import datetime, date
 from sqlalchemy.dialects.mysql import JSON as MySQLJSON
 
 db = SQLAlchemy()
@@ -266,7 +266,7 @@ class Order(db.Model):
     sample_size = db.Column(db.String(10))
     
     # Delivery
-    delivery_date = db.Column(db.String(20))
+    delivery_date = db.Column(db.Date, nullable=True, index=True)
     address_line1 = db.Column(db.String(255), nullable=False)
     address_line2 = db.Column(db.String(255))
     city = db.Column(db.String(100), nullable=False)
