@@ -856,11 +856,15 @@ def assign_order_to_vendor(order_id):
             app_logger.error(f"Invalid quantity for order {order_id}: {order.quantity}")
             return jsonify({"error": "Order quantity is invalid. Cannot calculate total price."}), 400
         
+        # 🔥 BULK ORDER FIX: Use helper method to get effective quantity
+        # This ensures correct quantity is used for bulk orders (bulk_quantity) vs sample orders (quantity)
+        total_qty = order.get_effective_quantity()
+        
         # Assign vendor to order
         order.selected_vendor_id = vendor_id
         new_price = float(quotation_price)
         order.quotation_price_per_piece = new_price
-        order.quotation_total_price = new_price * int(order.quantity)
+        order.quotation_total_price = new_price * total_qty  # Use correct quantity (bulk or sample)
         
         # 🔥 FIX: Only update sample_cost if explicitly provided (should not overwrite existing value)
         # Sample cost is determined at order creation time and should not be changed during vendor assignment
@@ -874,6 +878,9 @@ def assign_order_to_vendor(order_id):
             f"Assigning vendor: Order={order_id}, "
             f"Vendor={vendor_id}, "
             f"Qty={order.quantity}, "
+            f"BulkQty={order.bulk_quantity if order.is_bulk_order else 'N/A'}, "
+            f"IsBulk={order.is_bulk_order}, "
+            f"EffectiveQty={total_qty}, "
             f"PricePerPiece={order.quotation_price_per_piece}, "
             f"Total={order.quotation_total_price}, "
             f"SampleCost={order.sample_cost}"
@@ -912,7 +919,7 @@ def assign_order_to_vendor(order_id):
             action_type="admin_action",
             entity_type="order",
             entity_id=order_id,
-            details=f"Quotation price: ₹{quotation_price} per piece, Quantity: {order.quantity}, Total: ₹{order.quotation_total_price}, Sample cost: ₹{order.sample_cost}"
+            details=f"Quotation price: ₹{quotation_price} per piece, Quantity: {total_qty} ({'bulk' if order.is_bulk_order else 'sample'}), Total: ₹{order.quotation_total_price}, Sample cost: ₹{order.sample_cost}"
         )
         
         return jsonify({

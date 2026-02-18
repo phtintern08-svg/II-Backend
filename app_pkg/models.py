@@ -297,6 +297,16 @@ class Order(db.Model):
     customer = db.relationship('Customer', backref='orders')
     # vendor relationship removed - cross-schema reference
 
+    def get_effective_quantity(self):
+        """
+        Get the effective production quantity for this order.
+        For bulk orders, returns bulk_quantity. For sample orders, returns quantity.
+        This prevents financial calculation errors by always using the correct quantity.
+        """
+        if self.is_bulk_order and self.bulk_quantity:
+            return int(self.bulk_quantity)
+        return int(self.quantity) if self.quantity else 1
+
     def __repr__(self):
         return f'<Order {self.id} - {self.status}>'
 

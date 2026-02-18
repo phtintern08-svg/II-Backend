@@ -658,8 +658,13 @@ def assign_vendor_to_order(order_id):
         # 🔥 PRODUCTION NOTE: Admin can override pricing during vendor assignment
         # This is intentional - admin sets quotation based on vendor quote
         # Catalog price is authoritative for initial order creation, but admin can adjust for vendor quotes
+        
+        # 🔥 BULK ORDER FIX: Use helper method to get effective quantity
+        # This ensures correct quantity is used for bulk orders (bulk_quantity) vs sample orders (quantity)
+        total_qty = order.get_effective_quantity()
+        
         order.quotation_price_per_piece = float(quotation_price_per_piece)
-        order.quotation_total_price = float(quotation_price_per_piece) * order.quantity
+        order.quotation_total_price = float(quotation_price_per_piece) * total_qty  # Use correct quantity (bulk or sample)
         order.sample_cost = float(sample_cost)
         order.status = 'quotation_sent_to_customer'
         
