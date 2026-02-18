@@ -258,12 +258,17 @@ class Order(db.Model):
     print_type = db.Column(db.String(50))
     
     # Quantity & Price
-    quantity = db.Column(db.Integer, nullable=False)
+    quantity = db.Column(db.Integer, nullable=False)  # Sample quantity (1) or bulk quantity
     price_per_piece_offered = db.Column(db.Float)  # Customer's offer
     quotation_price_per_piece = db.Column(db.Float)  # Final agreed price
     quotation_total_price = db.Column(db.Float)
     sample_cost = db.Column(db.Float, default=0.0)
     sample_size = db.Column(db.String(10))
+    
+    # 🔥 BULK ORDER FIELDS: Store bulk quantity and size distribution
+    bulk_quantity = db.Column(db.Integer, nullable=True)  # Total bulk quantity (if different from quantity)
+    size_distribution = db.Column(MySQLJSON, nullable=True)  # JSON: {"S": 50, "M": 50, "L": 50, "XL": 25, "XXL": 25}
+    is_bulk_order = db.Column(db.Boolean, default=False)  # Flag to distinguish bulk from sample orders
     
     # Delivery
     delivery_date = db.Column(db.Date, nullable=True, index=True)

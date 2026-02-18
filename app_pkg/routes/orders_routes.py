@@ -166,6 +166,11 @@ def create_order():
         delivery_date_str = validated_data.get('delivery_date')
         price_per_piece_offered = validated_data['price_per_piece']
         
+        # 🔥 BULK ORDER FIELDS: Extract bulk order data if provided
+        bulk_quantity = validated_data.get('bulk_quantity')
+        size_distribution = validated_data.get('size_distribution')  # JSON dict: {"S": 50, "M": 50, ...}
+        is_bulk_order = validated_data.get('is_bulk_order', False)
+        
         # 🔥 FIX: Parse delivery_date string to Date object
         from datetime import date
         delivery_date = None
@@ -337,6 +342,10 @@ def create_order():
             # Payment received - automatically move to pending_admin_review (admin needs to assign vendor)
             initial_status = 'pending_admin_review'
 
+        # 🔥 BULK ORDER LOGIC: For bulk orders, quantity=1 (sample), use bulk_quantity for calculations
+        # For sample orders, quantity=1 and bulk_quantity=None
+        effective_quantity = bulk_quantity if is_bulk_order and bulk_quantity else quantity
+        
         # Store original validated values (not normalized) to preserve canonical representation
         # Normalization is only for catalog lookup, not storage
         new_order = Order(
@@ -347,10 +356,10 @@ def create_order():
             color=validated_data.get('color'),
             fabric=validated_data.get('fabric'),  # Original value, not normalized
             print_type=validated_data.get('print_type'),
-            quantity=quantity,
+            quantity=quantity,  # Sample quantity (1) or total if not bulk
             price_per_piece_offered=price_per_piece_offered,
             quotation_price_per_piece=quotation_price,  # Set from catalog final_price
-            quotation_total_price=quotation_price * quantity if quotation_price else None,
+            quotation_total_price=quotation_price * effective_quantity if quotation_price else None,  # Use bulk_quantity for bulk orders
             delivery_date=delivery_date,  # Now stored as Date object
             address_line1=address_line1,
             address_line2=address_line2,
@@ -360,7 +369,11 @@ def create_order():
             country=country,
             status=initial_status,
             sample_cost=final_price_from_catalog,  # Use catalog price, not frontend value
-            sample_size=sample_size
+            sample_size=sample_size,
+            # 🔥 BULK ORDER FIELDS: Store bulk data if provided
+            bulk_quantity=bulk_quantity,
+            size_distribution=size_distribution,  # JSON: {"S": 50, "M": 50, "L": 50, "XL": 25, "XXL": 25}
+            is_bulk_order=is_bulk_order
         )
         
         db.session.add(new_order)
@@ -546,9 +559,14 @@ def request_bulk_order(order_id):
         
         data = request.get_json()
         quantity = data.get('quantity')
+        size_distribution = data.get('size_distribution')  # Optional: {"S": 50, "M": 50, ...}
         
         if not quantity or quantity < 1:
             return jsonify({"error": "Invalid quantity"}), 400
+        
+        # 🔥 BULK ORDER: For bulk orders, quantity=1 (sample), bulk_quantity=actual quantity
+        # This maintains consistency with sample-first model
+        effective_quantity = quantity
         
         # Create new bulk order based on sample
         # 🔥 FIX: Copy pricing from original order (was missing quotation_price_per_piece and quotation_total_price)
@@ -560,10 +578,10 @@ def request_bulk_order(order_id):
             color=order.color,
             fabric=order.fabric,
             print_type=order.print_type,
-            quantity=quantity,
+            quantity=1,  # Sample quantity (1) for bulk orders
             price_per_piece_offered=order.price_per_piece_offered,
             quotation_price_per_piece=order.quotation_price_per_piece,  # Copy from original order
-            quotation_total_price=order.quotation_price_per_piece * quantity if order.quotation_price_per_piece else None,  # Calculate based on new quantity
+            quotation_total_price=order.quotation_price_per_piece * effective_quantity if order.quotation_price_per_piece else None,  # Calculate based on bulk quantity
             delivery_date=order.delivery_date,
             address_line1=order.address_line1,
             address_line2=order.address_line2,
@@ -573,7 +591,11 @@ def request_bulk_order(order_id):
             country=order.country,
             status='pending_admin_review',
             sample_size=order.sample_size,
-            sample_cost=order.sample_cost  # Copy sample cost from original order
+            sample_cost=order.sample_cost,  # Copy sample cost from original order
+            # 🔥 BULK ORDER FIELDS: Store bulk data
+            bulk_quantity=effective_quantity,
+            size_distribution=size_distribution,  # JSON: {"S": 50, "M": 50, "L": 50, "XL": 25, "XXL": 25}
+            is_bulk_order=True
         )
         
         db.session.add(new_order)

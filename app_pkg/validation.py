@@ -154,6 +154,11 @@ class OrderSchema(Schema):
     sample_cost = fields.Decimal(validate=validate.Range(min=0), load_default=0.0)
     sample_size = fields.Str(validate=Length(max=10), allow_none=True)
     
+    # 🔥 BULK ORDER FIELDS: Store bulk quantity and size distribution
+    bulk_quantity = fields.Int(validate=validate.Range(min=1, max=10000), allow_none=True)
+    size_distribution = fields.Dict(allow_none=True)  # JSON: {"S": 50, "M": 50, "L": 50, "XL": 25, "XXL": 25}
+    is_bulk_order = fields.Bool(allow_none=True)
+    
     @pre_load
     def sanitize_inputs(self, data, **kwargs):
         """Sanitize string inputs"""
