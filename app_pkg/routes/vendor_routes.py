@@ -8,7 +8,8 @@ import os
 
 from app_pkg.models import (
     db, Vendor, VendorQuotation, VendorDocument, VendorOrderAssignment, Order,
-    VendorQuotationSubmission, Notification, OrderStatusHistory, Customer
+    VendorQuotationSubmission, Notification, OrderStatusHistory, Customer,
+    DeliveryLog, Rider  # 🔥 FIX: Added missing imports for track-delivery endpoint
 )
 from app_pkg.auth import login_required, role_required
 from app_pkg.file_upload import validate_and_save_file, delete_file, get_file_path_from_db
@@ -703,13 +704,20 @@ def get_vendor_orders_filtered():
         query = Order.query.filter_by(selected_vendor_id=request.user_id)
         
         if status == 'new':
-            # 🔥 FIX: 'new' orders are those in production (after advance payment)
-            # Vendors only see orders once production starts, not when assigned
-            production_statuses = [
-                'in_production', 'material_prep',
-                'printing', 'printing_completed', 'quality_check'
-            ]
-            query = query.filter(Order.status.in_(production_statuses))
+            # 🔥 FIX: 'new' orders are those assigned to vendor but not yet in production
+            # Vendor should see orders after admin assignment, before customer pays advance
+            query = query.filter(
+                Order.status.in_([
+                    'quotation_sent_to_customer',
+                    'sample_requested',
+                    'awaiting_advance_payment',
+                    'in_production',  # Also include orders that just entered production
+                    'material_prep',
+                    'printing',
+                    'printing_completed',
+                    'quality_check'
+                ])
+            )
         elif status == 'in_production':
             production_statuses = [
                 'in_production', 'material_prep',
@@ -719,7 +727,7 @@ def get_vendor_orders_filtered():
         elif status:
             query = query.filter_by(status=status)
         
-        orders = query.all()
+        orders = query.order_by(Order.created_at.desc()).all()
         
         result = []
         for o in orders:
@@ -740,15 +748,25 @@ def get_vendor_orders_filtered():
             elif o.status == 'packed_ready':
                 current_stage = 'packed'
             
+            # 🔥 FIX: Return JSON structure that matches frontend expectations exactly
             order_data = {
                 "id": f"ORD-{o.id:03d}" if isinstance(o.id, int) else o.id,
                 "db_id": o.id,
                 "customerName": customer.username if customer else "Unknown",
-                "productType": o.product_type,
+                "productType": o.product_type,  # Frontend expects productType
                 "quantity": o.quantity,
+                "color": o.color or None,
+                "size": o.sample_size or None,
+                "deadline": o.delivery_date.isoformat() if o.delivery_date else None,  # Frontend expects deadline
+                "assignedDate": o.created_at.isoformat() if o.created_at else None,  # Frontend expects assignedDate
                 "status": o.status,
-                "deadline": o.delivery_date,
-                "created_at": o.created_at.isoformat() if o.created_at else None
+                "customization": {  # Frontend expects customization object
+                    "fabric": o.fabric or None,
+                    "printType": o.print_type or None,
+                    "neckType": o.neck_type or None
+                },
+                "specialInstructions": o.feedback_comment or None,  # Frontend expects specialInstructions
+                "address": f"{o.address_line1 or ''}, {o.city or ''}, {o.pincode or ''}".strip(', ') if o.address_line1 else None
             }
             
             if current_stage:
@@ -775,13 +793,20 @@ def get_dashboard_stats():
     try:
         vendor_id = request.user_id
         
-        # 🔥 FIX: New orders are those in production (after advance payment)
+        # 🔥 FIX: New orders are those assigned but not yet in active production
+        # These are orders waiting for customer to pay advance or just entered production
         new_orders = Order.query.filter(
             Order.selected_vendor_id == vendor_id,
-            Order.status.in_(['in_production', 'material_prep', 'printing', 'printing_completed', 'quality_check'])
+            Order.status.in_([
+                'quotation_sent_to_customer',
+                'sample_requested',
+                'awaiting_advance_payment',
+                'in_production'  # Just entered production, not yet in active stages
+            ])
         ).count()
         
-        production_statuses = ['in_production', 'material_prep', 'printing', 'printing_completed', 'quality_check']
+        # 🔥 FIX: In-production orders are actively being worked on (past initial in_production stage)
+        production_statuses = ['material_prep', 'printing', 'printing_completed', 'quality_check']
         in_production = Order.query.filter(
             Order.selected_vendor_id == vendor_id,
             Order.status.in_(production_statuses)
@@ -1148,15 +1173,22 @@ def get_order_stats():
     try:
         vendor_id = request.user_id
         
-        # 🔥 FIX: New orders are those in production (after advance payment)
+        # 🔥 FIX: New orders are those assigned but not yet in active production
+        # These are orders waiting for customer to pay advance or just entered production
         new_orders_count = Order.query.filter(
             Order.selected_vendor_id == vendor_id,
-            Order.status.in_(['in_production', 'material_prep', 'printing', 'printing_completed', 'quality_check'])
+            Order.status.in_([
+                'quotation_sent_to_customer',
+                'sample_requested',
+                'awaiting_advance_payment',
+                'in_production'  # Just entered production, not yet in active stages
+            ])
         ).count()
         
+        # 🔥 FIX: In-production orders are actively being worked on (past initial in_production stage)
         in_production_count = Order.query.filter(
             Order.selected_vendor_id == vendor_id,
-            Order.status.in_(['in_production', 'material_prep', 'printing', 'printing_completed', 'quality_check'])
+            Order.status.in_(['material_prep', 'printing', 'printing_completed', 'quality_check'])
         ).count()
         
         ready_count = Order.query.filter(
@@ -1241,22 +1273,25 @@ def track_delivery(delivery_id):
 def get_new_orders():
     """
     GET /api/vendor/new-orders
-    Get new orders assigned to vendor (only after advance payment - in production)
-    🔥 Vendors must compulsorily produce, so they only see orders once production starts
+    Get new orders assigned to vendor
+    🔥 Vendor should see orders after admin assignment, including before advance payment
     """
     try:
-        # 🔥 FIX: Vendor should only see orders once they're in production (after advance payment)
-        # Not when status='assigned' - that happens before customer pays advance
+        # 🔥 FIX: Vendor should see orders after admin assignment, not just after advance payment
+        # This allows vendor to prepare before customer pays
         orders = Order.query.filter(
             Order.selected_vendor_id == request.user_id,
             Order.status.in_([
+                'quotation_sent_to_customer',
+                'sample_requested',
+                'awaiting_advance_payment',
                 'in_production',
                 'material_prep',
                 'printing',
                 'printing_completed',
                 'quality_check'
             ])
-        ).all()
+        ).order_by(Order.created_at.desc()).all()
         
         result = []
         for o in orders:
@@ -1265,18 +1300,19 @@ def get_new_orders():
                 "id": f"ORD-{o.id:03d}" if isinstance(o.id, int) else o.id,
                 "db_id": o.id,
                 "customerName": customer.username if customer else "Unknown",
-                "productType": o.product_type,
-                "color": o.color,
-                "size": o.sample_size or "N/A",
+                "productType": o.product_type,  # Frontend expects productType
+                "color": o.color or None,
+                "size": o.sample_size or None,
                 "quantity": o.quantity,
-                "customization": {
-                    "printType": o.print_type,
-                    "neckType": o.neck_type,
-                    "fabric": o.fabric
+                "customization": {  # Frontend expects customization object
+                    "printType": o.print_type or None,
+                    "neckType": o.neck_type or None,
+                    "fabric": o.fabric or None
                 },
-                "deadline": o.delivery_date,
-                "assignedDate": o.created_at.isoformat() if o.created_at else None,
-                "address": f"{o.address_line1}, {o.city}, {o.pincode}"
+                "deadline": o.delivery_date.isoformat() if o.delivery_date else None,  # Frontend expects deadline
+                "assignedDate": o.created_at.isoformat() if o.created_at else None,  # Frontend expects assignedDate
+                "specialInstructions": o.feedback_comment or None,  # Frontend expects specialInstructions
+                "address": f"{o.address_line1 or ''}, {o.city or ''}, {o.pincode or ''}".strip(', ') if o.address_line1 else None
             })
         
         return jsonify(result), 200

@@ -1516,8 +1516,9 @@ def get_production_orders():
             vendor = Vendor.query.get(o.selected_vendor_id)
             customer = Customer.query.get(o.customer_id)
             
-            # Progress calculation - removed 'accepted_by_vendor' stage
-            status_order = ['assigned', 'in_production', 'material_prep', 'printing', 
+            # Progress calculation - removed 'assigned' and 'accepted_by_vendor' stages (not in state machine)
+            # Orders enter production after advance payment, starting with 'in_production'
+            status_order = ['in_production', 'material_prep', 'printing', 
                           'printing_completed', 'quality_check', 'packed_ready']
             current_status = o.status
             if current_status == 'in_production':
@@ -1794,11 +1795,12 @@ def view_vendor_document(vendor_id, doc_type):
 def get_verified_vendors():
     """
     GET /api/admin/verified-vendors
-    Get all verified vendors (only vendors with verification_status = 'verified' or 'approved')
+    Get all verified vendors (only vendors with verification_status = 'approved')
+    🔥 FIX: DB only uses 'approved', not 'verified' - updated for consistency
     """
     try:
         vendors = Vendor.query.filter(
-            Vendor.verification_status.in_(['verified', 'approved'])
+            Vendor.verification_status == 'approved'  # 🔥 FIX: DB uses 'approved', not 'verified'
         ).all()
         
         result = []
