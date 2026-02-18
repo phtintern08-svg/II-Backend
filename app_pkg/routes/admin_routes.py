@@ -317,8 +317,7 @@ def get_dashboard_stats():
                 'awaiting_advance_payment',
                 'in_production',
                 'assigned',
-                'vendor_assigned',
-                'accepted_by_vendor'
+                'vendor_assigned'
             ])
         ).count()
         
@@ -1501,7 +1500,7 @@ def get_production_orders():
     """
     try:
         production_statuses = [
-            'assigned', 'accepted_by_vendor', 'in_production', 'material_prep',
+            'assigned', 'in_production', 'material_prep',
             'printing', 'printing_completed', 'quality_check', 'packed_ready'
         ]
         
@@ -1515,8 +1514,8 @@ def get_production_orders():
             vendor = Vendor.query.get(o.selected_vendor_id)
             customer = Customer.query.get(o.customer_id)
             
-            # Progress calculation
-            status_order = ['assigned', 'accepted_by_vendor', 'material_prep', 'printing', 
+            # Progress calculation - removed 'accepted_by_vendor' stage
+            status_order = ['assigned', 'in_production', 'material_prep', 'printing', 
                           'printing_completed', 'quality_check', 'packed_ready']
             current_status = o.status
             if current_status == 'in_production':
@@ -2051,8 +2050,7 @@ def get_order_stats():
                 'awaiting_advance_payment',
                 'in_production',
                 'assigned',
-                'vendor_assigned',
-                'accepted_by_vendor'
+                'vendor_assigned'
             ])
         ).count()
         

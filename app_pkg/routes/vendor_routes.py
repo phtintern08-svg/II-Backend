@@ -706,7 +706,7 @@ def get_vendor_orders_filtered():
             query = query.filter_by(status='assigned')
         elif status == 'in_production':
             production_statuses = [
-                'accepted_by_vendor', 'in_production', 'material_prep',
+                'in_production', 'material_prep',
                 'printing', 'printing_completed', 'quality_check'
             ]
             query = query.filter(Order.status.in_(production_statuses))
@@ -721,8 +721,8 @@ def get_vendor_orders_filtered():
             
             # Map status to stage for in_production
             current_stage = None
-            if o.status == 'accepted_by_vendor':
-                current_stage = 'accepted'
+            if o.status == 'in_production':
+                current_stage = 'production'
             elif o.status == 'material_prep':
                 current_stage = 'material'
             elif o.status == 'printing':
@@ -771,7 +771,7 @@ def get_dashboard_stats():
         
         new_orders = Order.query.filter_by(selected_vendor_id=vendor_id, status='assigned').count()
         
-        production_statuses = ['accepted_by_vendor', 'material_prep', 'printing', 'printing_completed', 'quality_check']
+        production_statuses = ['in_production', 'material_prep', 'printing', 'printing_completed', 'quality_check']
         in_production = Order.query.filter(
             Order.selected_vendor_id == vendor_id,
             Order.status.in_(production_statuses)
@@ -918,8 +918,8 @@ def update_production_stage(order_id):
             return jsonify({"error": "Unauthorized"}), 403
         
         # Map frontend stage_id to DB status
+        # 🔥 REMOVED: 'accepted' stage - vendors must compulsorily produce, no acceptance stage
         status_map = {
-            'accepted': 'accepted_by_vendor',
             'material': 'material_prep',
             'printing': 'printing',
             'completed': 'printing_completed',
@@ -931,7 +931,6 @@ def update_production_stage(order_id):
         
         # Human-readable labels for notifications
         stage_labels = {
-            'accepted': 'Order Accepted',
             'material': 'Material Preparation',
             'printing': 'Printing In Progress',
             'completed': 'Printing Completed',
@@ -1031,7 +1030,7 @@ def move_to_production(order_id):
             vendor_id=int(vendor_id)
         ).first()
         if assignment:
-            assignment.status = 'accepted'
+            assignment.status = 'started'  # Changed from 'accepted' - vendor must compulsorily produce
             assignment.responded_at = datetime.utcnow()
         
         # Record status history
@@ -1055,61 +1054,7 @@ def move_to_production(order_id):
         return jsonify({"error": "Failed to move order to production"}), 500
 
 
-@bp.route('/orders/<int:order_id>/reject', methods=['POST'])
-@login_required
-@role_required(['vendor'])
-def reject_order(order_id):
-    """
-    POST /api/vendor/orders/<order_id>/reject
-    Reject an assigned order
-    """
-    try:
-        data = request.get_json()
-        reason = data.get('reason', 'No reason provided')
-        
-        # Handle ORD- prefix if present
-        actual_order_id = order_id
-        if isinstance(order_id, str) and order_id.startswith('ORD-'):
-            actual_order_id = int(order_id.replace('ORD-', ''))
-        
-        order = Order.query.get(actual_order_id)
-        if not order:
-            return jsonify({"error": "Order not found"}), 404
-        
-        if order.selected_vendor_id != request.user_id:
-            return jsonify({"error": "This order is not assigned to you"}), 403
-        
-        order.status = 'rejected_by_vendor'
-        order.selected_vendor_id = None
-        
-        # Update formal assignment record
-        assignment = VendorOrderAssignment.query.filter_by(
-            order_id=actual_order_id,
-            vendor_id=request.user_id
-        ).first()
-        if assignment:
-            assignment.status = 'rejected'
-            assignment.rejection_reason = reason
-            assignment.responded_at = datetime.utcnow()
-        
-        # Notify Admin
-        admin_notif = Notification(
-            user_id=1,
-            user_type='admin',
-            title='Order Rejected by Vendor',
-            message=f'Vendor has rejected order #{actual_order_id}. Reason: {reason}',
-            type='order'
-        )
-        db.session.add(admin_notif)
-        
-        db.session.commit()
-        
-        return jsonify({"message": "Order rejected successfully"}), 200
-        
-    except Exception as e:
-        db.session.rollback()
-        app_logger.exception(f"Reject order error: {e}")
-        return jsonify({"error": "Failed to reject order"}), 500
+# 🔥 REMOVED: Reject endpoint - vendors must compulsorily produce, no rejection allowed
 
 
 @bp.route('/update-location', methods=['POST'])
@@ -1197,7 +1142,7 @@ def get_order_stats():
         
         in_production_count = Order.query.filter(
             Order.selected_vendor_id == vendor_id,
-            Order.status.in_(['accepted_by_vendor', 'in_production', 'material_prep', 'printing', 'printing_completed', 'quality_check'])
+            Order.status.in_(['in_production', 'material_prep', 'printing', 'printing_completed', 'quality_check'])
         ).count()
         
         ready_count = Order.query.filter(

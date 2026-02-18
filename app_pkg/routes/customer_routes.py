@@ -453,7 +453,7 @@ def get_order_stats():
         in_progress_orders = Order.query.filter(
             Order.customer_id == customer_id,
             Order.status.in_(['sample_requested', 'awaiting_advance_payment', 'in_production', 
-                             'assigned', 'vendor_assigned', 'accepted_by_vendor', 'awaiting_dispatch',
+                             'assigned', 'vendor_assigned', 'awaiting_dispatch',
                              'ready_for_dispatch', 'awaiting_delivery', 'reached_vendor', 'picked_up',
                              'out_for_delivery', 'packed_ready', 'dispatched'])
         ).count()

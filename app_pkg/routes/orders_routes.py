@@ -1089,7 +1089,7 @@ def get_order_tracking(order_id):
             {'id': 'sample_requested', 'label': 'Sample Stage', 'icon': 'package'},
             {'id': 'awaiting_advance_payment', 'label': 'Payment Received', 'icon': 'credit-card'},
             {'id': 'assigned', 'label': 'Vendor Assigned', 'icon': 'user-check'},
-            {'id': 'accepted_by_vendor', 'label': 'Accepted by Vendor', 'icon': 'check-circle'},
+            # 🔥 REMOVED: 'accepted_by_vendor' status - vendors must compulsorily produce, no acceptance stage
             {'id': 'material_prep', 'label': 'Material Preparation', 'icon': 'scissors'},
             {'id': 'printing', 'label': 'Printing', 'icon': 'printer'},
             {'id': 'printing_completed', 'label': 'Printing Completed', 'icon': 'check-square'},
