@@ -838,7 +838,7 @@ def assign_order_to_vendor(order_id):
         data = request.get_json()
         vendor_id = data.get('vendor_id')
         quotation_price = data.get('quotation_price_per_piece')
-        sample_cost = data.get('sample_cost', 500.0)
+        sample_cost = data.get('sample_cost')  # 🔥 FIX: Remove default - only update if explicitly provided
         
         if not vendor_id or not quotation_price:
             return jsonify({"error": "vendor_id and quotation_price_per_piece are required"}), 400
@@ -851,11 +851,33 @@ def assign_order_to_vendor(order_id):
         if not vendor:
             return jsonify({"error": "Vendor not found"}), 404
         
+        # 🔥 SECURITY: Validate quantity is not None before calculation
+        if order.quantity is None or order.quantity <= 0:
+            app_logger.error(f"Invalid quantity for order {order_id}: {order.quantity}")
+            return jsonify({"error": "Order quantity is invalid. Cannot calculate total price."}), 400
+        
         # Assign vendor to order
         order.selected_vendor_id = vendor_id
-        order.quotation_price_per_piece = float(quotation_price)
-        order.quotation_total_price = float(quotation_price) * order.quantity
-        order.sample_cost = float(sample_cost)
+        new_price = float(quotation_price)
+        order.quotation_price_per_piece = new_price
+        order.quotation_total_price = new_price * int(order.quantity)
+        
+        # 🔥 FIX: Only update sample_cost if explicitly provided (should not overwrite existing value)
+        # Sample cost is determined at order creation time and should not be changed during vendor assignment
+        if sample_cost is not None:
+            app_logger.warning(f"Sample cost being updated for order {order_id}: {order.sample_cost} -> {sample_cost}")
+            order.sample_cost = float(sample_cost)
+        # If not provided, keep existing sample_cost from order creation
+        
+        # 🔥 LOGGING: Log assignment details for debugging
+        app_logger.info(
+            f"Assigning vendor: Order={order_id}, "
+            f"Vendor={vendor_id}, "
+            f"Qty={order.quantity}, "
+            f"PricePerPiece={order.quotation_price_per_piece}, "
+            f"Total={order.quotation_total_price}, "
+            f"SampleCost={order.sample_cost}"
+        )
         # 🔥 FIX: Set status to 'quotation_sent_to_customer' to match state machine
         # Vendor will see order only after customer pays advance (status becomes 'in_production')
         # This matches the state machine: pending_admin_review → quotation_sent_to_customer
@@ -890,7 +912,7 @@ def assign_order_to_vendor(order_id):
             action_type="admin_action",
             entity_type="order",
             entity_id=order_id,
-            details=f"Quotation price: ₹{quotation_price} per piece, Sample cost: ₹{sample_cost}"
+            details=f"Quotation price: ₹{quotation_price} per piece, Quantity: {order.quantity}, Total: ₹{order.quotation_total_price}, Sample cost: ₹{order.sample_cost}"
         )
         
         return jsonify({
