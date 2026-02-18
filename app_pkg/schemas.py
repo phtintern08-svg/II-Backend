@@ -83,6 +83,41 @@ class OrderSchema(ma.SQLAlchemyAutoSchema):
     vendor = fields.Method("get_vendor")
     payments = fields.Method("get_payments")
 
+    def get_vendor(self, obj):
+        """Get vendor details if order is assigned to a vendor"""
+        if obj.selected_vendor_id:
+            vendor = Vendor.query.get(obj.selected_vendor_id)
+            if vendor:
+                return VendorSchema(only=('id', 'business_name', 'username', 'phone')).dump(vendor)
+        return None
+
+    def get_payments(self, obj):
+        """Manually fetch payments from both admin and customer Payment models (cross-schema)"""
+        # 🔥 FIX: Use app_pkg.models, not app.models (package name is app_pkg, not app)
+        from app_pkg.models import Payment, CustomerPayment
+        admin_payments = Payment.query.filter_by(order_id=obj.id).all()
+        customer_payments = CustomerPayment.query.filter_by(order_id=obj.id).all()
+        
+        result = []
+        if admin_payments:
+            result.extend(PaymentSchema(many=True).dump(admin_payments))
+        if customer_payments:
+            # Convert customer payments to dict format
+            for p in customer_payments:
+                result.append({
+                    'id': p.id,
+                    'type': 'internal',
+                    'payer_type': p.payer_type,
+                    'payer_id': p.payer_id,
+                    'receiver_type': p.receiver_type,
+                    'receiver_id': p.receiver_id,
+                    'payment_type': p.payment_type,
+                    'amount': p.amount,
+                    'status': p.status,
+                    'timestamp': p.timestamp.isoformat() if p.timestamp else None
+                })
+        return result
+
 
 class VendorOrderSchema(ma.SQLAlchemyAutoSchema):
     """
