@@ -847,15 +847,17 @@ def assign_order_to_vendor(order_id):
         order.quotation_price_per_piece = float(quotation_price)
         order.quotation_total_price = float(quotation_price) * order.quantity
         order.sample_cost = float(sample_cost)
-        # 🔥 FIX: Set status to 'assigned' so vendor dashboard can see it
-        # Vendor cannot reject, so order goes directly to 'assigned' status
-        order.status = 'assigned'
+        # 🔥 FIX: Set status to 'quotation_sent_to_customer' to match state machine
+        # Vendor will see order only after customer pays advance (status becomes 'in_production')
+        # This matches the state machine: pending_admin_review → quotation_sent_to_customer
+        order.status = 'quotation_sent_to_customer'
         
         # Create vendor order assignment record
+        # 🔥 FIX: Since vendor must compulsorily produce, status should be 'assigned' not 'pending'
         assignment = VendorOrderAssignment(
             order_id=order_id,
             vendor_id=vendor_id,
-            status='pending',
+            status='assigned',  # Changed from 'pending' - vendor must compulsorily produce
             assigned_at=datetime.utcnow()
         )
         db.session.add(assignment)

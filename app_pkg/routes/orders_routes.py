@@ -1088,7 +1088,7 @@ def get_order_tracking(order_id):
             {'id': 'quotation_sent_to_customer', 'label': 'Quotation Sent', 'icon': 'file-text'},
             {'id': 'sample_requested', 'label': 'Sample Stage', 'icon': 'package'},
             {'id': 'awaiting_advance_payment', 'label': 'Payment Received', 'icon': 'credit-card'},
-            {'id': 'assigned', 'label': 'Vendor Assigned', 'icon': 'user-check'},
+            # 🔥 REMOVED: 'assigned' status - doesn't exist in state machine
             # 🔥 REMOVED: 'accepted_by_vendor' status - vendors must compulsorily produce, no acceptance stage
             {'id': 'material_prep', 'label': 'Material Preparation', 'icon': 'scissors'},
             {'id': 'printing', 'label': 'Printing', 'icon': 'printer'},

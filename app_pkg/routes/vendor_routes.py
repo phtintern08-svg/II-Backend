@@ -703,7 +703,13 @@ def get_vendor_orders_filtered():
         query = Order.query.filter_by(selected_vendor_id=request.user_id)
         
         if status == 'new':
-            query = query.filter_by(status='assigned')
+            # 🔥 FIX: 'new' orders are those in production (after advance payment)
+            # Vendors only see orders once production starts, not when assigned
+            production_statuses = [
+                'in_production', 'material_prep',
+                'printing', 'printing_completed', 'quality_check'
+            ]
+            query = query.filter(Order.status.in_(production_statuses))
         elif status == 'in_production':
             production_statuses = [
                 'in_production', 'material_prep',
@@ -769,7 +775,11 @@ def get_dashboard_stats():
     try:
         vendor_id = request.user_id
         
-        new_orders = Order.query.filter_by(selected_vendor_id=vendor_id, status='assigned').count()
+        # 🔥 FIX: New orders are those in production (after advance payment)
+        new_orders = Order.query.filter(
+            Order.selected_vendor_id == vendor_id,
+            Order.status.in_(['in_production', 'material_prep', 'printing', 'printing_completed', 'quality_check'])
+        ).count()
         
         production_statuses = ['in_production', 'material_prep', 'printing', 'printing_completed', 'quality_check']
         in_production = Order.query.filter(
@@ -1135,9 +1145,10 @@ def get_order_stats():
     try:
         vendor_id = request.user_id
         
+        # 🔥 FIX: New orders are those in production (after advance payment)
         new_orders_count = Order.query.filter(
             Order.selected_vendor_id == vendor_id,
-            Order.status.in_(['assigned'])
+            Order.status.in_(['in_production', 'material_prep', 'printing', 'printing_completed', 'quality_check'])
         ).count()
         
         in_production_count = Order.query.filter(
@@ -1227,12 +1238,21 @@ def track_delivery(delivery_id):
 def get_new_orders():
     """
     GET /api/vendor/new-orders
-    Get new orders assigned to vendor
+    Get new orders assigned to vendor (only after advance payment - in production)
+    🔥 Vendors must compulsorily produce, so they only see orders once production starts
     """
     try:
-        orders = Order.query.filter_by(
-            selected_vendor_id=request.user_id,
-            status='assigned'
+        # 🔥 FIX: Vendor should only see orders once they're in production (after advance payment)
+        # Not when status='assigned' - that happens before customer pays advance
+        orders = Order.query.filter(
+            Order.selected_vendor_id == request.user_id,
+            Order.status.in_([
+                'in_production',
+                'material_prep',
+                'printing',
+                'printing_completed',
+                'quality_check'
+            ])
         ).all()
         
         result = []
