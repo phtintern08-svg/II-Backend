@@ -801,8 +801,11 @@ def get_all_orders():
     """
     GET /api/admin/orders
     Get all orders with optional filters
+    🔥 ADMIN: Returns FULL order data including bulk details, quantities, and financials
     """
     try:
+        from app_pkg.schemas import orders_schema
+        
         status = request.args.get('status')
         query = Order.query
         
@@ -811,15 +814,8 @@ def get_all_orders():
         
         orders = query.order_by(Order.created_at.desc()).all()
         
-        orders_data = [{
-            "id": order.id,
-            "customer_id": order.customer_id,
-            "selected_vendor_id": order.selected_vendor_id,
-            "product_type": order.product_type,
-            "quantity": order.quantity,
-            "status": order.status,
-            "created_at": order.created_at.isoformat() if order.created_at else None
-        } for order in orders]
+        # 🔥 ADMIN: Use full schema - admins see everything (sample + bulk)
+        orders_data = orders_schema.dump(orders)
         
         return jsonify({
             "orders": orders_data,

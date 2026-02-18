@@ -15,6 +15,7 @@ from app_pkg.auth import login_required, role_required
 from app_pkg.file_upload import validate_and_save_file, delete_file, get_file_path_from_db
 from app_pkg.logger_config import app_logger
 from app_pkg.activity_logger import log_activity_from_request
+from app_pkg.schemas import vendor_orders_schema  # 🔥 Filtered schema for vendors (sample fields only)
 
 # Create blueprint
 bp = Blueprint('vendor', __name__, url_prefix='/api/vendor')
@@ -253,28 +254,15 @@ def submit_quotation():
 def get_vendor_orders():
     """
     GET /api/vendor/orders/all
-    Get all orders assigned to this vendor (without filtering)
+    Get all orders assigned to this vendor (SAMPLE FIELDS ONLY - no bulk details)
+    🔥 SECURITY: Vendors should NOT see quantity, bulk pricing, or financial details
     """
     try:
         # Get orders assigned to this vendor
         vendor_orders = Order.query.filter_by(selected_vendor_id=request.user_id).all()
         
-        # Also get from VendorOrderAssignment for additional metadata
-        assignments = VendorOrderAssignment.query.filter_by(vendor_id=request.user_id).all()
-        assignment_map = {a.order_id: a for a in assignments}
-        
-        orders_data = []
-        for order in vendor_orders:
-            assignment = assignment_map.get(order.id)
-            orders_data.append({
-                "id": order.id,
-                "customer_id": order.customer_id,
-                "product_type": order.product_type,
-                "quantity": order.quantity,
-                "status": order.status,
-                "assigned_at": assignment.assigned_at.isoformat() if assignment and assignment.assigned_at else None,
-                "created_at": order.created_at.isoformat() if order.created_at else None
-            })
+        # 🔥 SECURITY: Use filtered schema - only sample fields, no bulk details
+        orders_data = vendor_orders_schema.dump(vendor_orders)
         
         return jsonify({
             "orders": orders_data,
@@ -729,9 +717,15 @@ def get_vendor_orders_filtered():
         
         orders = query.order_by(Order.created_at.desc()).all()
         
+        # 🔥 SECURITY: Use filtered schema - vendors should NOT see quantity or bulk details
+        # Get base filtered data (sample fields only)
+        filtered_orders = vendor_orders_schema.dump(orders)
+        
+        # Map to frontend format while maintaining security (no quantity field)
         result = []
-        for o in orders:
+        for idx, o in enumerate(orders):
             customer = Customer.query.get(o.customer_id)
+            filtered_data = filtered_orders[idx]
             
             # Map status to stage for in_production
             current_stage = None
@@ -748,30 +742,30 @@ def get_vendor_orders_filtered():
             elif o.status == 'packed_ready':
                 current_stage = 'packed'
             
-            # 🔥 FIX: Return JSON structure that matches frontend expectations exactly
+            # 🔥 SECURITY: Build response from filtered data - NO quantity field
             order_data = {
                 "id": f"ORD-{o.id:03d}" if isinstance(o.id, int) else o.id,
-                "db_id": o.id,
+                "db_id": filtered_data.get("id"),
                 "customerName": customer.username if customer else "Unknown",
-                "productType": o.product_type,  # Frontend expects productType
-                "quantity": o.quantity,
-                "color": o.color or None,
-                "size": o.sample_size or None,
-                "deadline": o.delivery_date.isoformat() if o.delivery_date else None,  # Frontend expects deadline
-                "assignedDate": o.created_at.isoformat() if o.created_at else None,  # Frontend expects assignedDate
-                "status": o.status,
+                "productType": filtered_data.get("product_type"),  # From filtered schema
+                # 🔥 REMOVED: "quantity": o.quantity,  # Vendors should NOT see bulk quantity
+                "color": filtered_data.get("color"),
+                "size": filtered_data.get("sample_size"),  # Only sample size, not bulk sizes
+                "deadline": filtered_data.get("delivery_date"),  # ISO format from schema
+                "assignedDate": filtered_data.get("created_at"),  # ISO format from schema
+                "status": filtered_data.get("status"),
                 "customization": {  # Frontend expects customization object
-                    "fabric": o.fabric or None,
-                    "printType": o.print_type or None,
-                    "neckType": o.neck_type or None
+                    "fabric": filtered_data.get("fabric"),
+                    "printType": filtered_data.get("print_type"),
+                    "neckType": filtered_data.get("neck_type")
                 },
-                "specialInstructions": o.feedback_comment or None,  # Frontend expects specialInstructions
-                "address": f"{o.address_line1 or ''}, {o.city or ''}, {o.pincode or ''}".strip(', ') if o.address_line1 else None
+                "specialInstructions": filtered_data.get("feedback_comment"),
+                "address": f"{filtered_data.get('address_line1') or ''}, {filtered_data.get('city') or ''}, {filtered_data.get('pincode') or ''}".strip(', ') if filtered_data.get('address_line1') else None
             }
             
             if current_stage:
                 order_data["currentStage"] = current_stage
-                order_data["notes"] = o.feedback_comment or ""
+                order_data["notes"] = filtered_data.get("feedback_comment") or ""
             
             result.append(order_data)
         
@@ -1234,7 +1228,11 @@ def track_delivery(delivery_id):
         vendor_id = order.selected_vendor_id if order else None
         vendor = Vendor.query.get(vendor_id) if vendor_id else None
         
-        return jsonify({
+        # 🔥 SECURITY: Check user role - vendors should NOT see quantity
+        user_role = getattr(request, 'role', None)
+        show_quantity = user_role != 'vendor'  # Only admin and customer see quantity
+        
+        response_data = {
             "delivery_id": delivery.id,
             "order_id": delivery.order_id,
             "status": delivery.status,
@@ -1255,12 +1253,17 @@ def track_delivery(delivery_id):
                 "address": vendor.address if vendor else None
             },
             "product": {
-                "type": order.category if order else None,
-                "quantity": order.quantity if order else None
+                "type": order.category if order else None
             },
             "assigned_at": delivery.assigned_at.isoformat() if delivery.assigned_at else None,
             "reached_vendor_at": delivery.reached_vendor_at.isoformat() if delivery.reached_vendor_at else None
-        }), 200
+        }
+        
+        # Only include quantity for admin and customer, not vendor
+        if show_quantity and order:
+            response_data["product"]["quantity"] = order.quantity
+        
+        return jsonify(response_data), 200
         
     except Exception as e:
         app_logger.exception(f"Track delivery error: {e}")
@@ -1293,26 +1296,31 @@ def get_new_orders():
             ])
         ).order_by(Order.created_at.desc()).all()
         
+        # 🔥 SECURITY: Use filtered schema - vendors should NOT see quantity or bulk details
+        filtered_orders = vendor_orders_schema.dump(orders)
+        
         result = []
-        for o in orders:
+        for idx, o in enumerate(orders):
             customer = Customer.query.get(o.customer_id)
+            filtered_data = filtered_orders[idx]
+            
             result.append({
                 "id": f"ORD-{o.id:03d}" if isinstance(o.id, int) else o.id,
-                "db_id": o.id,
+                "db_id": filtered_data.get("id"),
                 "customerName": customer.username if customer else "Unknown",
-                "productType": o.product_type,  # Frontend expects productType
-                "color": o.color or None,
-                "size": o.sample_size or None,
-                "quantity": o.quantity,
+                "productType": filtered_data.get("product_type"),  # From filtered schema
+                "color": filtered_data.get("color"),
+                "size": filtered_data.get("sample_size"),  # Only sample size, not bulk
+                # 🔥 REMOVED: "quantity": o.quantity,  # Vendors should NOT see bulk quantity
                 "customization": {  # Frontend expects customization object
-                    "printType": o.print_type or None,
-                    "neckType": o.neck_type or None,
-                    "fabric": o.fabric or None
+                    "printType": filtered_data.get("print_type"),
+                    "neckType": filtered_data.get("neck_type"),
+                    "fabric": filtered_data.get("fabric")
                 },
-                "deadline": o.delivery_date.isoformat() if o.delivery_date else None,  # Frontend expects deadline
-                "assignedDate": o.created_at.isoformat() if o.created_at else None,  # Frontend expects assignedDate
-                "specialInstructions": o.feedback_comment or None,  # Frontend expects specialInstructions
-                "address": f"{o.address_line1 or ''}, {o.city or ''}, {o.pincode or ''}".strip(', ') if o.address_line1 else None
+                "deadline": filtered_data.get("delivery_date"),  # ISO format from schema
+                "assignedDate": filtered_data.get("created_at"),  # ISO format from schema
+                "specialInstructions": filtered_data.get("feedback_comment"),
+                "address": f"{filtered_data.get('address_line1') or ''}, {filtered_data.get('city') or ''}, {filtered_data.get('pincode') or ''}".strip(', ') if filtered_data.get('address_line1') else None
             })
         
         return jsonify(result), 200

@@ -83,39 +83,27 @@ class OrderSchema(ma.SQLAlchemyAutoSchema):
     vendor = fields.Method("get_vendor")
     payments = fields.Method("get_payments")
 
-    def get_vendor(self, obj):
-        if obj.selected_vendor_id:
-            vendor = Vendor.query.get(obj.selected_vendor_id)
-            if vendor:
-                return VendorSchema(only=('id', 'business_name', 'username', 'phone')).dump(vendor)
-        return None
 
-    def get_payments(self, obj):
-        """Manually fetch payments from both admin and customer Payment models (cross-schema)"""
-        # 🔥 FIX: Use app_pkg.models, not app.models (package name is app_pkg, not app)
-        from app_pkg.models import Payment, CustomerPayment
-        admin_payments = Payment.query.filter_by(order_id=obj.id).all()
-        customer_payments = CustomerPayment.query.filter_by(order_id=obj.id).all()
-        
-        result = []
-        if admin_payments:
-            result.extend(PaymentSchema(many=True).dump(admin_payments))
-        if customer_payments:
-            # Convert customer payments to dict format
-            for p in customer_payments:
-                result.append({
-                    'id': p.id,
-                    'type': 'internal',
-                    'payer_type': p.payer_type,
-                    'payer_id': p.payer_id,
-                    'receiver_type': p.receiver_type,
-                    'receiver_id': p.receiver_id,
-                    'payment_type': p.payment_type,
-                    'amount': p.amount,
-                    'status': p.status,
-                    'timestamp': p.timestamp.isoformat() if p.timestamp else None
-                })
-        return result
+class VendorOrderSchema(ma.SQLAlchemyAutoSchema):
+    """
+    Limited schema for vendors - only includes sample fields, excludes bulk order details
+    Vendors should NOT see: quantity, bulk pricing, size breakdown, financials
+    """
+    class Meta:
+        model = Order
+        load_instance = True
+        # Only include sample-related fields
+        fields = (
+            'id', 'customer_id', 'product_type', 'category', 'neck_type', 
+            'color', 'fabric', 'print_type', 'sample_size', 'sample_cost',
+            'delivery_date', 'status', 'created_at', 'address_line1', 
+            'address_line2', 'city', 'state', 'pincode', 'country',
+            'feedback_comment'  # Keep as specialInstructions
+        )
+    # 🔥 FIX: Ensure delivery_date is serialized as Date with proper format
+    delivery_date = fields.Date(format="%Y-%m-%d")
+    customer = ma.Nested(CustomerSchema, only=('id', 'username', 'email', 'phone'))
+    # 🔥 SECURITY: No vendor or payments fields - vendors should NOT see financial details
 
 
 class CategorySchema(ma.SQLAlchemyAutoSchema):
@@ -179,6 +167,10 @@ payments_schema = PaymentSchema(many=True)
 
 order_schema = OrderSchema()
 orders_schema = OrderSchema(many=True)
+
+# Vendor-specific schema (sample fields only)
+vendor_order_schema = VendorOrderSchema()
+vendor_orders_schema = VendorOrderSchema(many=True)
 
 category_schema = CategorySchema()
 categories_schema = CategorySchema(many=True)

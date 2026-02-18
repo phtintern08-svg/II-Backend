@@ -8,7 +8,7 @@ from datetime import datetime
 from app_pkg.models import db, Order, OrderStatusHistory, Customer, Vendor, VendorOrderAssignment, Payment, CustomerPayment, Admin
 from app_pkg.auth import login_required, admin_required, role_required
 from app_pkg.validation import validate_request_data, OrderSchema
-from app_pkg.schemas import order_schema, orders_schema
+from app_pkg.schemas import order_schema, orders_schema, vendor_orders_schema
 from app_pkg.logger_config import app_logger
 from app_pkg.activity_logger import log_activity_from_request
 
@@ -73,12 +73,20 @@ def get_orders():
         else:
             return jsonify({"error": "Unauthorized"}), 403
         
-        # Use schema for serialization
+        # 🔥 SECURITY: Role-based response filtering
         if role == 'admin':
+            # Admin: Full schema - sees everything (sample + bulk)
             return orders_schema.jsonify(orders), 200
-        else:
-            # For customer/vendor, return simplified format
-            orders_data = [order_schema.dump(order) for order in orders]
+        elif role == 'customer':
+            # Customer: Full schema - sees their own orders with all details
+            orders_data = orders_schema.dump(orders)
+            return jsonify({
+                "orders": orders_data,
+                "count": len(orders_data)
+            }), 200
+        elif role == 'vendor':
+            # Vendor: Filtered schema - ONLY sample fields, NO bulk details
+            orders_data = vendor_orders_schema.dump(orders)
             return jsonify({
                 "orders": orders_data,
                 "count": len(orders_data)
