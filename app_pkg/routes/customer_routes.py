@@ -290,20 +290,11 @@ def get_customer_orders():
     try:
         orders = Order.query.filter_by(customer_id=request.user_id).order_by(Order.created_at.desc()).all()
         
-        # 🔥 FIX: Return all fields that frontend orders.js expects
-        # Frontend needs: id, status, product_type, category, fabric, quantity, sample_cost, delivery_date
-        # See: public_html/apparels.impromptuindian.com/customer/js/orders.js renderOrders() function
-        orders_data = [{
-            "id": order.id,
-            "status": order.status,
-            "product_type": order.product_type,
-            "category": order.category,
-            "fabric": order.fabric,
-            "quantity": order.quantity,
-            "sample_cost": float(order.sample_cost) if order.sample_cost else 0,
-            "delivery_date": order.delivery_date.isoformat() if order.delivery_date else None,  # Serialize Date as ISO string
-            "created_at": order.created_at.isoformat() if order.created_at else None
-        } for order in orders]
+        # 🔥 FIX: Use full schema to return ALL order fields (not just limited subset)
+        # This ensures frontend orders.js can display: neck_type, color, print_type, sample_size,
+        # bulk_quantity, size_distribution, address fields, quotation_total_price, etc.
+        from app_pkg.schemas import orders_schema
+        orders_data = orders_schema.dump(orders)
         
         return jsonify({
             "orders": orders_data,

@@ -350,10 +350,14 @@ def create_order():
             # Payment received - automatically move to pending_admin_review (admin needs to assign vendor)
             initial_status = 'pending_admin_review'
 
-        # 🔥 ARCHITECTURE FIX: At creation, bulk is INACTIVE (is_bulk_order=False)
-        # So always use quantity (sample quantity) for initial quotation_total_price
-        # Bulk quantity will be used only after sample approval when is_bulk_order becomes True
-        effective_quantity = quantity  # Always use sample quantity initially
+        # 🔥 FIX: If bulk_quantity exists, use it as the main quantity
+        # This ensures UI shows correct quantity and admin logic works correctly
+        if bulk_quantity:
+            effective_quantity = bulk_quantity
+            order_quantity = bulk_quantity
+        else:
+            effective_quantity = quantity
+            order_quantity = quantity
         
         # Store original validated values (not normalized) to preserve canonical representation
         # Normalization is only for catalog lookup, not storage
@@ -365,7 +369,7 @@ def create_order():
             color=validated_data.get('color'),
             fabric=validated_data.get('fabric'),  # Original value, not normalized
             print_type=validated_data.get('print_type'),
-            quantity=quantity,  # Sample quantity (1) or total if not bulk
+            quantity=order_quantity,  # Use bulk_quantity if exists, otherwise sample quantity
             price_per_piece_offered=price_per_piece_offered,
             quotation_price_per_piece=quotation_price,  # Set from catalog final_price
             quotation_total_price=quotation_price * effective_quantity if quotation_price else None,  # Use bulk_quantity for bulk orders
