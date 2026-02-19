@@ -18,7 +18,7 @@ from flask_limiter import Limiter
 from flask_limiter.util import get_remote_address
 
 # Create blueprint
-bp = Blueprint('rider', __name__, url_prefix='/rider')
+bp = Blueprint('rider', __name__, url_prefix='/api/rider')
 
 # Custom key function for rate limiting by rider ID
 def get_rider_id_for_rate_limit():
