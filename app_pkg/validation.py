@@ -154,6 +154,10 @@ class OrderSchema(Schema):
     sample_cost = fields.Decimal(validate=validate.Range(min=0), load_default=0.0)
     sample_size = fields.Str(validate=Length(max=10), allow_none=True)
     
+    # Payment details (optional - stored for reference but not used in order validation)
+    payment_method = fields.Str(validate=Length(max=50), allow_none=True)
+    payment_details = fields.Str(validate=Length(max=1000), allow_none=True)
+    
     # 🔥 BULK ORDER FIELDS: Store bulk quantity and size distribution
     # For sample-first flow: quantity=1 (sample), bulk_quantity=200 (production)
     bulk_quantity = fields.Int(validate=validate.Range(min=1, max=10000), allow_none=True)
