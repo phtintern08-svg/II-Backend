@@ -3,7 +3,7 @@ Input Validation and Sanitization Utilities
 Provides centralized input validation and HTML sanitization
 """
 import re
-from marshmallow import Schema, fields, validate, ValidationError, pre_load
+from marshmallow import Schema, fields, validate, ValidationError, pre_load, validates_schema
 from marshmallow.validate import Length, Email, Regexp
 import bleach
 from config import Config
@@ -155,6 +155,7 @@ class OrderSchema(Schema):
     sample_size = fields.Str(validate=Length(max=10), allow_none=True)
     
     # 🔥 BULK ORDER FIELDS: Store bulk quantity and size distribution
+    # For sample-first flow: quantity=1 (sample), bulk_quantity=200 (production)
     bulk_quantity = fields.Int(validate=validate.Range(min=1, max=10000), allow_none=True)
     size_distribution = fields.Dict(allow_none=True)  # JSON: {"S": 50, "M": 50, "L": 50, "XL": 25, "XXL": 25}
     is_bulk_order = fields.Bool(allow_none=True)
@@ -167,6 +168,45 @@ class OrderSchema(Schema):
                 if isinstance(value, str) and key not in ['transaction_id']:  # Don't sanitize transaction IDs
                     data[key] = sanitize_text(value)
         return data
+    
+    @validates_schema
+    def validate_bulk_order_logic(self, data, **kwargs):
+        """
+        🔥 SAMPLE-FIRST FLOW VALIDATION:
+        - quantity=1 is allowed (sample order)
+        - If is_bulk_order=True, bulk_quantity must be provided and >= 10
+        - If bulk_quantity is provided (even if is_bulk_order=False), it must be >= 10
+        - This allows storing bulk intent (bulk_quantity) while keeping is_bulk_order=False
+        """
+        is_bulk = data.get('is_bulk_order', False)
+        bulk_qty = data.get('bulk_quantity')
+        quantity = data.get('quantity', 1)
+        
+        # 🔥 ARCHITECTURE: If is_bulk_order is True, bulk_quantity is required and must be >= 10
+        if is_bulk:
+            if bulk_qty is None:
+                raise ValidationError("bulk_quantity is required when is_bulk_order is True", field_name='bulk_quantity')
+            if bulk_qty < 10:
+                raise ValidationError("bulk_quantity must be at least 10 for bulk orders", field_name='bulk_quantity')
+        
+        # 🔥 ARCHITECTURE: If bulk_quantity is provided (even if is_bulk_order=False - bulk intent),
+        # validate it's >= 10. This allows storing bulk intent while keeping order inactive.
+        if bulk_qty is not None:
+            if bulk_qty < 10:
+                raise ValidationError("bulk_quantity must be at least 10", field_name='bulk_quantity')
+        
+        # Validate size_distribution if provided (optional but must match bulk_quantity if provided)
+        # This applies whether is_bulk_order is True or False (bulk intent validation)
+        if bulk_qty:
+            size_dist = data.get('size_distribution')
+            if size_dist and isinstance(size_dist, dict):
+                # Verify size distribution sum matches bulk_quantity
+                total_from_dist = sum(size_dist.values())
+                if total_from_dist != bulk_qty:
+                    raise ValidationError(
+                        f"size_distribution total ({total_from_dist}) must match bulk_quantity ({bulk_qty})",
+                        field_name='size_distribution'
+                    )
 
 
 class ProfileUpdateSchema(Schema):

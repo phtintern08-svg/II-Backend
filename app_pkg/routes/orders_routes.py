@@ -150,9 +150,16 @@ def create_order():
         
         # Validate input data
         data = request.get_json() or {}
+        
+        # 🔥 DEBUG: Log incoming data for troubleshooting validation errors
+        app_logger.info(f"Order creation request from customer {customer_id}: {list(data.keys())}")
+        if data.get('is_bulk_order'):
+            app_logger.info(f"Bulk order detected: quantity={data.get('quantity')}, bulk_quantity={data.get('bulk_quantity')}, is_bulk_order={data.get('is_bulk_order')}")
+        
         validated_data, errors = validate_request_data(OrderSchema, data)
         
         if errors:
+            app_logger.warning(f"Order validation failed for customer {customer_id}: {errors}")
             return jsonify({"error": "Validation failed", "details": errors}), 400
         
         # Extract validated fields
@@ -167,9 +174,12 @@ def create_order():
         price_per_piece_offered = validated_data['price_per_piece']
         
         # 🔥 BULK ORDER FIELDS: Extract bulk order data if provided
+        # 🔥 ARCHITECTURE FIX: Store bulk intent but keep it INACTIVE until sample approval
+        # Bulk details are stored but is_bulk_order is ALWAYS False initially
         bulk_quantity = validated_data.get('bulk_quantity')
         size_distribution = validated_data.get('size_distribution')  # JSON dict: {"S": 50, "M": 50, ...}
-        is_bulk_order = validated_data.get('is_bulk_order', False)
+        # 🔥 CRITICAL: Always set is_bulk_order=False at creation (bulk is just intent, not active)
+        is_bulk_order = False  # Bulk becomes active only after sample approval
         
         # 🔥 FIX: Parse delivery_date string to Date object
         from datetime import date
@@ -342,9 +352,10 @@ def create_order():
             # Payment received - automatically move to pending_admin_review (admin needs to assign vendor)
             initial_status = 'pending_admin_review'
 
-        # 🔥 BULK ORDER LOGIC: For bulk orders, quantity=1 (sample), use bulk_quantity for calculations
-        # For sample orders, quantity=1 and bulk_quantity=None
-        effective_quantity = bulk_quantity if is_bulk_order and bulk_quantity else quantity
+        # 🔥 ARCHITECTURE FIX: At creation, bulk is INACTIVE (is_bulk_order=False)
+        # So always use quantity (sample quantity) for initial quotation_total_price
+        # Bulk quantity will be used only after sample approval when is_bulk_order becomes True
+        effective_quantity = quantity  # Always use sample quantity initially
         
         # Store original validated values (not normalized) to preserve canonical representation
         # Normalization is only for catalog lookup, not storage
@@ -821,6 +832,34 @@ def customer_sample_response(order_id):
             # 🔥 PRODUCTION SAFETY: Import Decimal (was missing)
             from decimal import Decimal
             
+            # 🔥 ARCHITECTURE FIX: Check if customer wants to proceed with bulk order
+            proceed_with_bulk = data.get('proceed_with_bulk', False)
+            
+            # If customer wants bulk AND bulk details exist, activate bulk order
+            if proceed_with_bulk and order.bulk_quantity:
+                app_logger.info(
+                    f"Activating bulk order for order {order_id}: "
+                    f"bulk_quantity={order.bulk_quantity}, size_distribution={order.size_distribution}"
+                )
+                
+                # Activate bulk order
+                order.is_bulk_order = True
+                
+                # Recalculate quotation_total_price using bulk_quantity
+                if order.quotation_price_per_piece:
+                    order.quotation_total_price = float(order.quotation_price_per_piece) * int(order.bulk_quantity)
+                    app_logger.info(
+                        f"Recalculated quotation_total_price for bulk order {order_id}: "
+                        f"{order.quotation_price_per_piece} * {order.bulk_quantity} = {order.quotation_total_price}"
+                    )
+            else:
+                # Customer approved sample but NOT proceeding with bulk
+                # Keep is_bulk_order=False (bulk intent remains inactive)
+                app_logger.info(
+                    f"Sample approved for order {order_id} but bulk not activated: "
+                    f"proceed_with_bulk={proceed_with_bulk}, bulk_quantity={order.bulk_quantity}"
+                )
+            
             order.status = 'awaiting_advance_payment'
             db.session.commit()
             
@@ -831,12 +870,14 @@ def customer_sample_response(order_id):
                 action_type="sample_response",
                 entity_type="order",
                 entity_id=order_id,
-                details=f"Advance amount: ₹{advance_amount}"
+                details=f"Advance amount: ₹{advance_amount}, Bulk activated: {order.is_bulk_order}"
             )
             
             return jsonify({
                 "message": "Sample approved, awaiting 50% advance payment",
-                "advance_amount": advance_amount
+                "advance_amount": advance_amount,
+                "bulk_activated": order.is_bulk_order,
+                "bulk_quantity": order.bulk_quantity if order.is_bulk_order else None
             }), 200
         else:
             return jsonify({"error": "Invalid action"}), 400
