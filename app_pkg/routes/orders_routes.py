@@ -174,12 +174,10 @@ def create_order():
         price_per_piece_offered = validated_data['price_per_piece']
         
         # 🔥 BULK ORDER FIELDS: Extract bulk order data if provided
-        # 🔥 ARCHITECTURE FIX: Store bulk intent but keep it INACTIVE until sample approval
-        # Bulk details are stored but is_bulk_order is ALWAYS False initially
         bulk_quantity = validated_data.get('bulk_quantity')
         size_distribution = validated_data.get('size_distribution')  # JSON dict: {"S": 50, "M": 50, ...}
-        # 🔥 CRITICAL: Always set is_bulk_order=False at creation (bulk is just intent, not active)
-        is_bulk_order = False  # Bulk becomes active only after sample approval
+        # 🔥 FIX: Set is_bulk_order=1 if bulk_quantity exists (so admin logic can identify bulk orders)
+        is_bulk_order = 1 if bulk_quantity else 0
         
         # 🔥 FIX: Parse delivery_date string to Date object
         from datetime import date
