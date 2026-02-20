@@ -1168,6 +1168,7 @@ def reject_rider(rider_id):
     try:
         data = request.get_json()
         reason = data.get('reason', 'Documents rejected')
+        rejected_docs = data.get('rejected_documents', {})
         
         rider = Rider.query.get(rider_id)
         if not rider:
@@ -1175,6 +1176,32 @@ def reject_rider(rider_id):
         
         rider.verification_status = 'rejected'
         rider.admin_remarks = reason
+        
+        # Update document statuses
+        doc_row = RiderDocument.query.filter_by(rider_id=rider_id).first()
+        if doc_row:
+            from sqlalchemy.orm.attributes import flag_modified
+            if rejected_docs:
+                for doc_type, doc_reason in rejected_docs.items():
+                    meta_attr = f"{doc_type}_meta"
+                    if hasattr(doc_row, meta_attr):
+                        meta = getattr(doc_row, meta_attr)
+                        meta = dict(meta) if meta else {}
+                        meta['status'] = 'rejected'
+                        meta['remarks'] = doc_reason
+                        setattr(doc_row, meta_attr, meta)
+                        flag_modified(doc_row, meta_attr)
+            else:
+                # Reject all documents
+                for doc_type in ['aadhar', 'dl', 'pan', 'photo', 'vehicle_rc', 'insurance', 'bank']:
+                    meta_attr = f"{doc_type}_meta"
+                    if hasattr(doc_row, meta_attr):
+                        meta = getattr(doc_row, meta_attr)
+                        meta = dict(meta) if meta else {}
+                        meta['status'] = 'rejected'
+                        meta['remarks'] = reason
+                        setattr(doc_row, meta_attr, meta)
+                        flag_modified(doc_row, meta_attr)
         
         db.session.commit()
         
