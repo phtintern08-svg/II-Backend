@@ -121,19 +121,19 @@ class OrderSchema(ma.SQLAlchemyAutoSchema):
 
 class VendorOrderSchema(ma.SQLAlchemyAutoSchema):
     """
-    Limited schema for vendors - only includes sample fields, excludes bulk order details
-    Vendors should NOT see: quantity, bulk pricing, size breakdown, financials
+    Limited schema for vendors - includes order type and quantity for sample/bulk distinction
+    Vendors should NOT see: bulk pricing, size breakdown, financials
     """
     class Meta:
         model = Order
         load_instance = True
-        # Only include sample-related fields
+        # Include order type and quantity to distinguish sample vs bulk
         fields = (
             'id', 'customer_id', 'product_type', 'category', 'neck_type', 
             'color', 'fabric', 'print_type', 'sample_size', 'sample_cost',
             'delivery_date', 'status', 'created_at', 'address_line1', 
             'address_line2', 'city', 'state', 'pincode', 'country',
-            'feedback_comment'  # Keep as specialInstructions
+            'feedback_comment', 'quantity', 'is_bulk_order'  # Added for order type distinction
         )
     # 🔥 FIX: Ensure delivery_date is serialized as Date with proper format
     delivery_date = fields.Date(format="%Y-%m-%d")

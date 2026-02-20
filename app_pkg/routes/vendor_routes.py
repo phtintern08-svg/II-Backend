@@ -748,13 +748,21 @@ def get_vendor_orders_filtered():
             elif o.status == 'packed_ready':
                 current_stage = 'packed'
             
-            # 🔥 SECURITY: Build response from filtered data - NO quantity field
+            # Determine order type: "sample" or "bulk"
+            is_bulk = filtered_data.get("is_bulk_order", False)
+            order_type = "bulk" if is_bulk else "sample"
+            
+            # For sample orders, quantity is always 1. For bulk orders, use the quantity from DB
+            order_quantity = filtered_data.get("quantity", 1) if is_bulk else 1
+            
+            # 🔥 SECURITY: Build response with orderType and quantity
             order_data = {
                 "id": f"ORD-{o.id:03d}" if isinstance(o.id, int) else o.id,
                 "db_id": filtered_data.get("id"),
+                "orderType": order_type,  # "sample" or "bulk"
+                "quantity": order_quantity,  # 1 for sample, actual quantity for bulk
                 "customerName": customer.username if customer else "Unknown",
                 "productType": filtered_data.get("product_type"),  # From filtered schema
-                # 🔥 REMOVED: "quantity": o.quantity,  # Vendors should NOT see bulk quantity
                 "color": filtered_data.get("color"),
                 "size": filtered_data.get("sample_size"),  # Only sample size, not bulk sizes
                 "deadline": filtered_data.get("delivery_date"),  # ISO format from schema
