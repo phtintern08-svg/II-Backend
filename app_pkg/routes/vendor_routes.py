@@ -796,20 +796,24 @@ def get_dashboard_stats():
     try:
         vendor_id = request.user_id
         
-        # 🔥 FIX: New orders are those assigned but not yet in active production
-        # These are orders waiting for customer to pay advance or just entered production
+        # 🔥 FIX: New orders are pre-production only - once order moves to production, it should appear in "In Production"
         new_orders = Order.query.filter(
             Order.selected_vendor_id == vendor_id,
             Order.status.in_([
                 'quotation_sent_to_customer',
                 'sample_requested',
-                'awaiting_advance_payment',
-                'in_production'  # Just entered production, not yet in active stages
+                'awaiting_advance_payment'
             ])
         ).count()
         
-        # 🔥 FIX: In-production orders are actively being worked on (past initial in_production stage)
-        production_statuses = ['material_prep', 'printing', 'printing_completed', 'quality_check']
+        # 🔥 FIX: In-production orders include in_production stage and all active production stages
+        production_statuses = [
+            'in_production',
+            'material_prep',
+            'printing',
+            'printing_completed',
+            'quality_check'
+        ]
         in_production = Order.query.filter(
             Order.selected_vendor_id == vendor_id,
             Order.status.in_(production_statuses)
@@ -1178,22 +1182,26 @@ def get_order_stats():
     try:
         vendor_id = request.user_id
         
-        # 🔥 FIX: New orders are those assigned but not yet in active production
-        # These are orders waiting for customer to pay advance or just entered production
+        # 🔥 FIX: New orders are pre-production only - once order moves to production, it should appear in "In Production"
         new_orders_count = Order.query.filter(
             Order.selected_vendor_id == vendor_id,
             Order.status.in_([
                 'quotation_sent_to_customer',
                 'sample_requested',
-                'awaiting_advance_payment',
-                'in_production'  # Just entered production, not yet in active stages
+                'awaiting_advance_payment'
             ])
         ).count()
         
-        # 🔥 FIX: In-production orders are actively being worked on (past initial in_production stage)
+        # 🔥 FIX: In-production orders include in_production stage and all active production stages
         in_production_count = Order.query.filter(
             Order.selected_vendor_id == vendor_id,
-            Order.status.in_(['material_prep', 'printing', 'printing_completed', 'quality_check'])
+            Order.status.in_([
+                'in_production',
+                'material_prep',
+                'printing',
+                'printing_completed',
+                'quality_check'
+            ])
         ).count()
         
         ready_count = Order.query.filter(
