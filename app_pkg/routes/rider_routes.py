@@ -495,13 +495,13 @@ def update_vehicle():
         return jsonify({"error": "Failed to update vehicle details"}), 500
 
 
-@bp.route('/update-presence', methods=['GET', 'POST'])
+@bp.route('/presence', methods=['GET', 'PUT'])
 @login_required
 @role_required(['rider'])
 def update_presence():
     """
-    GET/POST /api/rider/update-presence
-    Update rider online status and GPS coordinates
+    GET/PUT /api/rider/presence
+    Get or update rider online status and GPS coordinates
     """
     if request.method == 'GET':
         rider = Rider.query.get(request.user_id)
