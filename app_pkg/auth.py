@@ -89,10 +89,13 @@ def verify_token(token):
     except jwt.InvalidTokenError as e:
         # 🔥 DIAGNOSTIC: Log invalid token errors to identify SECRET_KEY mismatch
         secret_hash = hashlib.sha256(secret_key.encode()).hexdigest()[:16] if secret_key else "MISSING"
+        token_length = len(token) if token else 0
         app_logger.warning(
-            f"JWT token invalid - Process ID: {os.getpid()}, "
+            f"❌ JWT token invalid - Process ID: {os.getpid()}, "
             f"SECRET_KEY hash: {secret_hash}, "
-            f"Error: {type(e).__name__}"
+            f"Token length: {token_length}, "
+            f"Error: {type(e).__name__}, "
+            f"Error details: {str(e)}"
         )
         return None
 

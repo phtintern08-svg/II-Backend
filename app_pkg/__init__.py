@@ -38,6 +38,8 @@ def create_app(config_class=Config):
     
     # 🔥 DIAGNOSTIC: Log SECRET_KEY status at app startup (critical for Passenger worker consistency)
     # This helps identify if different workers have different SECRET_KEY values
+    # ⚠️ CRITICAL: All Passenger workers MUST have the same SECRET_KEY value
+    # If you see different hashes in logs for different PIDs, that's the problem!
     secret_key = app.config.get('SECRET_KEY')
     if secret_key:
         secret_hash = hashlib.sha256(secret_key.encode()).hexdigest()[:16]
@@ -46,6 +48,13 @@ def create_app(config_class=Config):
             f"SECRET_KEY hash (first 16 chars): {secret_hash}, "
             f"SECRET_KEY length: {len(secret_key)}, "
             f"Env SECRET_KEY exists: {bool(os.environ.get('SECRET_KEY'))}"
+        )
+        # 🔥 WARNING: If different workers show different hashes, SECRET_KEY mismatch detected!
+        app_logger.warning(
+            f"🔍 SECRET_KEY DIAGNOSTIC - PID {os.getpid()}: "
+            f"Hash={secret_hash}, "
+            f"Length={len(secret_key)}, "
+            f"FromEnv={bool(os.environ.get('SECRET_KEY'))}"
         )
     else:
         app_logger.error(
