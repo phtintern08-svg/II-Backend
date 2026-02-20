@@ -366,6 +366,8 @@ def upload_verification_document():
                 doc_row.aadhar_number = request.form.get('aadhar_number')
             if doc_type == 'gst' and request.form.get('gst_number'):
                 doc_row.gst_number = request.form.get('gst_number')
+            if doc_type == 'business' and request.form.get('business_registration_number'):
+                doc_row.business_registration_number = request.form.get('business_registration_number')
             if doc_type == 'bank':
                 if request.form.get('bank_account_number'):
                     doc_row.bank_account_number = request.form.get('bank_account_number')
@@ -421,6 +423,8 @@ def submit_verification():
             doc_row.aadhar_number = data.get('aadhar_number')
         if data.get('gst_number'):
             doc_row.gst_number = data.get('gst_number')
+        if data.get('business_registration_number'):
+            doc_row.business_registration_number = data.get('business_registration_number')
         if data.get('bank_account_number'):
             doc_row.bank_account_number = data.get('bank_account_number')
         if data.get('bank_holder_name'):
@@ -486,6 +490,8 @@ def get_verification_status():
                         doc_data['aadhar_number'] = doc_row.aadhar_number
                     if doc_type == 'gst':
                         doc_data['gst_number'] = doc_row.gst_number
+                    if doc_type == 'business':
+                        doc_data['business_registration_number'] = doc_row.business_registration_number
                     if doc_type == 'bank':
                         doc_data['bank_account_number'] = doc_row.bank_account_number
                         doc_data['bank_holder_name'] = doc_row.bank_holder_name

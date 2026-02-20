@@ -136,6 +136,7 @@ class VendorDocument(db.Model):
     
     business = db.Column(db.String(500))  # File path string, not binary
     business_meta = db.Column(MySQLJSON, default=dict)  # Default to empty dict to avoid null checks
+    business_registration_number = db.Column(db.String(50))
     
     bank = db.Column(db.String(500))  # File path string, not binary
     bank_meta = db.Column(MySQLJSON, default=dict)  # Default to empty dict to avoid null checks

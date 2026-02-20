@@ -2034,6 +2034,51 @@ def update_rider_document_status(rider_id, doc_type):
         return jsonify({"error": "Failed to update document status"}), 500
 
 
+@bp.route('/rider-requests/<int:rider_id>/document/<doc_type>', methods=['GET'])
+@admin_required
+def view_rider_document(rider_id, doc_type):
+    """
+    GET /api/admin/rider-requests/<rider_id>/document/<doc_type>
+    View rider verification document (admin access)
+    """
+    try:
+        rider = Rider.query.get(rider_id)
+        if not rider:
+            return jsonify({"error": "Rider not found"}), 404
+        
+        doc_row = RiderDocument.query.filter_by(rider_id=rider_id).first()
+        
+        if not doc_row or not hasattr(doc_row, doc_type):
+            return jsonify({"error": "Document not found"}), 404
+        
+        file_path = getattr(doc_row, doc_type)
+        meta = getattr(doc_row, f"{doc_type}_meta")
+        
+        if not file_path:
+            return jsonify({"error": "Document file path not found"}), 404
+        
+        if not meta:
+            return jsonify({"error": "Document metadata not found"}), 404
+        
+        # Get absolute file path
+        absolute_path = get_file_path_from_db(file_path)
+        
+        if not absolute_path or not os.path.exists(absolute_path):
+            return jsonify({"error": "File not found on disk"}), 404
+        
+        # Return file with proper MIME type
+        return send_file(
+            absolute_path,
+            mimetype=meta.get('mimetype', 'application/octet-stream') if isinstance(meta, dict) else 'application/octet-stream',
+            as_attachment=False,
+            download_name=meta.get('filename', f'{doc_type}.pdf') if isinstance(meta, dict) else f'{doc_type}.pdf'
+        )
+        
+    except Exception as e:
+        app_logger.exception(f"View rider document error: {e}")
+        return jsonify({"error": "Failed to retrieve document"}), 500
+
+
 @bp.route('/verified-riders', methods=['GET'])
 @admin_required
 def get_verified_riders():

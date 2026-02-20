@@ -67,9 +67,15 @@ ENDPOINT_LIMITS = {
         'max_size': int(2.2 * 1024 * 1024),  # 2.2MB (allows for metadata/EXIF)
         'restrict_to': ['application/pdf', 'image/jpeg', 'image/jpg'],  # PDF and JPG/JPEG variants
     },
+    '/api/rider/verification/upload': {
+        'allowed_types': ['image', 'document'],
+        'max_size': int(2.2 * 1024 * 1024),  # 2.2MB (allows for metadata/EXIF)
+        'restrict_to': ['application/pdf', 'image/jpeg', 'image/jpg'],  # PDF and JPG/JPEG variants
+    },
     '/rider/verification/upload': {
         'allowed_types': ['image', 'document'],
-        'max_size': 2 * 1024 * 1024,  # 10MB
+        'max_size': int(2.2 * 1024 * 1024),  # 2.2MB (allows for metadata/EXIF)
+        'restrict_to': ['application/pdf', 'image/jpeg', 'image/jpg'],  # PDF and JPG/JPEG variants
     },
     '/rider/upload-documents': {
         'allowed_types': ['image', 'document'],
