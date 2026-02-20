@@ -1,4 +1,4 @@
-from flask import Flask, request, jsonify, redirect
+from flask import Flask, request, jsonify, redirect, session, render_template_string
 from flask_cors import CORS
 from flask_mail import Mail
 from flask_limiter import Limiter
@@ -215,6 +215,150 @@ def create_app(config_class=Config):
     # CSRF is disabled globally for APIs (WTF_CSRF_ENABLED = False in config)
     # No need to exempt blueprints since CSRF is not active
 
+    # 🔐 Global Website Access Token Lock Routes
+    # Unlock route - allows users to enter access token
+    @app.route('/unlock', methods=['GET', 'POST'])
+    def unlock():
+        """Unlock website with access token"""
+        access_token = app.config.get('WEBSITE_ACCESS_TOKEN', '')
+        
+        # If no token is configured, lock is disabled - redirect to root
+        if not access_token:
+            return redirect('/')
+        
+        if request.method == 'POST':
+            entered_token = request.form.get('access_token', '').strip()
+            
+            if entered_token == access_token:
+                session['site_unlocked'] = True
+                session.permanent = True  # Make session persistent
+                app_logger.info(f"Website unlocked by {request.remote_addr}")
+                
+                # Redirect to root or referrer
+                redirect_url = request.args.get('next', '/')
+                return redirect(redirect_url)
+            
+            # Invalid token
+            app_logger.warning(f"Failed unlock attempt from {request.remote_addr}")
+            error_message = "Invalid Access Token"
+        else:
+            error_message = None
+        
+        # Render unlock page
+        unlock_html = """
+        <!DOCTYPE html>
+        <html lang="en">
+        <head>
+            <meta charset="UTF-8">
+            <meta name="viewport" content="width=device-width, initial-scale=1.0">
+            <title>🔐 Website Locked</title>
+            <style>
+                * {
+                    margin: 0;
+                    padding: 0;
+                    box-sizing: border-box;
+                }
+                body {
+                    font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Oxygen, Ubuntu, Cantarell, sans-serif;
+                    background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+                    min-height: 100vh;
+                    display: flex;
+                    align-items: center;
+                    justify-content: center;
+                    padding: 20px;
+                }
+                .container {
+                    background: white;
+                    border-radius: 20px;
+                    box-shadow: 0 20px 60px rgba(0, 0, 0, 0.3);
+                    padding: 40px;
+                    max-width: 400px;
+                    width: 100%;
+                    text-align: center;
+                }
+                .lock-icon {
+                    font-size: 64px;
+                    margin-bottom: 20px;
+                }
+                h2 {
+                    color: #333;
+                    margin-bottom: 10px;
+                    font-size: 28px;
+                }
+                p {
+                    color: #666;
+                    margin-bottom: 30px;
+                    font-size: 14px;
+                }
+                form {
+                    display: flex;
+                    flex-direction: column;
+                    gap: 15px;
+                }
+                input[type="password"] {
+                    padding: 15px;
+                    border: 2px solid #e0e0e0;
+                    border-radius: 10px;
+                    font-size: 16px;
+                    transition: border-color 0.3s;
+                    width: 100%;
+                }
+                input[type="password"]:focus {
+                    outline: none;
+                    border-color: #667eea;
+                }
+                button {
+                    padding: 15px;
+                    background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+                    color: white;
+                    border: none;
+                    border-radius: 10px;
+                    font-size: 16px;
+                    font-weight: 600;
+                    cursor: pointer;
+                    transition: transform 0.2s, box-shadow 0.2s;
+                }
+                button:hover {
+                    transform: translateY(-2px);
+                    box-shadow: 0 5px 15px rgba(102, 126, 234, 0.4);
+                }
+                button:active {
+                    transform: translateY(0);
+                }
+                .error {
+                    color: #e74c3c;
+                    font-size: 14px;
+                    margin-top: -10px;
+                    text-align: left;
+                }
+            </style>
+        </head>
+        <body>
+            <div class="container">
+                <div class="lock-icon">🔐</div>
+                <h2>Website Locked</h2>
+                <p>Enter the access token to continue</p>
+                <form method="POST">
+                    <input type="password" name="access_token" placeholder="Enter Access Token" required autofocus>
+                    <button type="submit">Unlock</button>
+                    {% if error_message %}
+                    <div class="error">{{ error_message }}</div>
+                    {% endif %}
+                </form>
+            </div>
+        </body>
+        </html>
+        """
+        return render_template_string(unlock_html, error=error_message)
+    
+    # Lock route - clears session and redirects to unlock
+    @app.route('/lock')
+    def lock():
+        """Lock website by clearing session"""
+        session.clear()
+        app_logger.info(f"Website locked by {request.remote_addr}")
+        return redirect('/unlock')
+
     # Explicit root route handler - redirects to login page
     @app.route('/')
     def root_redirect():
@@ -240,6 +384,15 @@ def create_app(config_class=Config):
     app_logger.info("Flask application initialized successfully")
     app_logger.info(f"Environment: {app.config.get('ENV')}")
     app_logger.info(f"Debug mode: {app.config.get('DEBUG')}")
+    
+    # 🔐 Website Access Token Lock Status
+    access_token = app.config.get('WEBSITE_ACCESS_TOKEN', '')
+    if access_token:
+        app_logger.info("🔐 Website Access Token Lock: ENABLED")
+        app_logger.info(f"   Token length: {len(access_token)} characters")
+        app_logger.info("   PRODUCTION: Set WEBSITE_ACCESS_TOKEN in cPanel → Setup Python App → Environment Variables")
+    else:
+        app_logger.info("🔓 Website Access Token Lock: DISABLED (no WEBSITE_ACCESS_TOKEN set)")
     
     # CRITICAL: Verify Mappls keys are loaded at startup
     mappls_js_key = app.config.get('MAPPLS_JS_KEY', '')
@@ -329,6 +482,44 @@ def register_request_handlers(app):
     """
     Register before/after request handlers
     """
+
+    # 🔐 GLOBAL WEBSITE ACCESS TOKEN LOCK
+    # This runs BEFORE auth_guard to lock the entire website
+    @app.before_request
+    def require_access_token():
+        """
+        Global lock middleware - requires access token to unlock website
+        If WEBSITE_ACCESS_TOKEN is set, entire website is locked until unlocked via /unlock
+        """
+        access_token = app.config.get('WEBSITE_ACCESS_TOKEN', '')
+        
+        # If no token configured, lock is disabled - allow all access
+        if not access_token:
+            return None
+        
+        path = request.path
+        
+        # Allow these routes without unlock check
+        allowed_routes = ['unlock', 'lock', 'static']
+        
+        # Check if endpoint is in allowed routes
+        if request.endpoint in allowed_routes:
+            return None
+        
+        # Allow static files (CSS, JS, images, etc.)
+        if request.endpoint is None or path.startswith('/static/') or path.startswith('/css/') or path.startswith('/js/') or path.startswith('/images/'):
+            return None
+        
+        # Check if site is unlocked via session
+        if not session.get('site_unlocked', False):
+            # Redirect to unlock page, preserving the intended destination
+            unlock_url = '/unlock'
+            if path != '/unlock' and path != '/':
+                unlock_url = f'/unlock?next={path}'
+            return redirect(unlock_url)
+        
+        # Site is unlocked - continue to next handler
+        return None
 
     @app.before_request
     def auth_guard():

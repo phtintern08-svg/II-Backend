@@ -227,6 +227,12 @@ class Config:
     # Legacy support: MAPPLS_API_KEY defaults to JS_KEY for backward compatibility
     MAPPLS_API_KEY = os.environ.get('MAPPLS_API_KEY', os.environ.get('MAPPLS_JS_KEY', ''))
     
+    # Website Access Token Configuration
+    # Global lock token - if set, entire website requires this token to unlock
+    # Set in cPanel → Setup Python App → Environment Variables
+    # Example: WEBSITE_ACCESS_TOKEN=b8f9c7a2e1d4f6g9h3k7m2p8q4r6t9w1
+    WEBSITE_ACCESS_TOKEN = os.environ.get('WEBSITE_ACCESS_TOKEN', '')
+    
     # Production Security Settings
     if ENV == 'production':
         # Force HTTPS
