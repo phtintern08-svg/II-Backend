@@ -699,17 +699,12 @@ def get_vendor_orders_filtered():
         
         if status == 'new':
             # 🔥 FIX: 'new' orders are those assigned to vendor but not yet in production
-            # Vendor should see orders after admin assignment, before customer pays advance
+            # Only include pre-production statuses - once order moves to production, it should appear in "In Production" page
             query = query.filter(
                 Order.status.in_([
                     'quotation_sent_to_customer',
                     'sample_requested',
-                    'awaiting_advance_payment',
-                    'in_production',  # Also include orders that just entered production
-                    'material_prep',
-                    'printing',
-                    'printing_completed',
-                    'quality_check'
+                    'awaiting_advance_payment'
                 ])
             )
         elif status == 'in_production':
@@ -736,7 +731,7 @@ def get_vendor_orders_filtered():
             # Map status to stage for in_production
             current_stage = None
             if o.status == 'in_production':
-                current_stage = 'production'
+                current_stage = 'in_production'  # 🔥 FIX: Match frontend stage ID
             elif o.status == 'material_prep':
                 current_stage = 'material'
             elif o.status == 'printing':
@@ -963,6 +958,7 @@ def update_production_stage(order_id):
         # Map frontend stage_id to DB status
         # 🔥 REMOVED: 'accepted' stage - vendors must compulsorily produce, no acceptance stage
         status_map = {
+            'in_production': 'in_production',  # 🔥 FIX: Explicitly map first stage
             'material': 'material_prep',
             'printing': 'printing',
             'completed': 'printing_completed',
@@ -974,6 +970,7 @@ def update_production_stage(order_id):
         
         # Human-readable labels for notifications
         stage_labels = {
+            'in_production': 'In Production',  # 🔥 FIX: Explicitly map first stage label
             'material': 'Material Preparation',
             'printing': 'Printing In Progress',
             'completed': 'Printing Completed',
@@ -1294,19 +1291,14 @@ def get_new_orders():
     🔥 Vendor should see orders after admin assignment, including before advance payment
     """
     try:
-        # 🔥 FIX: Vendor should see orders after admin assignment, not just after advance payment
-        # This allows vendor to prepare before customer pays
+        # 🔥 FIX: Vendor should see orders after admin assignment, but not yet in production
+        # Only include pre-production statuses - once order moves to production, it should appear in "In Production" page
         orders = Order.query.filter(
             Order.selected_vendor_id == request.user_id,
             Order.status.in_([
                 'quotation_sent_to_customer',
                 'sample_requested',
-                'awaiting_advance_payment',
-                'in_production',
-                'material_prep',
-                'printing',
-                'printing_completed',
-                'quality_check'
+                'awaiting_advance_payment'
             ])
         ).order_by(Order.created_at.desc()).all()
         
