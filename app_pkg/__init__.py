@@ -266,6 +266,7 @@ def create_app(config_class=Config):
     @app.route('/')
     def root_portal_selector():
         """Serve portal selector page (protected by global lock)"""
+        app_logger.info(f"✅ ROOT ROUTE HIT: {request.host}{request.path} | Serving portal selector")
         return render_template('portal_selector.html')
 
     # Register handlers
