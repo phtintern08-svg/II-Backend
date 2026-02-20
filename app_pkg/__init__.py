@@ -439,9 +439,13 @@ def register_request_handlers(app):
                 f"{request.remote_addr} - {request.method} {request.path}"
             )
         
-        # Public paths that don't require authentication
-        # NOTE: '/' is NOT public - it's locked by require_access_token()
+        # Public paths that don't require JWT authentication
+        # NOTE: These paths are still protected by require_access_token() (website lock)
+        # '/' and '/unlock' are public for JWT but protected by website access token
         PUBLIC_PATHS = (
+            '/',           # Portal selector - protected by website lock, not JWT
+            '/unlock',     # Unlock page - protected by website lock, not JWT
+            '/lock',       # Lock page - protected by website lock, not JWT
             '/login.html',
             '/register.html',
             '/verify-email.html',
@@ -460,7 +464,7 @@ def register_request_handlers(app):
         
         # For non-public HTML pages, check authentication
         # Only check HTML pages (not API, not static files with extensions)
-        # Note: '/' is locked by require_access_token() and not in PUBLIC_PATHS
+        # Note: '/' is in PUBLIC_PATHS (no JWT required) but still protected by require_access_token()
         is_html_page = (
             path.endswith('.html') or 
             (not path.startswith('/api/') and not '.' in path.split('/')[-1])
