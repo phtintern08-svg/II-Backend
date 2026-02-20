@@ -260,22 +260,13 @@ def create_app(config_class=Config):
         app_logger.info(f"Website locked by {request.remote_addr}")
         return redirect('/unlock')
 
-    # Explicit root route handler - redirects to login page
+    # Root route handler - serves portal selector page
+    # This route is protected by require_access_token() middleware
+    # Users must unlock the site before seeing the portal selector
     @app.route('/')
-    def root_redirect():
-        """Redirect root path to login page"""
-        if app.config.get('ENV') == 'production':
-            return redirect(
-                f"https://apparels.{Config.BASE_DOMAIN}/login.html",
-                code=302
-            )
-        else:
-            # Development: use request host
-            scheme = 'https' if request.is_secure else 'http'
-            return redirect(
-                f"{scheme}://{request.host}/login.html",
-                code=302
-            )
+    def root_portal_selector():
+        """Serve portal selector page (protected by global lock)"""
+        return render_template('portal_selector.html')
 
     # Register handlers
     register_error_handlers(app)
