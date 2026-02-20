@@ -177,16 +177,34 @@ def require_auth(f):
         # Verify user still exists in database
         user_id = payload.get('user_id')
         role = payload.get('role')
-        if not verify_user_exists(user_id, role):
+        
+        # 🔥 DIAGNOSTIC: Log before verification attempt
+        app_logger.debug(
+            f"require_auth: About to verify user exists - "
+            f"Route: {route_path}, User ID: {user_id}, Role: {role}, "
+            f"Process ID: {process_id}"
+        )
+        
+        user_exists = verify_user_exists(user_id, role)
+        
+        if not user_exists:
             app_logger.warning(
-                f"Auth failed - User not found in DB "
+                f"❌ Auth failed - User not found in DB "
                 f"(Process: {process_id}, Route: {route_path}, "
-                f"User ID: {user_id}, Role: {role})"
+                f"User ID: {user_id}, Role: {role}, "
+                f"Token payload: {payload})"
             )
             return jsonify({
                 "error": "User no longer exists",
                 "code": "USER_NOT_FOUND"
             }), 401
+        
+        # 🔥 DIAGNOSTIC: Log successful verification
+        app_logger.debug(
+            f"✅ require_auth: User verified successfully - "
+            f"Route: {route_path}, User ID: {user_id}, Role: {role}, "
+            f"Process ID: {process_id}"
+        )
         
         # Add user info to request context
         request.current_user = payload
@@ -253,11 +271,22 @@ def require_role(*allowed_roles):
                     "code": "ROLE_MISSING"
                 }), 401
             
+            # 🔥 DIAGNOSTIC: Enhanced role checking with detailed logging
+            app_logger.debug(
+                f"require_role check - Route: {request.path}, "
+                f"User role: {user_role}, Required roles: {allowed_roles}, "
+                f"User ID: {user_id}, Process ID: {os.getpid()}"
+            )
+            
             if user_role not in allowed_roles:
                 app_logger.warning(
                     f"⚠️ require_role: Insufficient permissions - "
                     f"Process: {os.getpid()}, Route: {request.path}, "
-                    f"User role: {user_role}, Required: {allowed_roles}"
+                    f"User role: '{user_role}' (type: {type(user_role).__name__}), "
+                    f"Required: {allowed_roles} (types: {[type(r).__name__ for r in allowed_roles]}), "
+                    f"User ID: {user_id}, "
+                    f"Exact match check: {user_role in allowed_roles}, "
+                    f"Case-sensitive comparison"
                 )
                 return jsonify({
                     "error": "Insufficient permissions",
@@ -402,12 +431,74 @@ def verify_user_exists(user_id, role):
             user = Vendor.query.get(user_id)
         elif role == 'rider':
             # 🔥 DIAGNOSTIC: Enhanced logging for rider verification
+            bind_key = getattr(Rider, '__bind_key__', 'NOT SET')
+            table_name = getattr(Rider, '__tablename__', 'NOT SET')
+            
+            # Check database bind configuration
+            from flask import current_app
+            binds = current_app.config.get('SQLALCHEMY_BINDS', {})
+            rider_bind_uri = binds.get('rider', 'NOT CONFIGURED')
+            # Mask password in URI for logging
+            if rider_bind_uri != 'NOT CONFIGURED' and '@' in rider_bind_uri:
+                # Mask password: mysql+pymysql://user:pass@host/db -> mysql+pymysql://user:***@host/db
+                parts = rider_bind_uri.split('@')
+                if len(parts) == 2:
+                    user_pass = parts[0].split('://')[1] if '://' in parts[0] else parts[0]
+                    if ':' in user_pass:
+                        user = user_pass.split(':')[0]
+                        masked_uri = rider_bind_uri.replace(f'{user}:', f'{user}:***')
+                    else:
+                        masked_uri = rider_bind_uri
+                else:
+                    masked_uri = rider_bind_uri
+            else:
+                masked_uri = rider_bind_uri
+            
             app_logger.debug(
                 f"Checking rider existence - User ID: {user_id}, "
-                f"Rider model bind_key: {getattr(Rider, '__bind_key__', 'NOT SET')}, "
+                f"Rider model bind_key: {bind_key}, "
+                f"Table name: {table_name}, "
+                f"Rider DB bind URI: {masked_uri}, "
                 f"Process ID: {os.getpid()}"
             )
-            user = Rider.query.get(user_id)
+            
+            # Try explicit query with bind verification
+            try:
+                # Check if we can access the bind
+                if 'rider' not in binds:
+                    app_logger.error(
+                        f"❌ CRITICAL: 'rider' bind not found in SQLALCHEMY_BINDS! "
+                        f"Available binds: {list(binds.keys())}, "
+                        f"Process ID: {os.getpid()}"
+                    )
+                
+                user = Rider.query.get(user_id)
+                
+                # 🔥 DIAGNOSTIC: Try alternative query method to verify bind
+                if user is None:
+                    # Try using filter to see if it's a query issue
+                    app_logger.debug(
+                        f"Rider.query.get() returned None, trying filter() - User ID: {user_id}, "
+                        f"Process ID: {os.getpid()}"
+                    )
+                    user_by_filter = Rider.query.filter(Rider.id == user_id).first()
+                    if user_by_filter:
+                        app_logger.warning(
+                            f"⚠️ Rider found with filter() but not with get() - User ID: {user_id}, "
+                            f"Process ID: {os.getpid()}"
+                        )
+                        user = user_by_filter
+                
+            except Exception as query_error:
+                app_logger.error(
+                    f"❌ Exception during Rider query - User ID: {user_id}, "
+                    f"Exception: {type(query_error).__name__}: {str(query_error)}, "
+                    f"Process ID: {os.getpid()}"
+                )
+                import traceback
+                app_logger.error(f"Query traceback: {traceback.format_exc()}")
+                user = None
+            
             app_logger.debug(
                 f"Rider query result - User ID: {user_id}, "
                 f"Found: {user is not None}, "
