@@ -713,6 +713,9 @@ def get_vendor_orders_filtered():
                 'printing', 'printing_completed', 'quality_check'
             ]
             query = query.filter(Order.status.in_(production_statuses))
+        elif status == 'completed':
+            # 🔥 FIX: Return both dispatched and delivered orders for completed page
+            query = query.filter(Order.status.in_(['dispatched', 'delivered', 'completed', 'completed_with_penalty']))
         elif status:
             query = query.filter_by(status=status)
         
@@ -819,11 +822,13 @@ def get_dashboard_stats():
             Order.status.in_(production_statuses)
         ).count()
         
+        # 🔥 FIX: Standardize to only packed_ready
         ready_dispatch = Order.query.filter_by(selected_vendor_id=vendor_id, status='packed_ready').count()
         
+        # 🔥 FIX: Include dispatched orders in completed count (treat dispatched as completed)
         completed = Order.query.filter(
             Order.selected_vendor_id == vendor_id,
-            Order.status.like('completed%')
+            Order.status.in_(['completed', 'completed_with_penalty', 'delivered', 'dispatched'])
         ).count()
         
         return jsonify({
@@ -1204,14 +1209,16 @@ def get_order_stats():
             ])
         ).count()
         
+        # 🔥 FIX: Standardize to only packed_ready (remove unused statuses)
         ready_count = Order.query.filter(
             Order.selected_vendor_id == vendor_id,
-            Order.status.in_(['ready_for_dispatch', 'packed_ready', 'ready_for_pickup'])
+            Order.status == 'packed_ready'
         ).count()
         
+        # 🔥 FIX: Include dispatched orders in completed count (treat dispatched as completed)
         completed_count = Order.query.filter(
             Order.selected_vendor_id == vendor_id,
-            Order.status.in_(['completed', 'completed_with_penalty', 'delivered'])
+            Order.status.in_(['completed', 'completed_with_penalty', 'delivered', 'dispatched'])
         ).count()
         
         return jsonify({
