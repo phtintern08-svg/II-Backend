@@ -534,6 +534,8 @@ def update_presence():
         if latitude is not None and longitude is not None:
             rider.latitude = float(latitude)
             rider.longitude = float(longitude)
+            # Log coordinates for verification
+            app_logger.info(f"Rider {request.user_id} location: {latitude}, {longitude}")
             # Note: Reverse geocoding would require Mappls API integration
         
         db.session.commit()
