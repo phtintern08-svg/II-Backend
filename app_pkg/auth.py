@@ -387,6 +387,13 @@ def verify_user_exists(user_id, role):
         bool: True if user exists, False otherwise
     """
     try:
+        # 🔥 DIAGNOSTIC: Log the verification attempt
+        app_logger.debug(
+            f"verify_user_exists called - User ID: {user_id}, Role: {role}, "
+            f"Process ID: {os.getpid()}"
+        )
+        
+        user = None
         if role == 'admin':
             user = Admin.query.get(user_id)
         elif role == 'customer':
@@ -394,14 +401,52 @@ def verify_user_exists(user_id, role):
         elif role == 'vendor':
             user = Vendor.query.get(user_id)
         elif role == 'rider':
+            # 🔥 DIAGNOSTIC: Enhanced logging for rider verification
+            app_logger.debug(
+                f"Checking rider existence - User ID: {user_id}, "
+                f"Rider model bind_key: {getattr(Rider, '__bind_key__', 'NOT SET')}, "
+                f"Process ID: {os.getpid()}"
+            )
             user = Rider.query.get(user_id)
+            app_logger.debug(
+                f"Rider query result - User ID: {user_id}, "
+                f"Found: {user is not None}, "
+                f"User object: {user}, "
+                f"Process ID: {os.getpid()}"
+            )
         elif role == 'support':
             user = Support.query.get(user_id)
         else:
+            app_logger.warning(
+                f"verify_user_exists - Unknown role: {role}, User ID: {user_id}, "
+                f"Process ID: {os.getpid()}"
+            )
             return False
         
-        return user is not None
-    except Exception:
+        user_exists = user is not None
+        
+        if not user_exists:
+            app_logger.warning(
+                f"❌ User not found in database - User ID: {user_id}, Role: {role}, "
+                f"Process ID: {os.getpid()}"
+            )
+        else:
+            app_logger.debug(
+                f"✅ User verified - User ID: {user_id}, Role: {role}, "
+                f"Process ID: {os.getpid()}"
+            )
+        
+        return user_exists
+    except Exception as e:
+        # 🔥 DIAGNOSTIC: Log the actual exception instead of swallowing it
+        app_logger.error(
+            f"❌ Exception in verify_user_exists - User ID: {user_id}, Role: {role}, "
+            f"Exception type: {type(e).__name__}, "
+            f"Exception message: {str(e)}, "
+            f"Process ID: {os.getpid()}"
+        )
+        import traceback
+        app_logger.error(f"Traceback: {traceback.format_exc()}")
         return False
 
 
