@@ -222,6 +222,11 @@ def upload_verification_document():
         # Store file path
         setattr(doc_row, doc_type, file_info['path'])
         
+        # Get existing metadata to preserve rejected status if resubmitting
+        existing_meta = getattr(doc_row, f"{doc_type}_meta") or {}
+        existing_meta = dict(existing_meta) if isinstance(existing_meta, dict) else {}
+        was_rejected = existing_meta.get('status') == 'rejected'
+        
         # Store metadata
         meta = {
             'filename': file_info['filename'],
@@ -229,9 +234,20 @@ def upload_verification_document():
             'mimetype': file_info['mimetype'],
             'size': file_info['size'],
             'uploaded_at': datetime.utcnow().isoformat(),
-            'status': 'uploaded'
+            'status': 'resubmitted' if was_rejected else 'uploaded',
+            'resubmitted': was_rejected,
+            'previous_status': existing_meta.get('status')
         }
+        # Preserve admin remarks if resubmitting
+        if was_rejected and existing_meta.get('remarks'):
+            meta['remarks'] = existing_meta.get('remarks')
+            meta['previous_rejection_reason'] = existing_meta.get('remarks')
+        
         setattr(doc_row, f"{doc_type}_meta", meta)
+        
+        # Auto-reset overall rider verification status if rejected
+        if was_rejected and rider.verification_status == 'rejected':
+            rider.verification_status = 'pending'
         
         # Save manual fields if provided
         if doc_type == 'aadhar' and request.form.get('aadhar_number'):
@@ -449,9 +465,12 @@ def update_vehicle():
     """
     POST /api/rider/update-vehicle
     Update rider vehicle details
+    Supports both JSON and form-data for robustness
     """
     try:
-        data = request.get_json()
+        # Defensive: Accept both JSON and form-data
+        data = request.get_json(silent=True) or request.form
+        
         vehicle_type = data.get('vehicle_type')
         vehicle_number = data.get('vehicle_number')
         service_zone = data.get('service_zone')

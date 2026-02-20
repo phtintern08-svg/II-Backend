@@ -1913,11 +1913,18 @@ def get_rider_requests():
                         if hasattr(doc_row, f"{doc_type}_meta"):
                             meta = getattr(doc_row, f"{doc_type}_meta")
                             if meta:
+                                # Handle resubmitted status - show as rejected with resubmitted flag
+                                doc_status = meta.get('status', 'pending')
+                                is_resubmitted = meta.get('resubmitted', False) or doc_status == 'resubmitted'
+                                
                                 doc_data = {
-                                    'status': meta.get('status', 'pending'),
+                                    'status': 'rejected' if is_resubmitted else doc_status,
                                     'fileName': meta.get('filename'),
                                     'fileSize': meta.get('size'),
-                                    'uploadedDate': meta.get('uploaded_at')
+                                    'uploadedDate': meta.get('uploaded_at'),
+                                    'resubmitted': is_resubmitted,
+                                    'adminRemarks': meta.get('remarks', ''),
+                                    'previousRejectionReason': meta.get('previous_rejection_reason', '')
                                 }
                                 if doc_type == 'aadhar':
                                     doc_data['aadhar_number'] = doc_row.aadhar_number
