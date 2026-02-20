@@ -130,18 +130,44 @@ def create_app(config_class=Config):
             auth_routes,
             orders_routes,
             vendor_routes,
-            rider_routes,
             admin_routes,
             customer_routes,
             support_routes,
             config_routes,
             health
         )
+        
+        # Import rider_routes separately with explicit error handling
+        try:
+            from app_pkg.routes import rider_routes
+            app_logger.info("✅ Successfully imported rider_routes module")
+        except ImportError as e:
+            app_logger.error(f"❌ CRITICAL: Failed to import rider_routes: {e}")
+            raise
+        except Exception as e:
+            app_logger.error(f"❌ CRITICAL: Error importing rider_routes: {e}")
+            raise
 
         app.register_blueprint(auth_routes.bp, url_prefix="/api")
         app.register_blueprint(orders_routes.bp, url_prefix="/api/orders")
         app.register_blueprint(vendor_routes.bp)  # prefix already in blueprint definition
-        app.register_blueprint(rider_routes.bp)  # prefix already in blueprint definition
+        
+        # Register rider blueprint with explicit logging and error handling
+        try:
+            app_logger.info("Registering rider blueprint...")
+            if not hasattr(rider_routes, 'bp'):
+                app_logger.error("❌ CRITICAL: rider_routes.bp does not exist!")
+                raise AttributeError("rider_routes.bp not found")
+            
+            app_logger.info(f"Rider blueprint found: name={rider_routes.bp.name}, prefix={rider_routes.bp.url_prefix}")
+            app.register_blueprint(rider_routes.bp)  # prefix already in blueprint definition
+            app_logger.info(f"✅ Rider blueprint registered successfully: {rider_routes.bp.name} with prefix: {rider_routes.bp.url_prefix}")
+        except Exception as e:
+            app_logger.error(f"❌ CRITICAL: Failed to register rider blueprint: {e}")
+            import traceback
+            app_logger.error(traceback.format_exc())
+            raise
+        
         app.register_blueprint(admin_routes.bp)  # prefix already in blueprint definition
         app.register_blueprint(customer_routes.bp)  # prefix already in blueprint definition
         app.register_blueprint(support_routes.bp, url_prefix="/api")
@@ -152,13 +178,25 @@ def create_app(config_class=Config):
         
         # Log ALL registered routes for debugging (HARD PROOF)
         app_logger.info("=== ALL REGISTERED ROUTES ===")
+        
+        # Log customer routes
+        customer_routes_list = []
         for rule in app.url_map.iter_rules():
             if rule.endpoint.startswith('customer.'):
                 app_logger.info(f"ROUTE: {rule.rule} -> {rule.endpoint} [{', '.join(rule.methods)}]")
-        
-        # Count customer routes
-        customer_routes_list = [rule.rule for rule in app.url_map.iter_rules() if rule.endpoint.startswith('customer.')]
+                customer_routes_list.append(rule.rule)
         app_logger.info(f"Customer routes registered: {len(customer_routes_list)} routes")
+        
+        # Log rider routes
+        rider_routes_list = []
+        for rule in app.url_map.iter_rules():
+            if rule.endpoint.startswith('rider.'):
+                app_logger.info(f"ROUTE: {rule.rule} -> {rule.endpoint} [{', '.join(rule.methods)}]")
+                rider_routes_list.append(rule.rule)
+        app_logger.info(f"Rider routes registered: {len(rider_routes_list)} routes")
+        if len(rider_routes_list) == 0:
+            app_logger.error("⚠️ WARNING: No rider routes found! Blueprint registration may have failed.")
+        
         if len(customer_routes_list) == 0:
             app_logger.error("⚠️ WARNING: No customer routes found! Blueprint registration may have failed.")
     except Exception as e:
