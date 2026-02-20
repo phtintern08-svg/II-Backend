@@ -390,36 +390,45 @@ def register_request_handlers(app):
     @app.before_request
     def require_access_token():
         """
-        🔐 GLOBAL WEBSITE LOCK
-        Locks ALL domains and subdomains.
-        Only accessible after unlocking via /unlock.
+        STRICT GLOBAL LOCK
+        Overrides EVERYTHING including login pages.
         Blocks: impromptuindian.com, www.impromptuindian.com, apparels.impromptuindian.com,
                 vendor.impromptuindian.com, rider.impromptuindian.com, admin.impromptuindian.com,
                 ALL APIs, ALL routes, EVERYTHING
         """
         access_token = app.config.get('WEBSITE_ACCESS_TOKEN', '')
         
-        # If no token configured → lock disabled
+        # If no token → lock disabled
         if not access_token:
             return None
         
-        path = request.path
-        
-        # Allow unlock, lock, and static files
+        # Allow only unlock + lock routes
         if request.endpoint in ['unlock', 'lock', 'static']:
             return None
         
-        if path.startswith('/static/') or path.startswith('/css/') or path.startswith('/js/') or path.startswith('/images/'):
+        # Allow static files
+        if request.path.startswith(('/static/', '/css/', '/js/', '/images/')):
             return None
         
-        # If site not unlocked → redirect to unlock
-        if not session.get('site_unlocked', False):
-            unlock_url = '/unlock'
-            if path != '/unlock':
-                unlock_url = f'/unlock?next={path}'
-            return redirect(unlock_url)
+        # Check unlock status
+        is_unlocked = session.get('site_unlocked', False)
+        
+        # Debug logging for lock status (helps diagnose session issues)
+        # Log at warning level so it's visible in production logs
+        app_logger.warning(
+            f"🔐 LOCK CHECK: {request.host} {request.path} | "
+            f"unlocked={is_unlocked} | "
+            f"endpoint={request.endpoint} | "
+            f"remote_addr={request.remote_addr}"
+        )
+        
+        # If not unlocked → force redirect
+        if not is_unlocked:
+            app_logger.warning(f"🔒 REDIRECTING TO /unlock: {request.host}{request.path}")
+            return redirect('/unlock')
         
         # Site unlocked → allow request
+        app_logger.debug(f"✅ UNLOCKED - Allowing access: {request.host}{request.path}")
         return None
 
     @app.before_request
@@ -439,8 +448,8 @@ def register_request_handlers(app):
             )
         
         # Public paths that don't require authentication
+        # NOTE: '/' is NOT public - it's locked by require_access_token()
         PUBLIC_PATHS = (
-            '/',
             '/login.html',
             '/register.html',
             '/verify-email.html',
@@ -459,7 +468,7 @@ def register_request_handlers(app):
         
         # For non-public HTML pages, check authentication
         # Only check HTML pages (not API, not static files with extensions)
-        # Note: '/' is now in PUBLIC_PATHS, so it's handled separately
+        # Note: '/' is locked by require_access_token() and not in PUBLIC_PATHS
         is_html_page = (
             path.endswith('.html') or 
             (not path.startswith('/api/') and not '.' in path.split('/')[-1])
