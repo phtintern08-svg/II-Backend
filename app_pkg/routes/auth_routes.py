@@ -554,13 +554,17 @@ def authenticate():
             }, 500)
         
         # Set cookie for all successful logins
+        # CRITICAL: domain with leading dot shares cookie across ALL subdomains
+        # Without this, cookie is only valid for apparels.impromptuindian.com
+        # and will NOT be sent to vendor.impromptuindian.com, rider.impromptuindian.com, etc.
         response.set_cookie(
             "access_token",
             token,
-            domain=f".{Config.BASE_DOMAIN}",  # .impromptuindian.com
+            domain=f".{Config.BASE_DOMAIN}",  # e.g. .impromptuindian.com
+            path="/",
             httponly=True,
-            secure=True,  # REQUIRED when SameSite=None
-            samesite="None",  # Allows cross-subdomain POST requests
+            secure=True,
+            samesite="Lax",
             max_age=7 * 24 * 60 * 60  # 7 days
         )
         response.headers['Content-Type'] = 'application/json'
