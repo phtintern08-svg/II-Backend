@@ -772,6 +772,40 @@ class VendorQuotation(db.Model):
     def __repr__(self):
         return f'<VendorQuotation Vendor#{self.vendor_id} Product#{self.product_id} - ₹{self.base_cost}>'
 
+
+class VendorCapacity(db.Model):
+    __bind_key__ = 'vendor'
+    """
+    Made-to-Order production capacity per product variant.
+    No finished stock - vendors produce after order.
+    Capacity refreshes daily (no deduction on order).
+    """
+    __tablename__ = 'vendor_capacity'
+
+    id = db.Column(db.Integer, primary_key=True)
+    vendor_id = db.Column(db.Integer, db.ForeignKey('vendors.id'), nullable=False)
+    product_catalog_id = db.Column(db.Integer, nullable=False)  # Cross-schema: admin.product_catalog
+
+    daily_capacity = db.Column(db.Integer, default=0)  # Units producible per day
+    max_bulk_capacity = db.Column(db.Integer, default=0)  # Max single order size (0 = no limit)
+    lead_time_days = db.Column(db.Integer, default=3)  # Days from order to ready
+
+    is_active = db.Column(db.Boolean, default=True)
+
+    created_at = db.Column(db.DateTime, default=datetime.utcnow)
+    updated_at = db.Column(db.DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
+
+    vendor = db.relationship('Vendor', backref='capacities', lazy=True)
+
+    __table_args__ = (
+        db.UniqueConstraint('vendor_id', 'product_catalog_id', name='unique_vendor_product_capacity'),
+        {'extend_existing': True}
+    )
+
+    def __repr__(self):
+        return f'<VendorCapacity Vendor#{self.vendor_id} Product#{self.product_catalog_id} {self.daily_capacity}/day>'
+
+
 class VendorOrderAssignment(db.Model):
     __bind_key__ = 'vendor'
     __tablename__ = 'vendor_order_assignments'

@@ -9,7 +9,7 @@ import os
 from app_pkg.models import (
     db, Vendor, VendorQuotation, VendorDocument, VendorOrderAssignment, Order,
     VendorQuotationSubmission, Notification, OrderStatusHistory, Customer,
-    DeliveryLog, Rider  # 🔥 FIX: Added missing imports for track-delivery endpoint
+    DeliveryLog, Rider, VendorCapacity, ProductCatalog  # VendorCapacity for Made-to-Order
 )
 from app_pkg.auth import login_required, role_required
 from app_pkg.file_upload import validate_and_save_file, delete_file, get_file_path_from_db
@@ -682,6 +682,192 @@ def get_quotation_status():
     except Exception as e:
         app_logger.exception(f"Get quotation status error: {e}")
         return jsonify({"error": "Failed to retrieve quotation status"}), 500
+
+
+# ============================================================================
+# Production Capacity (Made-to-Order)
+# Collected: After approval, Vendor Dashboard (ongoing), Optional during verification
+# ============================================================================
+
+@bp.route('/capacity/products', methods=['GET'])
+@login_required
+@role_required(['vendor'])
+def get_capacity_eligible_products():
+    """
+    GET /api/vendor/capacity/products
+    Returns product_catalog entries that vendor has approved quotations for.
+    Used to populate capacity form - vendor adds capacity for products they quote.
+    """
+    try:
+        vendor_id = request.user_id
+        # Get product_ids from approved quotations
+        quoted_product_ids = [
+            r[0] for r in
+            db.session.query(VendorQuotation.product_id).filter_by(
+                vendor_id=vendor_id,
+                status='approved'
+            ).distinct().all()
+        ]
+        if not quoted_product_ids:
+            return jsonify({"products": [], "message": "Submit and get quotations approved first"}), 200
+
+        products = ProductCatalog.query.filter(ProductCatalog.id.in_(quoted_product_ids)).all()
+        result = [
+            {
+                "id": p.id,
+                "product_type": p.product_type,
+                "category": p.category,
+                "neck_type": p.neck_type,
+                "fabric": p.fabric,
+                "size": p.size,
+                "notes": p.notes
+            }
+            for p in products
+        ]
+        return jsonify({"products": result}), 200
+    except Exception as e:
+        app_logger.exception(f"Get capacity products error: {e}")
+        return jsonify({"error": "Failed to get products"}), 500
+
+
+@bp.route('/capacity', methods=['GET'])
+@login_required
+@role_required(['vendor'])
+def get_vendor_capacity():
+    """
+    GET /api/vendor/capacity
+    Get all production capacity entries for this vendor
+    """
+    try:
+        vendor_id = request.user_id
+        capacities = VendorCapacity.query.filter_by(vendor_id=vendor_id, is_active=True).all()
+
+        result = []
+        for c in capacities:
+            # Optionally enrich with product info from catalog (cross-schema)
+            product = None
+            try:
+                product = ProductCatalog.query.get(c.product_catalog_id)
+            except Exception:
+                pass
+
+            result.append({
+                "id": c.id,
+                "product_catalog_id": c.product_catalog_id,
+                "daily_capacity": c.daily_capacity,
+                "max_bulk_capacity": c.max_bulk_capacity,
+                "lead_time_days": c.lead_time_days,
+                "product_type": product.product_type if product else None,
+                "category": product.category if product else None,
+                "neck_type": product.neck_type if product else None,
+                "fabric": product.fabric if product else None,
+                "size": product.size if product else None,
+                "updated_at": c.updated_at.isoformat() if c.updated_at else None
+            })
+
+        return jsonify({"capacity": result, "count": len(result)}), 200
+
+    except Exception as e:
+        app_logger.exception(f"Get vendor capacity error: {e}")
+        return jsonify({"error": "Failed to retrieve capacity"}), 500
+
+
+@bp.route('/capacity', methods=['POST', 'PUT'])
+@login_required
+@role_required(['vendor'])
+def upsert_vendor_capacity():
+    """
+    POST/PUT /api/vendor/capacity
+    Create or update production capacity.
+    Body: single object or array of { product_catalog_id, daily_capacity, max_bulk_capacity?, lead_time_days? }
+    """
+    try:
+        vendor_id = request.user_id
+        vendor = Vendor.query.get(vendor_id)
+        if not vendor:
+            return jsonify({"error": "Vendor not found"}), 404
+
+        # Require approved/active vendor to submit capacity
+        if vendor.verification_status not in ['approved', 'active']:
+            return jsonify({
+                "error": "Capacity can be submitted only after verification approval",
+                "verification_status": vendor.verification_status
+            }), 403
+
+        data = request.get_json()
+        items = data if isinstance(data, list) else [data]
+
+        updated = []
+        for item in items:
+            product_catalog_id = item.get('product_catalog_id')
+            daily_capacity = item.get('daily_capacity', 0)
+            max_bulk_capacity = item.get('max_bulk_capacity', 0)
+            lead_time_days = item.get('lead_time_days', 3)
+
+            if not product_catalog_id:
+                continue
+
+            existing = VendorCapacity.query.filter_by(
+                vendor_id=vendor_id,
+                product_catalog_id=int(product_catalog_id)
+            ).first()
+
+            if existing:
+                existing.daily_capacity = int(daily_capacity)
+                existing.max_bulk_capacity = int(max_bulk_capacity)
+                existing.lead_time_days = int(lead_time_days)
+                existing.is_active = True
+                existing.updated_at = datetime.utcnow()
+                updated.append(existing)
+            else:
+                new_cap = VendorCapacity(
+                    vendor_id=vendor_id,
+                    product_catalog_id=int(product_catalog_id),
+                    daily_capacity=int(daily_capacity),
+                    max_bulk_capacity=int(max_bulk_capacity),
+                    lead_time_days=int(lead_time_days)
+                )
+                db.session.add(new_cap)
+                updated.append(new_cap)
+
+        db.session.commit()
+        return jsonify({
+            "message": "Capacity updated successfully",
+            "count": len(updated)
+        }), 200
+
+    except Exception as e:
+        db.session.rollback()
+        app_logger.exception(f"Upsert vendor capacity error: {e}")
+        return jsonify({"error": "Failed to update capacity"}), 500
+
+
+@bp.route('/capacity/<int:product_catalog_id>', methods=['DELETE'])
+@login_required
+@role_required(['vendor'])
+def delete_vendor_capacity(product_catalog_id):
+    """
+    DELETE /api/vendor/capacity/<product_catalog_id>
+    Soft-deactivate a capacity entry
+    """
+    try:
+        cap = VendorCapacity.query.filter_by(
+            vendor_id=request.user_id,
+            product_catalog_id=product_catalog_id
+        ).first()
+
+        if not cap:
+            return jsonify({"error": "Capacity entry not found"}), 404
+
+        cap.is_active = False
+        cap.updated_at = datetime.utcnow()
+        db.session.commit()
+        return jsonify({"message": "Capacity deactivated"}), 200
+
+    except Exception as e:
+        db.session.rollback()
+        app_logger.exception(f"Delete vendor capacity error: {e}")
+        return jsonify({"error": "Failed to deactivate capacity"}), 500
 
 
 @bp.route('/orders', methods=['GET'])

@@ -14,7 +14,7 @@ from app_pkg.models import (
     db, Admin, Customer, Vendor, Rider, Order, OTPLog, Payment, 
     VendorDocument, VendorQuotationSubmission, RiderDocument, Notification,
     VendorOrderAssignment, OrderStatusHistory, DeliveryLog, ProductCatalog,
-    DeliveryPartner, Support, ActivityLog
+    DeliveryPartner, Support, ActivityLog, VendorQuotation, VendorCapacity
 )
 from app_pkg.auth import login_required, admin_required
 from app_pkg.file_upload import get_file_path_from_db
@@ -827,6 +827,126 @@ def get_all_orders():
         return jsonify({"error": "Failed to retrieve orders"}), 500
 
 
+@bp.route('/orders/<int:order_id>/suggested-vendors', methods=['GET'])
+@admin_required
+def get_suggested_vendors_for_order(order_id):
+    """
+    GET /api/admin/orders/<order_id>/suggested-vendors
+    Returns vendors with approved quotation + production capacity for this order.
+    Sorted by lead_time_days ASC (fastest delivery first).
+    """
+    try:
+        order = Order.query.get(order_id)
+        if not order:
+            return jsonify({"error": "Order not found"}), 404
+
+        total_qty = order.get_effective_quantity()
+        product_catalog_ids = []
+
+        # Resolve order to product_catalog_ids
+        def _resolve_product(product_type, category, neck_type, fabric, size):
+            q = ProductCatalog.query.filter(
+                func.lower(ProductCatalog.product_type) == product_type.lower(),
+                func.lower(ProductCatalog.category) == category.lower(),
+                func.lower(ProductCatalog.size) == size.upper() if size else True
+            )
+            if neck_type:
+                q = q.filter(func.lower(ProductCatalog.neck_type) == neck_type.lower())
+            if fabric:
+                q = q.filter(func.lower(ProductCatalog.fabric) == fabric.lower())
+            p = q.first()
+            return p.id if p else None
+
+        pt = (order.product_type or '').strip()
+        cat = (order.category or '').strip()
+        nt = (order.neck_type or '').strip() or 'none'
+        fb = (order.fabric or '').strip()
+
+        if order.is_bulk_order and order.size_distribution:
+            for size, qty in order.size_distribution.items():
+                pid = _resolve_product(pt, cat, nt, fb, size)
+                if pid and pid not in product_catalog_ids:
+                    product_catalog_ids.append(pid)
+        else:
+            size = order.sample_size or (order.size_distribution and next(iter(order.size_distribution.keys()), None)) or 'M'
+            pid = _resolve_product(pt, cat, nt, fb, size)
+            if pid:
+                product_catalog_ids.append(pid)
+
+        if not product_catalog_ids:
+            return jsonify({
+                "suggested_vendors": [],
+                "message": "Could not resolve order to product catalog. Check product_type, category, neck_type, fabric, size.",
+                "order_product": f"{pt} / {cat} / {nt} / {fb}"
+            }), 200
+
+        # Find vendors with approved quotation + capacity
+        candidates = []
+        for vid in db.session.query(VendorQuotation.vendor_id).filter(
+            VendorQuotation.product_id.in_(product_catalog_ids),
+            VendorQuotation.status == 'approved'
+        ).distinct().all():
+            vid = vid[0]
+            vendor = Vendor.query.get(vid)
+            if not vendor or vendor.verification_status not in ['approved', 'active']:
+                continue
+
+            # Check capacity for ALL required product variants
+            capacity_ok = True
+            best_lead = 999
+            total_capacity_days = 0
+            for pcid in product_catalog_ids:
+                cap = VendorCapacity.query.filter_by(
+                    vendor_id=vid,
+                    product_catalog_id=pcid,
+                    is_active=True
+                ).first()
+                if not cap or cap.daily_capacity <= 0:
+                    capacity_ok = False
+                    break
+                # Required: daily_capacity * lead_time_days >= total_qty
+                required_days = (total_qty + cap.daily_capacity - 1) // cap.daily_capacity if cap.daily_capacity else 999
+                if required_days > cap.lead_time_days:
+                    capacity_ok = False
+                    break
+                if cap.max_bulk_capacity > 0 and total_qty > cap.max_bulk_capacity:
+                    capacity_ok = False
+                    break
+                best_lead = min(best_lead, cap.lead_time_days)
+
+            if not capacity_ok:
+                continue
+
+            # Get quotation for display
+            quot = VendorQuotation.query.filter_by(
+                vendor_id=vid,
+                product_id=product_catalog_ids[0],
+                status='approved'
+            ).first()
+            base_cost = float(quot.base_cost) if quot else 0
+
+            candidates.append({
+                "vendor_id": vid,
+                "vendor_name": vendor.business_name or vendor.username or f"Vendor #{vid}",
+                "lead_time_days": best_lead,
+                "base_cost_per_piece": base_cost,
+                "city": vendor.city,
+                "state": vendor.state
+            })
+
+        candidates.sort(key=lambda x: (x["lead_time_days"], x["base_cost_per_piece"]))
+
+        return jsonify({
+            "suggested_vendors": candidates,
+            "order_quantity": total_qty,
+            "product_catalog_ids": product_catalog_ids
+        }), 200
+
+    except Exception as e:
+        app_logger.exception(f"Get suggested vendors error: {e}")
+        return jsonify({"error": "Failed to get suggested vendors"}), 500
+
+
 @bp.route('/orders/<int:order_id>/assign', methods=['PUT'])
 @admin_required
 def assign_order_to_vendor(order_id):
@@ -1011,7 +1131,7 @@ def approve_vendor(vendor_id):
             user_id=vendor_id,
             user_type='vendor',
             title='Verification Approved',
-            message='Your account verification has been approved. Please submit your quotation to proceed.',
+            message='Your account verification has been approved. Submit your quotation, then set Production Capacity (daily capacity + lead time) to receive order assignments.',
             type='verification'
         )
         db.session.add(notif)
