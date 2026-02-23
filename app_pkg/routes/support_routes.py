@@ -884,17 +884,24 @@ def get_product_price(product_id):
     Get final price for a specific product
     """
     try:
-        from app_pkg.models import ProductCatalog
+        from app_pkg.models import ProductCatalog, compute_price_splits
         product = ProductCatalog.query.get(product_id)
         if not product:
             return jsonify({"error": "Product not found"}), 404
+        
+        final_price = float(product.final_price) if product.final_price else 0
+        splits = compute_price_splits(final_price)
         
         return jsonify({
             'id': product.id,
             'product_type': product.product_type,
             'category': product.category,
-            'final_price': float(product.final_price) if product.final_price else 0,  # 🔥 FIX: Return final_price (was incorrectly named average_price)
-            'average_price': float(product.average_price) if product.average_price else 0,  # Also include average_price for reference
+            'final_price': final_price,
+            'average_price': float(product.average_price) if product.average_price else 0,
+            'vendor_pay': splits['vendor_pay'],
+            'platform_pay': splits['platform_pay'],
+            'rider_pay': splits['rider_pay'],
+            'support_pay': splits['support_pay'],
             'vendor_count': product.vendor_count or 0
         }), 200
         
@@ -967,17 +974,26 @@ def get_product_catalog():
             
             rows = db.session.execute(sql, params).mappings().all()
             
+            from app_pkg.models import compute_price_splits
             result = []
             for row in rows:
+                min_price = float(row['min_price']) if row['min_price'] else 0.0
+                max_price = float(row['max_price']) if row['max_price'] else 0.0
+                avg_final = (min_price + max_price) / 2 if (min_price or max_price) else 0.0
+                splits = compute_price_splits(avg_final)
                 result.append({
                     'product_type': row['product_type'],
                     'category': row['category'],
                     'neck_type': row['neck_type'],
                     'fabric': row['fabric'],
                     'notes': row['notes'],
-                    'min_price': float(row['min_price']) if row['min_price'] else 0.0,
-                    'max_price': float(row['max_price']) if row['max_price'] else 0.0,
+                    'min_price': min_price,
+                    'max_price': max_price,
                     'avg_price': float(row['avg_price']) if row['avg_price'] else 0.0,
+                    'vendor_pay': splits['vendor_pay'],
+                    'platform_pay': splits['platform_pay'],
+                    'rider_pay': splits['rider_pay'],
+                    'support_pay': splits['support_pay'],
                     'total_vendors': row['total_vendors'] or 0,
                     'sizes': row['sizes'].split(',') if row['sizes'] else [],
                     'updated_at': row['updated_at'].isoformat() if row['updated_at'] else None
@@ -1004,8 +1020,11 @@ def get_product_catalog():
             
             rows = db.session.execute(sql, params).mappings().all()
             
+            from app_pkg.models import compute_price_splits
             result = []
             for row in rows:
+                final_price = float(row['final_price']) if row['final_price'] else 0.0
+                splits = compute_price_splits(final_price)
                 result.append({
                     'id': row['id'],
                     'product_type': row['product_type'],
@@ -1014,7 +1033,11 @@ def get_product_catalog():
                     'fabric': row['fabric'],
                     'size': row['size'],
                     'average_price': float(row['average_price']) if row['average_price'] else 0.0,
-                    'final_price': float(row['final_price']) if row['final_price'] else 0.0,
+                    'final_price': final_price,
+                    'vendor_pay': splits['vendor_pay'],
+                    'platform_pay': splits['platform_pay'],
+                    'rider_pay': splits['rider_pay'],
+                    'support_pay': splits['support_pay'],
                     'vendor_count': row['vendor_count'] or 0,
                     'notes': row['notes'],
                     'updated_at': row['updated_at'].isoformat() if row['updated_at'] else None

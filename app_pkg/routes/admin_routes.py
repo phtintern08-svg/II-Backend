@@ -2359,7 +2359,7 @@ def get_product_catalog():
     Get all products in catalog
     """
     try:
-        from app.models import ProductCatalog
+        from app_pkg.models import ProductCatalog, compute_price_splits
         products = ProductCatalog.query.all()
         
         result = []
@@ -2367,6 +2367,7 @@ def get_product_catalog():
             # Calculate final_price if not set (for existing records)
             avg_price = float(p.average_price) if p.average_price else 0
             final_price = float(p.final_price) if p.final_price else (avg_price * 1.30)
+            splits = compute_price_splits(final_price)
             
             result.append({
                 'id': p.id,
@@ -2377,6 +2378,10 @@ def get_product_catalog():
                 'size': p.size,
                 'average_price': avg_price,
                 'final_price': final_price,
+                'vendor_pay': splits['vendor_pay'],
+                'platform_pay': splits['platform_pay'],
+                'rider_pay': splits['rider_pay'],
+                'support_pay': splits['support_pay'],
                 'vendor_count': p.vendor_count or 0,
                 'notes': p.notes,
                 'updated_at': p.updated_at.isoformat() if p.updated_at else None
@@ -2423,7 +2428,7 @@ def get_average_prices():
     Get average prices for products
     """
     try:
-        from app.models import ProductCatalog, VendorQuotation
+        from app_pkg.models import ProductCatalog, VendorQuotation, compute_price_splits
         products = ProductCatalog.query.filter(ProductCatalog.vendor_count > 0).all()
         
         result = []
@@ -2431,6 +2436,8 @@ def get_average_prices():
             quotations = VendorQuotation.query.filter_by(product_id=p.id, status='approved').all()
             min_price = min([float(q.base_cost) for q in quotations], default=float(p.average_price)) if quotations else float(p.average_price)
             max_price = max([float(q.base_cost) for q in quotations], default=float(p.average_price)) if quotations else float(p.average_price)
+            final_price = float(p.final_price) if p.final_price else (float(p.average_price) * 1.30)
+            splits = compute_price_splits(final_price)
             
             result.append({
                 'id': p.id,
@@ -2440,6 +2447,11 @@ def get_average_prices():
                 'fabric': p.fabric,
                 'size': p.size,
                 'average_price': float(p.average_price) if p.average_price else 0,
+                'final_price': final_price,
+                'vendor_pay': splits['vendor_pay'],
+                'platform_pay': splits['platform_pay'],
+                'rider_pay': splits['rider_pay'],
+                'support_pay': splits['support_pay'],
                 'min_price': min_price,
                 'max_price': max_price,
                 'vendor_count': p.vendor_count or 0,

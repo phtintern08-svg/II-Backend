@@ -697,8 +697,46 @@ class ProductCatalog(db.Model):
         {'extend_existing': True}
     )
     
+    # Price split percentages (of final_price): vendor 70%, platform 15%, rider 13%, support 7%
+    VENDOR_PAY_PCT = 0.70
+    PLATFORM_PAY_PCT = 0.15
+    RIDER_PAY_PCT = 0.13
+    SUPPORT_PAY_PCT = 0.07
+
+    def vendor_pay(self):
+        """70% of final_price"""
+        fp = float(self.final_price) if self.final_price else 0.0
+        return round(fp * self.VENDOR_PAY_PCT, 2)
+
+    def platform_pay(self):
+        """15% of final_price"""
+        fp = float(self.final_price) if self.final_price else 0.0
+        return round(fp * self.PLATFORM_PAY_PCT, 2)
+
+    def rider_pay(self):
+        """13% of final_price"""
+        fp = float(self.final_price) if self.final_price else 0.0
+        return round(fp * self.RIDER_PAY_PCT, 2)
+
+    def support_pay(self):
+        """7% of final_price"""
+        fp = float(self.final_price) if self.final_price else 0.0
+        return round(fp * self.SUPPORT_PAY_PCT, 2)
+
     def __repr__(self):
         return f'<ProductCatalog {self.product_type} - {self.category} - {self.size}>'
+
+
+def compute_price_splits(final_price):
+    """Compute vendor_pay, platform_pay, rider_pay, support_pay from final_price."""
+    fp = float(final_price) if final_price else 0.0
+    return {
+        'vendor_pay': round(fp * 0.70, 2),
+        'platform_pay': round(fp * 0.15, 2),
+        'rider_pay': round(fp * 0.13, 2),
+        'support_pay': round(fp * 0.07, 2),
+    }
+
 
 class VendorQuotation(db.Model):
     __bind_key__ = 'vendor'
