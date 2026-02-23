@@ -382,14 +382,21 @@ def register_request_handlers(app):
     @app.before_request
     def require_access_token():
         """
-        Global Website Lock - protects UI pages only.
-        Blocks: HTML pages, direct browser navigation until unlocked.
+        Global Website Lock - protects main marketing site only.
+        Blocks: HTML pages on impromptuindian.com (naked domain) until unlocked.
+        Skips: All subdomains (vendor, admin, rider, apparels, support, www).
         Allows: /api/* (APIs have their own JWT auth), /unlock, /lock, static files.
         """
         access_token = app.config.get('WEBSITE_ACCESS_TOKEN', '')
         
         # If no token → lock disabled
         if not access_token:
+            return None
+        
+        # 🔥 Skip lock for ALL subdomains - lock only applies to main marketing site
+        # vendor., admin., rider., apparels., support., www. etc. are app dashboards
+        host = request.host.lower()
+        if host != Config.BASE_DOMAIN.lower():
             return None
         
         # Allow unlock + lock routes
