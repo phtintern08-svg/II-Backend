@@ -116,7 +116,11 @@ class Config:
     }
     
     # Session Configuration
-    SESSION_COOKIE_SECURE = os.environ.get('SESSION_COOKIE_SECURE', 'false').lower() == 'true'
+    # CRITICAL: SESSION_COOKIE_DOMAIN with leading dot shares cookie across all subdomains
+    # This enables "unlock once" to work on impromptuindian.com, apparels.impromptuindian.com,
+    # vendor.impromptuindian.com, rider.impromptuindian.com, admin.impromptuindian.com
+    SESSION_COOKIE_DOMAIN = f".{BASE_DOMAIN}" if ENV == 'production' else None
+    SESSION_COOKIE_SECURE = os.environ.get('SESSION_COOKIE_SECURE', 'true' if ENV == 'production' else 'false').lower() == 'true'
     SESSION_COOKIE_HTTPONLY = os.environ.get('SESSION_COOKIE_HTTPONLY', 'true').lower() == 'true'
     SESSION_COOKIE_SAMESITE = os.environ.get('SESSION_COOKIE_SAMESITE', 'Lax')
     
