@@ -686,49 +686,9 @@ def get_quotation_status():
 
 # ============================================================================
 # Production Capacity (Made-to-Order)
-# Collected: After approval, Vendor Dashboard (ongoing), Optional during verification
+# Products auto-populated from APPROVED vendor_quotations.
+# Vendor Price = READ-ONLY (from vendor_quotations). Vendor edits ONLY capacity.
 # ============================================================================
-
-@bp.route('/capacity/products', methods=['GET'])
-@login_required
-@role_required(['vendor'])
-def get_capacity_eligible_products():
-    """
-    GET /api/vendor/capacity/products
-    Returns product_catalog entries that vendor has approved quotations for.
-    Used to populate capacity form - vendor adds capacity for products they quote.
-    """
-    try:
-        vendor_id = request.user_id
-        # Get product_ids from approved quotations
-        quoted_product_ids = [
-            r[0] for r in
-            db.session.query(VendorQuotation.product_id).filter_by(
-                vendor_id=vendor_id,
-                status='approved'
-            ).distinct().all()
-        ]
-        if not quoted_product_ids:
-            return jsonify({"products": [], "message": "Submit and get quotations approved first"}), 200
-
-        products = ProductCatalog.query.filter(ProductCatalog.id.in_(quoted_product_ids)).all()
-        result = [
-            {
-                "id": p.id,
-                "product_type": p.product_type,
-                "category": p.category,
-                "neck_type": p.neck_type,
-                "fabric": p.fabric,
-                "size": p.size,
-                "notes": p.notes
-            }
-            for p in products
-        ]
-        return jsonify({"products": result}), 200
-    except Exception as e:
-        app_logger.exception(f"Get capacity products error: {e}")
-        return jsonify({"error": "Failed to get products"}), 500
-
 
 @bp.route('/capacity', methods=['GET'])
 @login_required
@@ -736,36 +696,81 @@ def get_capacity_eligible_products():
 def get_vendor_capacity():
     """
     GET /api/vendor/capacity
-    Get all production capacity entries for this vendor
+    Returns approved quoted products + capacity (JOIN vendor_quotations + product_catalog + vendor_capacity).
+    Vendor Price = read-only. Capacity fields = editable.
+    Query params: product_type, category, size (filters)
     """
     try:
         vendor_id = request.user_id
-        capacities = VendorCapacity.query.filter_by(vendor_id=vendor_id, is_active=True).all()
+
+        # Fetch approved quotations for this vendor
+        quotations = VendorQuotation.query.filter_by(
+            vendor_id=vendor_id,
+            status='approved'
+        ).all()
+
+        if not quotations:
+            return jsonify({
+                "rows": [],
+                "count": 0,
+                "message": "No approved quotations. Submit quotation and wait for admin approval."
+            }), 200
+
+        product_type_filter = request.args.get('product_type', '').strip().lower()
+        category_filter = request.args.get('category', '').strip().lower()
+        size_filter = request.args.get('size', '').strip().upper()
 
         result = []
-        for c in capacities:
-            # Optionally enrich with product info from catalog (cross-schema)
-            product = None
-            try:
-                product = ProductCatalog.query.get(c.product_catalog_id)
-            except Exception:
-                pass
+        for vq in quotations:
+            product = ProductCatalog.query.get(vq.product_id)
+            if not product:
+                continue
+
+            # Apply filters
+            if product_type_filter and (product.product_type or '').lower() != product_type_filter:
+                continue
+            if category_filter and (product.category or '').lower() != category_filter:
+                continue
+            if size_filter and (product.size or '').upper() != size_filter:
+                continue
+
+            # Get existing capacity (LEFT JOIN)
+            cap = VendorCapacity.query.filter_by(
+                vendor_id=vendor_id,
+                product_catalog_id=vq.product_id,
+                is_active=True
+            ).first()
 
             result.append({
-                "id": c.id,
-                "product_catalog_id": c.product_catalog_id,
-                "daily_capacity": c.daily_capacity,
-                "max_bulk_capacity": c.max_bulk_capacity,
-                "lead_time_days": c.lead_time_days,
-                "product_type": product.product_type if product else None,
-                "category": product.category if product else None,
-                "neck_type": product.neck_type if product else None,
-                "fabric": product.fabric if product else None,
-                "size": product.size if product else None,
-                "updated_at": c.updated_at.isoformat() if c.updated_at else None
+                "product_catalog_id": vq.product_id,
+                "product_type": product.product_type,
+                "category": product.category,
+                "neck_type": product.neck_type,
+                "fabric": product.fabric,
+                "size": product.size,
+                "quoted_price": float(vq.base_cost) if vq.base_cost else 0,  # READ-ONLY
+                "daily_capacity": cap.daily_capacity if cap else 0,
+                "max_bulk_capacity": cap.max_bulk_capacity if cap else 0,
+                "lead_time_days": cap.lead_time_days if cap else 3,
             })
 
-        return jsonify({"capacity": result, "count": len(result)}), 200
+        # Unique product types/categories for filter dropdowns
+        all_quotations = VendorQuotation.query.filter_by(vendor_id=vendor_id, status='approved').all()
+        product_ids = [q.product_id for q in all_quotations]
+        products_for_filters = ProductCatalog.query.filter(ProductCatalog.id.in_(product_ids)).all()
+        product_types = sorted(set(p.product_type for p in products_for_filters if p.product_type))
+        categories = sorted(set(p.category for p in products_for_filters if p.category))
+        sizes = sorted(set(p.size for p in products_for_filters if p.size))
+
+        return jsonify({
+            "rows": result,
+            "count": len(result),
+            "filters": {
+                "product_types": product_types,
+                "categories": categories,
+                "sizes": sizes
+            }
+        }), 200
 
     except Exception as e:
         app_logger.exception(f"Get vendor capacity error: {e}")
@@ -778,8 +783,9 @@ def get_vendor_capacity():
 def upsert_vendor_capacity():
     """
     POST/PUT /api/vendor/capacity
-    Create or update production capacity.
-    Body: single object or array of { product_catalog_id, daily_capacity, max_bulk_capacity?, lead_time_days? }
+    Create or update production capacity ONLY.
+    Body: { product_catalog_id, daily_capacity, max_bulk_capacity?, lead_time_days? }
+    Price is NEVER accepted - vendor can only edit capacity. Price comes from vendor_quotations (admin-controlled).
     """
     try:
         vendor_id = request.user_id
@@ -787,7 +793,6 @@ def upsert_vendor_capacity():
         if not vendor:
             return jsonify({"error": "Vendor not found"}), 404
 
-        # Require approved/active vendor to submit capacity
         if vendor.verification_status not in ['approved', 'active']:
             return jsonify({
                 "error": "Capacity can be submitted only after verification approval",
@@ -807,9 +812,21 @@ def upsert_vendor_capacity():
             if not product_catalog_id:
                 continue
 
+            pcid = int(product_catalog_id)
+
+            # SECURITY: Vendor can only set capacity for products they have APPROVED quotation for
+            vq = VendorQuotation.query.filter_by(
+                vendor_id=vendor_id,
+                product_id=pcid,
+                status='approved'
+            ).first()
+            if not vq:
+                app_logger.warning(f"Vendor {vendor_id} attempted capacity for product {pcid} without approved quotation")
+                continue  # Silently skip - no approved quote for this product
+
             existing = VendorCapacity.query.filter_by(
                 vendor_id=vendor_id,
-                product_catalog_id=int(product_catalog_id)
+                product_catalog_id=pcid
             ).first()
 
             if existing:
@@ -822,7 +839,7 @@ def upsert_vendor_capacity():
             else:
                 new_cap = VendorCapacity(
                     vendor_id=vendor_id,
-                    product_catalog_id=int(product_catalog_id),
+                    product_catalog_id=pcid,
                     daily_capacity=int(daily_capacity),
                     max_bulk_capacity=int(max_bulk_capacity),
                     lead_time_days=int(lead_time_days)
@@ -848,7 +865,7 @@ def upsert_vendor_capacity():
 def delete_vendor_capacity(product_catalog_id):
     """
     DELETE /api/vendor/capacity/<product_catalog_id>
-    Soft-deactivate a capacity entry
+    Soft-deactivate (set capacity to 0) - vendor keeps quotation, just clears capacity.
     """
     try:
         cap = VendorCapacity.query.filter_by(
@@ -859,15 +876,17 @@ def delete_vendor_capacity(product_catalog_id):
         if not cap:
             return jsonify({"error": "Capacity entry not found"}), 404
 
+        cap.daily_capacity = 0
+        cap.max_bulk_capacity = 0
         cap.is_active = False
         cap.updated_at = datetime.utcnow()
         db.session.commit()
-        return jsonify({"message": "Capacity deactivated"}), 200
+        return jsonify({"message": "Capacity cleared"}), 200
 
     except Exception as e:
         db.session.rollback()
         app_logger.exception(f"Delete vendor capacity error: {e}")
-        return jsonify({"error": "Failed to deactivate capacity"}), 500
+        return jsonify({"error": "Failed to clear capacity"}), 500
 
 
 @bp.route('/orders', methods=['GET'])
