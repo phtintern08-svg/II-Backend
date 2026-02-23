@@ -382,11 +382,9 @@ def register_request_handlers(app):
     @app.before_request
     def require_access_token():
         """
-        STRICT GLOBAL LOCK
-        Overrides EVERYTHING including login pages.
-        Blocks: impromptuindian.com, www.impromptuindian.com, apparels.impromptuindian.com,
-                vendor.impromptuindian.com, rider.impromptuindian.com, admin.impromptuindian.com,
-                ALL APIs, ALL routes, EVERYTHING
+        Global Website Lock - protects UI pages only.
+        Blocks: HTML pages, direct browser navigation until unlocked.
+        Allows: /api/* (APIs have their own JWT auth), /unlock, /lock, static files.
         """
         access_token = app.config.get('WEBSITE_ACCESS_TOKEN', '')
         
@@ -394,7 +392,7 @@ def register_request_handlers(app):
         if not access_token:
             return None
         
-        # Allow only unlock + lock routes
+        # Allow unlock + lock routes
         if request.endpoint in ['unlock', 'lock', 'static']:
             return None
         
@@ -402,11 +400,15 @@ def register_request_handlers(app):
         if request.path.startswith(('/static/', '/css/', '/js/', '/images/')):
             return None
         
-        # Check unlock status
+        # 🔥 CRITICAL: Allow ALL API routes - APIs have their own JWT authentication
+        # Blocking APIs causes login/authenticate to return 302 HTML instead of JSON
+        if request.path.startswith('/api/'):
+            return None
+        
+        # Check unlock status for UI pages
         is_unlocked = session.get('site_unlocked', False)
         
         # Debug logging for lock status (helps diagnose session issues)
-        # Log at warning level so it's visible in production logs
         app_logger.warning(
             f"🔐 LOCK CHECK: {request.host} {request.path} | "
             f"unlocked={is_unlocked} | "
