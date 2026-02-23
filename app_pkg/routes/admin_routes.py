@@ -619,31 +619,34 @@ def get_vendors():
 def verify_vendor(vendor_id):
     """
     PUT /api/admin/vendors/<vendor_id>/verify
-    Verify or reject a vendor
+    Verify or reject a vendor.
+    🔥 DB uses 'approved', not 'verified'. Accept both from frontend, store 'approved'.
     """
     try:
         data = request.get_json()
-        status = data.get('status')  # 'verified' or 'rejected'
+        status = (data.get('status') or '').strip().lower()
         remarks = data.get('remarks')
-        
-        if status not in ['verified', 'rejected']:
-            return jsonify({"error": "Invalid status"}), 400
-        
+
+        if status not in ['verified', 'approved', 'rejected']:
+            return jsonify({"error": "Invalid status. Use 'approved' or 'rejected'"}), 400
+
         vendor = Vendor.query.get(vendor_id)
         if not vendor:
             return jsonify({"error": "Vendor not found"}), 404
-        
-        vendor.verification_status = status
+
+        # 🔥 ALWAYS store 'approved' - never 'verified'. System expects 'approved'.
+        db_status = 'approved' if status in ('verified', 'approved') else 'rejected'
+        vendor.verification_status = db_status
         vendor.admin_remarks = remarks
         vendor.updated_at = datetime.utcnow()
-        
+
         db.session.commit()
-        
+
         return jsonify({
-            "message": f"Vendor {status} successfully",
+            "message": f"Vendor {db_status} successfully",
             "vendor_id": vendor_id
         }), 200
-        
+
     except Exception as e:
         db.session.rollback()
         app_logger.exception(f"Verify vendor error: {e}")
@@ -692,31 +695,34 @@ def get_riders():
 def verify_rider(rider_id):
     """
     PUT /api/admin/riders/<rider_id>/verify
-    Verify or reject a rider
+    Verify or reject a rider.
+    🔥 DB uses 'approved', not 'verified'. Accept both from frontend, store 'approved'.
     """
     try:
         data = request.get_json()
-        status = data.get('status')  # 'verified' or 'rejected'
+        status = (data.get('status') or '').strip().lower()
         remarks = data.get('remarks')
-        
-        if status not in ['verified', 'rejected']:
-            return jsonify({"error": "Invalid status"}), 400
-        
+
+        if status not in ['verified', 'approved', 'rejected']:
+            return jsonify({"error": "Invalid status. Use 'approved' or 'rejected'"}), 400
+
         rider = Rider.query.get(rider_id)
         if not rider:
             return jsonify({"error": "Rider not found"}), 404
-        
-        rider.verification_status = status
+
+        # 🔥 ALWAYS store 'approved' - never 'verified'. System expects 'approved'.
+        db_status = 'approved' if status in ('verified', 'approved') else 'rejected'
+        rider.verification_status = db_status
         rider.admin_remarks = remarks
         rider.updated_at = datetime.utcnow()
-        
+
         db.session.commit()
-        
+
         return jsonify({
-            "message": f"Rider {status} successfully",
+            "message": f"Rider {db_status} successfully",
             "rider_id": rider_id
         }), 200
-        
+
     except Exception as e:
         db.session.rollback()
         app_logger.exception(f"Verify rider error: {e}")
