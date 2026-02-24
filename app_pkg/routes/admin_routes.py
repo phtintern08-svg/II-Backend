@@ -1444,7 +1444,12 @@ def upsert_product_catalog(product_type, category, neck_type, fabric, size, pric
 
 def process_quotation_csv(submission):
     """
-    Process quotation CSV file and update product catalog.
+    Process quotation CSV file:
+    - Upserts product_catalog (adds NEW product types from vendor or updates existing)
+    - Creates/updates vendor_quotations linking vendor to each product with base_cost
+    
+    Vendors can add new product types in their quotation; these get inserted into
+    product_catalog and vendor_quotations on admin approval.
     
     Args:
         submission: VendorQuotationSubmission object with quotation_file path
@@ -1512,7 +1517,7 @@ def process_quotation_csv(submission):
                     # Extract notes (optional)
                     notes = product.pop('notes', None)
                     
-                    # Upsert product catalog
+                    # Upsert product catalog (adds NEW product types or updates existing)
                     upsert_product_catalog(
                         product_type=product['product_type'],
                         category=product['category'],
@@ -1522,7 +1527,39 @@ def process_quotation_csv(submission):
                         price=base_cost,
                         notes=notes
                     )
-                    
+                    db.session.flush()
+
+                    # Get product_catalog id (for new or existing variant)
+                    pc = ProductCatalog.query.filter(
+                        func.lower(ProductCatalog.product_type) == product['product_type'].strip().lower(),
+                        func.lower(ProductCatalog.category) == product['category'].strip().lower(),
+                        func.lower(ProductCatalog.neck_type) == product['neck_type'].strip().lower(),
+                        func.lower(ProductCatalog.fabric) == product['fabric'].strip().lower(),
+                        func.upper(ProductCatalog.size) == product['size'].strip().upper()
+                    ).first()
+                    if not pc:
+                        app_logger.warning(f"Row {row_num}: Could not resolve product_catalog id after upsert, skipping")
+                        error_count += 1
+                        continue
+
+                    # Create/update vendor_quotations so vendor sees products in capacity page
+                    vq = VendorQuotation.query.filter_by(
+                        vendor_id=submission.vendor_id,
+                        product_id=pc.id
+                    ).first()
+                    if vq:
+                        vq.base_cost = base_cost
+                        vq.status = 'approved'
+                        vq.admin_remarks = None
+                    else:
+                        vq = VendorQuotation(
+                            vendor_id=submission.vendor_id,
+                            product_id=pc.id,
+                            base_cost=base_cost,
+                            status='approved'
+                        )
+                        db.session.add(vq)
+
                     processed_count += 1
                     
                 except Exception as e:
