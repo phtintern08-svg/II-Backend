@@ -251,6 +251,7 @@ class Order(db.Model):
     selected_vendor_id = db.Column(db.Integer, nullable=True)  # Cross-schema: references vendor schema
     
     # Product Details
+    product_catalog_id = db.Column(db.Integer, nullable=True)  # References admin.product_catalog.id for stock matching
     product_type = db.Column(db.String(50), nullable=False)
     category = db.Column(db.String(50), nullable=False)
     neck_type = db.Column(db.String(50))
@@ -273,6 +274,8 @@ class Order(db.Model):
     
     # Delivery
     delivery_date = db.Column(db.Date, nullable=True, index=True)
+    latitude = db.Column(db.Float)  # Geocoded from address for distance ranking
+    longitude = db.Column(db.Float)
     address_line1 = db.Column(db.String(255), nullable=False)
     address_line2 = db.Column(db.String(255))
     city = db.Column(db.String(100), nullable=False)
@@ -804,6 +807,57 @@ class VendorCapacity(db.Model):
 
     def __repr__(self):
         return f'<VendorCapacity Vendor#{self.vendor_id} Product#{self.product_catalog_id} {self.daily_capacity}/day>'
+
+
+class VendorCapability(db.Model):
+    __bind_key__ = 'vendor'
+    """
+    Defines what each vendor can produce. Enables requirement matching,
+    capacity ranking, and lead time ranking in the recommendation engine.
+    """
+    __tablename__ = 'vendor_capabilities'
+
+    id = db.Column(db.Integer, primary_key=True)
+    vendor_id = db.Column(db.Integer, db.ForeignKey('vendors.id'), nullable=False)
+    product_type = db.Column(db.String(50), nullable=False)
+    fabric = db.Column(db.String(50))
+    print_type = db.Column(db.String(50))
+    max_daily_capacity = db.Column(db.Integer, default=0)
+    lead_time_days = db.Column(db.Integer, default=5)
+
+    vendor = db.relationship('Vendor', backref='capabilities', lazy=True)
+
+    __table_args__ = (
+        db.Index('idx_vendor_capability_lookup', 'product_type', 'fabric', 'print_type'),
+        {'extend_existing': True}
+    )
+
+    def __repr__(self):
+        return f'<VendorCapability Vendor#{self.vendor_id} {self.product_type}/{self.fabric}>'
+
+
+class VendorStock(db.Model):
+    __bind_key__ = 'vendor'
+    """
+    Optional ready-made inventory per product. Used for stock-based ranking.
+    Made-to-order vendors may have 0 stock; capacity handles production.
+    """
+    __tablename__ = 'vendor_stock'
+
+    id = db.Column(db.Integer, primary_key=True)
+    vendor_id = db.Column(db.Integer, db.ForeignKey('vendors.id'), nullable=False)
+    product_catalog_id = db.Column(db.Integer, nullable=False)  # Cross-schema: admin.product_catalog
+    available_quantity = db.Column(db.Integer, default=0)
+
+    vendor = db.relationship('Vendor', backref='stocks', lazy=True)
+
+    __table_args__ = (
+        db.UniqueConstraint('vendor_id', 'product_catalog_id', name='unique_vendor_product_stock'),
+        {'extend_existing': True}
+    )
+
+    def __repr__(self):
+        return f'<VendorStock Vendor#{self.vendor_id} Product#{self.product_catalog_id} qty={self.available_quantity}>'
 
 
 class VendorOrderAssignment(db.Model):

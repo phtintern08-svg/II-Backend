@@ -14,7 +14,8 @@ from app_pkg.models import (
     db, Admin, Customer, Vendor, Rider, Order, OTPLog, Payment, 
     VendorDocument, VendorQuotationSubmission, RiderDocument, Notification,
     VendorOrderAssignment, OrderStatusHistory, DeliveryLog, ProductCatalog,
-    DeliveryPartner, Support, ActivityLog, VendorQuotation, VendorCapacity
+    DeliveryPartner, Support, ActivityLog, VendorQuotation, VendorCapacity,
+    VendorStock
 )
 from app_pkg.auth import login_required, admin_required
 from app_pkg.file_upload import get_file_path_from_db
@@ -833,121 +834,152 @@ def get_all_orders():
         return jsonify({"error": "Failed to retrieve orders"}), 500
 
 
-@bp.route('/orders/<int:order_id>/suggested-vendors', methods=['GET'])
+@bp.route('/orders/<int:order_id>/recommended-vendors', methods=['GET'])
 @admin_required
-def get_suggested_vendors_for_order(order_id):
+def get_recommended_vendors_for_order(order_id):
     """
-    GET /api/admin/orders/<order_id>/suggested-vendors
-    Returns vendors with approved quotation + production capacity for this order.
-    Sorted by lead_time_days ASC (fastest delivery first).
+    GET /api/admin/orders/<order_id>/recommended-vendors
+    Returns vendors ranked by: requirement match, stock, distance, capacity, lead time.
+    Backend-controlled, deterministic, transparent (score breakdown).
     """
     try:
+        from app_pkg.services.vendor_recommendation_engine import get_recommended_vendors
+
         order = Order.query.get(order_id)
         if not order:
             return jsonify({"error": "Order not found"}), 404
 
         total_qty = order.get_effective_quantity()
-        product_catalog_ids = []
-
-        # Resolve order to product_catalog_ids
-        def _resolve_product(product_type, category, neck_type, fabric, size):
-            q = ProductCatalog.query.filter(
-                func.lower(ProductCatalog.product_type) == product_type.lower(),
-                func.lower(ProductCatalog.category) == category.lower(),
-                func.lower(ProductCatalog.size) == size.upper() if size else True
-            )
-            if neck_type:
-                q = q.filter(func.lower(ProductCatalog.neck_type) == neck_type.lower())
-            if fabric:
-                q = q.filter(func.lower(ProductCatalog.fabric) == fabric.lower())
-            p = q.first()
-            return p.id if p else None
-
-        pt = (order.product_type or '').strip()
-        cat = (order.category or '').strip()
-        nt = (order.neck_type or '').strip() or 'none'
-        fb = (order.fabric or '').strip()
-
-        if order.is_bulk_order and order.size_distribution:
-            for size, qty in order.size_distribution.items():
-                pid = _resolve_product(pt, cat, nt, fb, size)
-                if pid and pid not in product_catalog_ids:
-                    product_catalog_ids.append(pid)
-        else:
-            size = order.sample_size or (order.size_distribution and next(iter(order.size_distribution.keys()), None)) or 'M'
-            pid = _resolve_product(pt, cat, nt, fb, size)
-            if pid:
-                product_catalog_ids.append(pid)
-
+        product_catalog_ids = _resolve_order_to_product_catalog_ids(order)
         if not product_catalog_ids:
             return jsonify({
-                "suggested_vendors": [],
-                "message": "Could not resolve order to product catalog. Check product_type, category, neck_type, fabric, size.",
-                "order_product": f"{pt} / {cat} / {nt} / {fb}"
+                "recommended_vendors": [],
+                "message": "Could not resolve order to product catalog.",
+                "order_product": f"{order.product_type or ''} / {order.category or ''} / {order.neck_type or ''} / {order.fabric or ''}"
             }), 200
 
-        # Find vendors with approved quotation + capacity
-        candidates = []
-        for vid in db.session.query(VendorQuotation.vendor_id).filter(
-            VendorQuotation.product_id.in_(product_catalog_ids),
-            VendorQuotation.status == 'approved'
-        ).distinct().all():
-            vid = vid[0]
-            vendor = Vendor.query.get(vid)
-            if not vendor or vendor.verification_status not in ['approved', 'active']:
-                continue
-
-            # Check capacity for ALL required product variants
-            capacity_ok = True
-            best_lead = 999
-            total_capacity_days = 0
-            for pcid in product_catalog_ids:
-                cap = VendorCapacity.query.filter_by(
-                    vendor_id=vid,
-                    product_catalog_id=pcid,
-                    is_active=True
-                ).first()
-                if not cap or cap.daily_capacity <= 0:
-                    capacity_ok = False
-                    break
-                # Required: daily_capacity * lead_time_days >= total_qty
-                required_days = (total_qty + cap.daily_capacity - 1) // cap.daily_capacity if cap.daily_capacity else 999
-                if required_days > cap.lead_time_days:
-                    capacity_ok = False
-                    break
-                if cap.max_bulk_capacity > 0 and total_qty > cap.max_bulk_capacity:
-                    capacity_ok = False
-                    break
-                best_lead = min(best_lead, cap.lead_time_days)
-
-            if not capacity_ok:
-                continue
-
-            # Get quotation for display
-            quot = VendorQuotation.query.filter_by(
-                vendor_id=vid,
-                product_id=product_catalog_ids[0],
-                status='approved'
-            ).first()
-            base_cost = float(quot.base_cost) if quot else 0
-
-            candidates.append({
-                "vendor_id": vid,
-                "vendor_name": vendor.business_name or vendor.username or f"Vendor #{vid}",
-                "lead_time_days": best_lead,
-                "base_cost_per_piece": base_cost,
-                "city": vendor.city,
-                "state": vendor.state
-            })
-
-        candidates.sort(key=lambda x: (x["lead_time_days"], x["base_cost_per_piece"]))
-
+        import app_pkg.models as models
+        candidates = get_recommended_vendors(order, product_catalog_ids, total_qty, db, models)
         return jsonify({
-            "suggested_vendors": candidates,
+            "recommended_vendors": candidates,
             "order_quantity": total_qty,
             "product_catalog_ids": product_catalog_ids
         }), 200
+    except Exception as e:
+        app_logger.exception(f"Get recommended vendors error: {e}")
+        return jsonify({"error": "Failed to get recommended vendors"}), 500
 
+
+def _resolve_order_to_product_items(order):
+    """Resolve order to list of (product_catalog_id, quantity) for stock deduction."""
+    def _resolve(product_type, category, neck_type, fabric, size):
+        q = ProductCatalog.query.filter(
+            func.lower(ProductCatalog.product_type) == (product_type or '').lower(),
+            func.lower(ProductCatalog.category) == (category or '').lower(),
+        )
+        if size:
+            q = q.filter(func.upper(ProductCatalog.size) == (size or '').upper())
+        if neck_type:
+            q = q.filter(func.lower(ProductCatalog.neck_type) == neck_type.lower())
+        if fabric:
+            q = q.filter(func.lower(ProductCatalog.fabric) == fabric.lower())
+        p = q.first()
+        return p.id if p else None
+
+    pt = (order.product_type or '').strip()
+    cat = (order.category or '').strip()
+    nt = (order.neck_type or '').strip() or 'none'
+    fb = (order.fabric or '').strip()
+    items = []
+    if order.is_bulk_order and order.size_distribution:
+        for size, qty in order.size_distribution.items():
+            pid = _resolve(pt, cat, nt, fb, size)
+            if pid and qty:
+                items.append((pid, int(qty)))
+    else:
+        size = order.sample_size or (order.size_distribution and next(iter(order.size_distribution.keys()), None)) or 'M'
+        pid = _resolve(pt, cat, nt, fb, size)
+        if pid:
+            items.append((pid, order.get_effective_quantity()))
+    return items
+
+
+def _resolve_order_to_product_catalog_ids(order):
+    """Resolve order product fields to product_catalog ids."""
+    def _resolve(product_type, category, neck_type, fabric, size):
+        q = ProductCatalog.query.filter(
+            func.lower(ProductCatalog.product_type) == (product_type or '').lower(),
+            func.lower(ProductCatalog.category) == (category or '').lower(),
+        )
+        if size:
+            q = q.filter(func.upper(ProductCatalog.size) == (size or '').upper())
+        if neck_type:
+            q = q.filter(func.lower(ProductCatalog.neck_type) == neck_type.lower())
+        if fabric:
+            q = q.filter(func.lower(ProductCatalog.fabric) == fabric.lower())
+        p = q.first()
+        return p.id if p else None
+
+    pt = (order.product_type or '').strip()
+    cat = (order.category or '').strip()
+    nt = (order.neck_type or '').strip() or 'none'
+    fb = (order.fabric or '').strip()
+    ids = []
+    if order.is_bulk_order and order.size_distribution:
+        for size in order.size_distribution.keys():
+            pid = _resolve(pt, cat, nt, fb, size)
+            if pid and pid not in ids:
+                ids.append(pid)
+    else:
+        size = order.sample_size or (order.size_distribution and next(iter(order.size_distribution.keys()), None)) or 'M'
+        pid = _resolve(pt, cat, nt, fb, size)
+        if pid:
+            ids.append(pid)
+    return ids
+
+
+@bp.route('/orders/<int:order_id>/suggested-vendors', methods=['GET'])
+@admin_required
+def get_suggested_vendors_for_order(order_id):
+    """
+    GET /api/admin/orders/<order_id>/suggested-vendors (LEGACY)
+    Uses recommendation engine; returns suggested_vendors for backward compatibility.
+    """
+    try:
+        from app_pkg.services.vendor_recommendation_engine import get_recommended_vendors
+        import app_pkg.models as models
+
+        order = Order.query.get(order_id)
+        if not order:
+            return jsonify({"error": "Order not found"}), 404
+        total_qty = order.get_effective_quantity()
+        product_catalog_ids = _resolve_order_to_product_catalog_ids(order)
+        if not product_catalog_ids:
+            return jsonify({
+                "suggested_vendors": [],
+                "message": "Could not resolve order to product catalog.",
+                "order_product": f"{order.product_type or ''} / {order.category or ''}"
+            }), 200
+        rec = get_recommended_vendors(order, product_catalog_ids, total_qty, db, models)
+        suggested = [
+            {
+                "vendor_id": r["vendor_id"],
+                "vendor_name": r["vendor_name"],
+                "lead_time_days": r["lead_time_days"],
+                "base_cost_per_piece": r["base_cost_per_piece"],
+                "city": r.get("city"),
+                "state": r.get("state"),
+                "score": r.get("score"),
+                "stock_available": r.get("stock_available"),
+                "distance_km": r.get("distance_km"),
+            }
+            for r in rec
+        ]
+        return jsonify({
+            "suggested_vendors": suggested,
+            "order_quantity": total_qty,
+            "product_catalog_ids": product_catalog_ids
+        }), 200
     except Exception as e:
         app_logger.exception(f"Get suggested vendors error: {e}")
         return jsonify({"error": "Failed to get suggested vendors"}), 500
@@ -1035,7 +1067,17 @@ def assign_order_to_vendor(order_id):
             type='order'
         )
         db.session.add(notif)
-        
+
+        # Deduct vendor_stock when assigning (within same transaction)
+        product_items = _resolve_order_to_product_items(order)
+        for pcid, qty in product_items:
+            stock_row = VendorStock.query.filter_by(
+                vendor_id=vendor_id,
+                product_catalog_id=pcid
+            ).first()
+            if stock_row and stock_row.available_quantity >= qty:
+                stock_row.available_quantity = stock_row.available_quantity - qty
+
         db.session.commit()
         
         # Log activity
@@ -1392,67 +1434,95 @@ CSV_HEADER_MAP = {
 }
 
 
-def upsert_product_catalog(product_type, category, neck_type, fabric, size, price, notes=None):
+def ensure_product_catalog_exists(product_type, category, neck_type, fabric, size, notes=None):
     """
-    Insert or update product catalog entry.
-    If product variant exists, update average_price and vendor_count.
-    If new, create with initial values.
+    Insert product catalog entry ONLY if it does not exist.
+    Does NOT update pricing - pricing is calculated by the Pricing Engine from vendor_quotations.
     
     Args:
-        product_type: Product type (e.g., "T-Shirt")
-        category: Category (e.g., "Regular Fit")
-        neck_type: Neck type (e.g., "Crew Neck")
-        fabric: Fabric type (e.g., "Cotton")
-        size: Size (e.g., "M")
-        price: Base cost from vendor
-        notes: Optional notes
+        product_type, category, neck_type, fabric, size, notes
+    Returns:
+        ProductCatalog id
     """
-    # Use MySQL's VALUES() function to reference the inserted value
-    # This works with MySQL 8.0.19+ and is the standard way to reference new values
-    # final_price = average_price + 30% of average_price = average_price * 1.30
+    pc = ProductCatalog.query.filter(
+        func.lower(ProductCatalog.product_type) == product_type.strip().lower(),
+        func.lower(ProductCatalog.category) == category.strip().lower(),
+        func.lower(ProductCatalog.neck_type) == neck_type.strip().lower(),
+        func.lower(ProductCatalog.fabric) == fabric.strip().lower(),
+        func.upper(ProductCatalog.size) == size.strip().upper()
+    ).first()
+    if pc:
+        if notes and not pc.notes:
+            pc.notes = notes
+        return pc.id
+    # Insert new with 0/0/0 - pricing engine will populate after vendor_quotations exist
     sql = text("""
         INSERT INTO product_catalog
-        (
-            product_type, category, neck_type, fabric, size,
-            notes, average_price, final_price, vendor_count
-        )
-        VALUES
-        (
-            :product_type, :category, :neck_type, :fabric, :size,
-            :notes, :price, :price * 1.30, 1
-        )
-        ON DUPLICATE KEY UPDATE
-            average_price =
-              ((average_price * vendor_count) + :price)
-              / (vendor_count + 1),
-            vendor_count = vendor_count + 1,
-            final_price = 
-              (((average_price * vendor_count) + :price) / (vendor_count + 1)) * 1.30,
-            notes = COALESCE(:notes, notes)
+        (product_type, category, neck_type, fabric, size, notes, average_price, final_price, vendor_count)
+        VALUES (:product_type, :category, :neck_type, :fabric, :size, :notes, 0, 0, 0)
     """)
-    
     db.session.execute(sql, {
-        "product_type": product_type,
-        "category": category,
-        "neck_type": neck_type,
-        "fabric": fabric,
-        "size": size,
-        "price": price,
+        "product_type": product_type.strip(),
+        "category": category.strip(),
+        "neck_type": neck_type.strip(),
+        "fabric": fabric.strip(),
+        "size": size.strip().upper(),
         "notes": notes
     })
+    db.session.flush()
+    # Fetch the new id
+    pc = ProductCatalog.query.filter(
+        func.lower(ProductCatalog.product_type) == product_type.strip().lower(),
+        func.lower(ProductCatalog.category) == category.strip().lower(),
+        func.lower(ProductCatalog.neck_type) == neck_type.strip().lower(),
+        func.lower(ProductCatalog.fabric) == fabric.strip().lower(),
+        func.upper(ProductCatalog.size) == size.strip().upper()
+    ).first()
+    return pc.id if pc else None
+
+
+def recalculate_product_catalog_pricing(product_catalog_ids):
+    """
+    Pricing Engine: Recalculate product_catalog from approved vendor_quotations.
+    
+    average_price = AVG(quoted_price) where is_approved (status='approved')
+    vendor_count = COUNT(approved quotations)
+    final_price = average_price * 1.30 (30% platform margin)
+    
+    Only approved quotations affect pricing. Vendors cannot manipulate marketplace price.
+    """
+    if not product_catalog_ids:
+        return
+    for pcid in product_catalog_ids:
+        # Aggregate from vendor_quotations (vendor DB) - use product_id = product_catalog_id
+        agg = db.session.query(
+            func.avg(VendorQuotation.base_cost).label('avg_price'),
+            func.count(VendorQuotation.id).label('cnt')
+        ).filter(
+            VendorQuotation.product_id == pcid,
+            VendorQuotation.status == 'approved'
+        ).first()
+        avg_price = float(agg.avg_price) if agg and agg.avg_price else 0.0
+        vendor_count = int(agg.cnt) if agg and agg.cnt else 0
+        final_price = round(avg_price * 1.30, 2) if avg_price else 0.0
+        pc = ProductCatalog.query.get(pcid)
+        if pc:
+            pc.average_price = avg_price
+            pc.final_price = final_price
+            pc.vendor_count = vendor_count
+            pc.updated_at = datetime.utcnow()
+    db.session.flush()
 
 
 def process_quotation_csv(submission):
     """
-    Process quotation CSV file:
-    - Upserts product_catalog (adds NEW product types from vendor or updates existing)
-    - Creates/updates vendor_quotations linking vendor to each product with base_cost
+    Process quotation CSV file (FINAL ARCHITECTURE):
     
-    Vendors can add new product types in their quotation; these get inserted into
-    product_catalog and vendor_quotations on admin approval.
+    1. Ensure product_catalog rows exist (INSERT only if new - NO pricing update)
+    2. Insert/update vendor_quotations (vendor_id, product_catalog_id, base_cost, status='approved')
+    3. Run Pricing Engine: recalculate product_catalog from AVG(approved vendor_quotations)
     
-    Args:
-        submission: VendorQuotationSubmission object with quotation_file path
+    Vendors can add new product types; pricing is ALWAYS derived from approved quotations.
     """
     try:
         upload_root = current_app.config.get('UPLOAD_FOLDER')
@@ -1469,6 +1539,7 @@ def process_quotation_csv(submission):
         
         processed_count = 0
         error_count = 0
+        affected_product_catalog_ids = set()
         
         # Open CSV with UTF-8-sig encoding to handle BOM from Excel
         with open(csv_path, newline='', encoding='utf-8-sig') as f:
@@ -1517,35 +1588,25 @@ def process_quotation_csv(submission):
                     # Extract notes (optional)
                     notes = product.pop('notes', None)
                     
-                    # Upsert product catalog (adds NEW product types or updates existing)
-                    upsert_product_catalog(
+                    # Step 1: Ensure product_catalog exists (no pricing - pricing engine handles that)
+                    pcid = ensure_product_catalog_exists(
                         product_type=product['product_type'],
                         category=product['category'],
                         neck_type=product['neck_type'],
                         fabric=product['fabric'],
                         size=product['size'],
-                        price=base_cost,
                         notes=notes
                     )
-                    db.session.flush()
-
-                    # Get product_catalog id (for new or existing variant)
-                    pc = ProductCatalog.query.filter(
-                        func.lower(ProductCatalog.product_type) == product['product_type'].strip().lower(),
-                        func.lower(ProductCatalog.category) == product['category'].strip().lower(),
-                        func.lower(ProductCatalog.neck_type) == product['neck_type'].strip().lower(),
-                        func.lower(ProductCatalog.fabric) == product['fabric'].strip().lower(),
-                        func.upper(ProductCatalog.size) == product['size'].strip().upper()
-                    ).first()
-                    if not pc:
-                        app_logger.warning(f"Row {row_num}: Could not resolve product_catalog id after upsert, skipping")
+                    if not pcid:
+                        app_logger.warning(f"Row {row_num}: Could not resolve product_catalog id, skipping")
                         error_count += 1
                         continue
+                    db.session.flush()
 
-                    # Create/update vendor_quotations so vendor sees products in capacity page
+                    # Step 2: Create/update vendor_quotations (pricing input layer)
                     vq = VendorQuotation.query.filter_by(
                         vendor_id=submission.vendor_id,
-                        product_id=pc.id
+                        product_id=pcid
                     ).first()
                     if vq:
                         vq.base_cost = base_cost
@@ -1554,18 +1615,23 @@ def process_quotation_csv(submission):
                     else:
                         vq = VendorQuotation(
                             vendor_id=submission.vendor_id,
-                            product_id=pc.id,
+                            product_id=pcid,
                             base_cost=base_cost,
                             status='approved'
                         )
                         db.session.add(vq)
 
+                    affected_product_catalog_ids.add(pcid)
                     processed_count += 1
                     
                 except Exception as e:
                     app_logger.warning(f"Row {row_num}: Error processing row: {e}")
                     error_count += 1
                     continue
+        
+        # Step 3: Pricing Engine - recalculate product_catalog from approved vendor_quotations
+        if affected_product_catalog_ids:
+            recalculate_product_catalog_pricing(list(affected_product_catalog_ids))
         
         app_logger.info(f"CSV processing complete: {processed_count} rows processed, {error_count} errors")
         return processed_count, error_count
@@ -2555,6 +2621,28 @@ def get_product_catalog():
     except Exception as e:
         app_logger.exception(f"Get product catalog error: {e}")
         return jsonify({"error": "Failed to retrieve product catalog"}), 500
+
+
+@bp.route('/product-catalog/recalculate-pricing', methods=['POST'])
+@admin_required
+def recalculate_product_catalog_pricing_all():
+    """
+    POST /api/admin/product-catalog/recalculate-pricing
+    Recalculate all product_catalog pricing from approved vendor_quotations.
+    Use after data fixes or migration.
+    """
+    try:
+        all_ids = [p.id for p in ProductCatalog.query.all()]
+        recalculate_product_catalog_pricing(all_ids)
+        db.session.commit()
+        return jsonify({
+            "message": "Pricing engine completed successfully",
+            "products_updated": len(all_ids)
+        }), 200
+    except Exception as e:
+        db.session.rollback()
+        app_logger.exception(f"Recalculate pricing error: {e}")
+        return jsonify({"error": "Failed to recalculate pricing"}), 500
 
 
 @bp.route('/quotations/stats', methods=['GET'])

@@ -2,9 +2,10 @@
 Vendor Routes Blueprint
 Handles vendor-specific endpoints for quotations, orders, and profile management
 """
-from flask import Blueprint, request, jsonify, send_file
+from flask import Blueprint, request, jsonify, send_file, current_app
 from datetime import datetime
 import os
+from sqlalchemy import text
 
 from app_pkg.models import (
     db, Vendor, VendorQuotation, VendorDocument, VendorOrderAssignment, Order,
@@ -711,71 +712,80 @@ def get_quotation_status():
 def get_vendor_capacity():
     """
     GET /api/vendor/capacity
-    Returns approved quoted products + capacity (JOIN vendor_quotations + product_catalog + vendor_capacity).
-    Vendor Price = read-only. Capacity fields = editable.
-    Query params: product_type, category, size (filters)
+
+    Capacity page SOURCE OF TRUTH = vendor_quotations (approved only).
+    Query: FROM vendor_quotations → LEFT JOIN product_catalog → LEFT JOIN vendor_capacity.
+    NEVER start from product_catalog or vendor_capacity.
+
+    Vendor Price = read-only (from vendor_quotations.base_cost).
+    Capacity fields = editable (from vendor_capacity).
     """
     try:
         vendor_id = request.user_id
-
-        # Fetch approved quotations for this vendor
-        quotations = VendorQuotation.query.filter_by(
-            vendor_id=vendor_id,
-            status='approved'
-        ).all()
-
-        if not quotations:
-            return jsonify({
-                "rows": [],
-                "count": 0,
-                "message": "No approved quotations. Submit quotation and wait for admin approval."
-            }), 200
+        vendor_db = current_app.config.get('DB_NAME_VENDOR', 'impromptuindian_vendor')
+        admin_db = current_app.config.get('DB_NAME_ADMIN', 'impromptuindian_admin')
+        if not all(c.isalnum() or c == '_' for c in vendor_db):
+            vendor_db = 'impromptuindian_vendor'
+        if not all(c.isalnum() or c == '_' for c in admin_db):
+            admin_db = 'impromptuindian_admin'
 
         product_type_filter = request.args.get('product_type', '').strip().lower()
         category_filter = request.args.get('category', '').strip().lower()
         size_filter = request.args.get('size', '').strip().upper()
 
+        sql = text(f"""
+            SELECT
+                vq.product_id AS product_catalog_id,
+                COALESCE(pc.product_type, CONCAT('Product #', vq.product_id)) AS product_type,
+                COALESCE(pc.category, '-') AS category,
+                COALESCE(pc.neck_type, '-') AS neck_type,
+                COALESCE(pc.fabric, '-') AS fabric,
+                COALESCE(pc.size, '-') AS size,
+                vq.base_cost AS quoted_price,
+                COALESCE(vc.daily_capacity, 0) AS daily_capacity,
+                COALESCE(vc.max_bulk_capacity, 0) AS max_bulk_capacity,
+                COALESCE(vc.lead_time_days, 3) AS lead_time_days
+            FROM {vendor_db}.vendor_quotations vq
+            LEFT JOIN {admin_db}.product_catalog pc ON pc.id = vq.product_id
+            LEFT JOIN {vendor_db}.vendor_capacity vc
+                ON vc.product_catalog_id = vq.product_id
+                AND vc.vendor_id = vq.vendor_id
+                AND vc.is_active = 1
+            WHERE vq.vendor_id = :vendor_id
+            AND LOWER(TRIM(COALESCE(vq.status, ''))) = 'approved'
+            ORDER BY vq.product_id
+        """)
+
+        rows = db.session.execute(sql, {"vendor_id": vendor_id}).fetchall()
+
         result = []
-        for vq in quotations:
-            product = ProductCatalog.query.get(vq.product_id)
-            if not product:
+        for row in rows:
+            pt = (row.product_type or '').strip().lower()
+            cat = (row.category or '').strip().lower()
+            sz = (row.size or '-').strip().upper()
+            if product_type_filter and pt != product_type_filter:
                 continue
-
-            # Apply filters
-            if product_type_filter and (product.product_type or '').lower() != product_type_filter:
+            if category_filter and cat != category_filter:
                 continue
-            if category_filter and (product.category or '').lower() != category_filter:
+            if size_filter and sz != size_filter:
                 continue
-            if size_filter and (product.size or '').upper() != size_filter:
-                continue
-
-            # Get existing capacity (LEFT JOIN)
-            cap = VendorCapacity.query.filter_by(
-                vendor_id=vendor_id,
-                product_catalog_id=vq.product_id,
-                is_active=True
-            ).first()
 
             result.append({
-                "product_catalog_id": vq.product_id,
-                "product_type": product.product_type,
-                "category": product.category,
-                "neck_type": product.neck_type,
-                "fabric": product.fabric,
-                "size": product.size,
-                "quoted_price": float(vq.base_cost) if vq.base_cost else 0,  # READ-ONLY
-                "daily_capacity": cap.daily_capacity if cap else 0,
-                "max_bulk_capacity": cap.max_bulk_capacity if cap else 0,
-                "lead_time_days": cap.lead_time_days if cap else 3,
+                "product_catalog_id": row.product_catalog_id,
+                "product_type": row.product_type or f"Product #{row.product_catalog_id}",
+                "category": row.category or "-",
+                "neck_type": row.neck_type or "-",
+                "fabric": row.fabric or "-",
+                "size": row.size or "-",
+                "quoted_price": float(row.quoted_price) if row.quoted_price is not None else 0,
+                "daily_capacity": int(row.daily_capacity or 0),
+                "max_bulk_capacity": int(row.max_bulk_capacity or 0),
+                "lead_time_days": int(row.lead_time_days or 3),
             })
 
-        # Unique product types/categories for filter dropdowns
-        all_quotations = VendorQuotation.query.filter_by(vendor_id=vendor_id, status='approved').all()
-        product_ids = [q.product_id for q in all_quotations]
-        products_for_filters = ProductCatalog.query.filter(ProductCatalog.id.in_(product_ids)).all()
-        product_types = sorted(set(p.product_type for p in products_for_filters if p.product_type))
-        categories = sorted(set(p.category for p in products_for_filters if p.category))
-        sizes = sorted(set(p.size for p in products_for_filters if p.size))
+        product_types = sorted(set(r["product_type"] for r in result if r["product_type"] and not r["product_type"].startswith("Product #")))
+        categories = sorted(set(r["category"] for r in result if r["category"] and r["category"] != "-"))
+        sizes = sorted(set(r["size"] for r in result if r["size"] and r["size"] != "-"))
 
         return jsonify({
             "rows": result,
@@ -784,7 +794,8 @@ def get_vendor_capacity():
                 "product_types": product_types,
                 "categories": categories,
                 "sizes": sizes
-            }
+            },
+            "message": "No approved quotations. Submit quotation and wait for admin approval." if not result else None
         }), 200
 
     except Exception as e:
