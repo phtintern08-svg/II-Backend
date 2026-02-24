@@ -1,5 +1,6 @@
 
 venv/
+access_auth.json
 __pycache__/
 *.pyc
 *.pyo
