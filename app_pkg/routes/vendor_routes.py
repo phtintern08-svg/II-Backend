@@ -307,6 +307,19 @@ def upload_verification_document():
         vendor = Vendor.query.get(vendor_id)
         if not vendor:
             return jsonify({"error": "Vendor not found"}), 404
+
+        # SECURITY: Enforce upload rules - block non-compliant requests (Postman/DOM bypass)
+        v_status = vendor.verification_status or 'not-submitted'
+        if v_status in ('pending', 'approved'):
+            return jsonify({"error": "Documents cannot be modified during or after approval"}), 403
+        if v_status == 'rejected':
+            doc_row_check = VendorDocument.query.filter_by(vendor_id=vendor_id).first()
+            doc_meta = None
+            if doc_row_check and hasattr(doc_row_check, f"{doc_type}_meta"):
+                doc_meta = getattr(doc_row_check, f"{doc_type}_meta") or {}
+            doc_status = (doc_meta or {}).get('status', 'pending')
+            if doc_status != 'rejected':
+                return jsonify({"error": "Only rejected documents can be re-uploaded"}), 403
         
         # Validate and save file
         file_info, error = validate_and_save_file(
