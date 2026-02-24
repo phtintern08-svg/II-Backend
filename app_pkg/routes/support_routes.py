@@ -74,8 +74,13 @@ def reverse_geocode():
     # 🔥 PRODUCTION SAFETY: Hard cap to prevent memory exhaustion under attack
     # If dict grows beyond 10,000 IPs, clear it (prevents unbounded memory growth)
     if len(reverse_geocode._last_requests) > 10000:
-        app_logger.warning("Rate limiter memory cap reached - clearing cache")
+        ips_count = len(reverse_geocode._last_requests)
         reverse_geocode._last_requests.clear()
+        app_logger.warning(
+            "Cache cleared: rate_limiter (reverse_geocode) | ips_cleared=%d | cap=10000 | at=%s",
+            ips_count,
+            datetime.utcnow().isoformat()
+        )
     
     # Get IP's request times in last minute
     ip_requests = reverse_geocode._last_requests.get(client_ip, [])

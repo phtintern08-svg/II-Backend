@@ -1546,29 +1546,29 @@ def approve_quotation_submission(submission_id):
     Approve quotation submission
     """
     try:
-        data = request.get_json()
-        final_commission_rate = data.get('commission_rate')
-        
-        if not final_commission_rate:
-            return jsonify({"error": "Commission rate is required"}), 400
-        
+        data = request.get_json() or {}
         submission = VendorQuotationSubmission.query.get(submission_id)
         if not submission:
             return jsonify({"error": "Submission not found"}), 404
-        
+
         if submission.status == 'approved':
             return jsonify({"error": "This submission is already approved"}), 400
-        
+
+        # Use vendor's proposed commission rate only - admin cannot edit
+        final_commission_rate = submission.proposed_commission_rate
+        if final_commission_rate is None or float(final_commission_rate) < 0:
+            return jsonify({"error": "Invalid commission rate in submission"}), 400
+
         vendor = Vendor.query.get(submission.vendor_id)
         if not vendor:
             return jsonify({"error": "Vendor not found"}), 404
-        
+
         # Update submission status
         submission.status = 'approved'
         submission.reviewed_at = datetime.utcnow()
         submission.admin_remarks = data.get('remarks', 'Approved')
-        
-        # Update vendor's commission rate
+
+        # Update vendor's commission rate (vendor's proposed rate, not admin-editable)
         vendor.commission_rate = float(final_commission_rate)
         
         # Process CSV and update product catalog
