@@ -811,6 +811,40 @@ class VendorCapacity(db.Model):
         return f'<VendorCapacity Vendor#{self.vendor_id} Product#{self.product_catalog_id} {self.daily_capacity}/day>'
 
 
+class CartProduct(db.Model):
+    __bind_key__ = 'vendor'
+    """
+    Vendor-created products requiring admin approval.
+    Only approved products are visible to customers.
+    """
+    __tablename__ = 'cart_products'
+    
+    id = db.Column(db.Integer, primary_key=True)
+    vendor_id = db.Column(db.Integer, db.ForeignKey('vendors.id'), nullable=False)
+    product_type = db.Column(db.String(100), nullable=False)
+    product_name = db.Column(db.String(150), nullable=False)
+    description = db.Column(db.Text)
+    cost_price = db.Column(db.Numeric(10, 2), nullable=False)
+    sizes = db.Column(MySQLJSON, nullable=False)  # JSON array: ["S","M","L","XL"]
+    images = db.Column(MySQLJSON)  # JSON array: ["img1.jpg","img2.jpg"]
+    status = db.Column(db.Enum('pending', 'approved', 'rejected', name='product_status'), default='pending', index=True)
+    admin_remarks = db.Column(db.Text)
+    created_at = db.Column(db.DateTime, default=datetime.utcnow)
+    updated_at = db.Column(db.DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
+    
+    vendor = db.relationship('Vendor', backref='cart_products', lazy=True)
+    
+    __table_args__ = (
+        db.Index('idx_vendor_id', 'vendor_id'),
+        db.Index('idx_status', 'status'),
+        db.Index('idx_product_type', 'product_type'),
+        {'extend_existing': True}
+    )
+    
+    def __repr__(self):
+        return f'<CartProduct #{self.id} - {self.product_name} ({self.status}) by Vendor#{self.vendor_id}>'
+
+
 class VendorCapability(db.Model):
     __bind_key__ = 'vendor'
     """

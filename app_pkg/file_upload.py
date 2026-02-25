@@ -86,6 +86,11 @@ ENDPOINT_LIMITS = {
         'max_size': 10 * 1024 * 1024,  # 10MB
         'restrict_to': ['text/csv', 'application/csv', 'text/plain'],  # CSV files (browsers send as text/plain)
     },
+    '/api/vendor/cart-products': {
+        'allowed_types': ['image'],
+        'max_size': 5 * 1024 * 1024,  # 5MB per image
+        'restrict_to': ['image/jpeg', 'image/jpg', 'image/png', 'image/webp'],
+    },
     '/vendor/submit-quotation': {
         'allowed_types': ['quotation'],
         'max_size': 10 * 1024 * 1024,  # 10MB

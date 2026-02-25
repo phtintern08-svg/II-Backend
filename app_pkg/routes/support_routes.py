@@ -2,18 +2,19 @@
 Support Routes Blueprint
 Handles support endpoints like config, geocoding, categories, threads, and profile updates
 """
-from flask import Blueprint, request, jsonify, current_app
+from flask import Blueprint, request, jsonify, current_app, send_file
 from datetime import datetime
 import os
 import requests
 
 from config import Config
-from app_pkg.models import db, Category, Thread, Comment, Customer, Vendor, Support, Notification, ProductCatalog, MarketplaceProduct
+from app_pkg.models import db, Category, Thread, Comment, Customer, Vendor, Support, Notification, ProductCatalog, MarketplaceProduct, CartProduct
 from werkzeug.security import check_password_hash, generate_password_hash
 from app_pkg.auth import login_required, role_required
 from app_pkg.schemas import category_schema, categories_schema, thread_schema, threads_schema, comment_schema, comments_schema
 from app_pkg.logger_config import app_logger
 from app_pkg.activity_logger import log_activity
+from app_pkg.file_upload import get_file_path_from_db
 
 # Create blueprint
 bp = Blueprint('support', __name__)
@@ -1119,3 +1120,95 @@ def get_marketplace_products():
     except Exception as e:
         app_logger.exception(f"Get marketplace products error: {e}")
         return jsonify({"error": "Failed to retrieve products"}), 500
+
+
+@bp.route('/cart-products', methods=['GET'])
+def get_cart_products():
+    """
+    GET /api/cart-products
+    Get all APPROVED cart products (public endpoint - no auth required)
+    Customers only see APPROVED products (PENDING and REJECTED are hidden)
+    
+    Returns product listing with:
+    - Product images
+    - Product name
+    - Cost price
+    - Available sizes
+    - Vendor information
+    """
+    try:
+        # 🔥 PRODUCTION RULE: Customers must NEVER see PENDING or REJECTED products
+        products = CartProduct.query.filter_by(status='approved').order_by(
+            CartProduct.created_at.desc()
+        ).all()
+        
+        products_list = []
+        for p in products:
+            images = p.images if p.images else []
+            sizes = p.sizes if p.sizes else []
+            
+            # Get vendor info
+            vendor = Vendor.query.get(p.vendor_id)
+            vendor_name = vendor.business_name if vendor else f"Vendor #{p.vendor_id}"
+            
+            products_list.append({
+                "id": f"cp_{p.id}",
+                "name": p.product_name,
+                "product_type": p.product_type,
+                "description": p.description or "",
+                "cost_price": float(p.cost_price) if p.cost_price else 0,
+                "sizes": sizes,
+                "images": images,
+                "vendor_id": p.vendor_id,
+                "vendor_name": vendor_name,
+                "created_at": p.created_at.isoformat() if p.created_at else None
+            })
+        
+        return jsonify({
+            "products": products_list,
+            "count": len(products_list)
+        }), 200
+        
+    except Exception as e:
+        app_logger.exception(f"Get cart products error: {e}")
+        return jsonify({"error": "Failed to retrieve cart products"}), 500
+
+
+@bp.route('/uploads/<path:file_path>', methods=['GET'])
+def serve_uploaded_file(file_path):
+    """
+    GET /api/uploads/<file_path>
+    Serve uploaded files (images, documents, etc.)
+    Public endpoint - no auth required for viewing uploaded content
+    """
+    try:
+        # Security: Prevent path traversal attacks
+        if '..' in file_path or file_path.startswith('/'):
+            return jsonify({"error": "Invalid file path"}), 400
+        
+        # Get absolute file path
+        upload_folder = current_app.config.get('UPLOAD_FOLDER')
+        if not upload_folder:
+            return jsonify({"error": "Upload folder not configured"}), 500
+        
+        absolute_path = os.path.join(upload_folder, file_path)
+        
+        # Verify file exists
+        if not os.path.exists(absolute_path) or not os.path.isfile(absolute_path):
+            return jsonify({"error": "File not found"}), 404
+        
+        # Determine MIME type from extension
+        import mimetypes
+        mimetype, _ = mimetypes.guess_type(absolute_path)
+        if not mimetype:
+            mimetype = 'application/octet-stream'
+        
+        return send_file(
+            absolute_path,
+            mimetype=mimetype,
+            as_attachment=False
+        )
+        
+    except Exception as e:
+        app_logger.exception(f"Serve uploaded file error: {e}")
+        return jsonify({"error": "Failed to serve file"}), 500

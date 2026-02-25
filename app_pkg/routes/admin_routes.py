@@ -15,7 +15,7 @@ from app_pkg.models import (
     VendorDocument, VendorQuotationSubmission, RiderDocument, Notification,
     VendorOrderAssignment, OrderStatusHistory, DeliveryLog, ProductCatalog,
     DeliveryPartner, Support, ActivityLog, VendorQuotation, VendorCapacity,
-    VendorStock, MarketplaceProduct
+    VendorStock, MarketplaceProduct, CartProduct
 )
 from app_pkg.auth import login_required, admin_required
 from app_pkg.file_upload import get_file_path_from_db
@@ -3202,4 +3202,186 @@ def reject_product(product_id):
     except Exception as e:
         db.session.rollback()
         app_logger.exception(f"Reject product error: {e}")
+        return jsonify({"error": "Failed to reject product"}), 500
+
+
+# ============================================================================
+# Cart Products Approval (Vendor → Admin Approval → Customer Display)
+# ============================================================================
+
+@bp.route('/cart-products/pending', methods=['GET'])
+@admin_required
+def get_pending_cart_products():
+    """
+    GET /api/admin/cart-products/pending
+    Get all cart products with status='pending' for admin review
+    """
+    try:
+        from sqlalchemy import text
+        
+        # Get vendor information via cross-database join
+        # cart_products is in vendor DB, vendors is in vendor DB (same DB, but using cross-schema pattern)
+        vendor_db = current_app.config.get('DB_NAME_VENDOR', 'impromptuindian_vendor')
+        
+        sql = text(f"""
+            SELECT 
+                cp.id,
+                cp.vendor_id,
+                cp.product_type,
+                cp.product_name,
+                cp.description,
+                cp.cost_price,
+                cp.sizes,
+                cp.images,
+                cp.status,
+                cp.admin_remarks,
+                cp.created_at,
+                cp.updated_at,
+                v.business_name as vendor_name,
+                v.username as vendor_username
+            FROM {vendor_db}.cart_products cp
+            LEFT JOIN {vendor_db}.vendors v ON cp.vendor_id = v.id
+            WHERE cp.status = 'pending'
+            ORDER BY cp.created_at ASC
+        """)
+        
+        result = db.session.execute(sql)
+        products = []
+        
+        for row in result:
+            products.append({
+                "id": row.id,
+                "vendor_id": row.vendor_id,
+                "vendor_name": row.vendor_name or f"Vendor #{row.vendor_id}",
+                "vendor_username": row.vendor_username,
+                "product_type": row.product_type,
+                "product_name": row.product_name,
+                "description": row.description,
+                "cost_price": float(row.cost_price) if row.cost_price else 0,
+                "sizes": row.sizes if row.sizes else [],
+                "images": row.images if row.images else [],
+                "status": row.status,
+                "admin_remarks": row.admin_remarks,
+                "created_at": row.created_at.isoformat() if row.created_at else None,
+                "updated_at": row.updated_at.isoformat() if row.updated_at else None
+            })
+        
+        return jsonify({
+            "products": products,
+            "count": len(products)
+        }), 200
+        
+    except Exception as e:
+        app_logger.exception(f"Get pending cart products error: {e}")
+        return jsonify({"error": "Failed to retrieve pending cart products"}), 500
+
+
+@bp.route('/cart-products/<int:product_id>/approve', methods=['POST'])
+@admin_required
+def approve_cart_product(product_id):
+    """
+    POST /api/admin/cart-products/<product_id>/approve
+    Admin approves a cart product (status = approved)
+    """
+    try:
+        product = CartProduct.query.get(product_id)
+        if not product:
+            return jsonify({"error": "Product not found"}), 404
+        
+        if product.status == 'approved':
+            return jsonify({"message": "Product already approved"}), 200
+        
+        data = request.get_json() or {}
+        remarks = data.get('remarks', '')
+        
+        product.status = 'approved'
+        product.admin_remarks = remarks if remarks else None
+        db.session.commit()
+        
+        app_logger.info(f"Admin approved cart product #{product_id}: {product.product_name}")
+        
+        # Create notification for vendor
+        try:
+            notification = Notification(
+                user_id=product.vendor_id,
+                user_type='vendor',
+                title='Product Approved',
+                message=f'Your product "{product.product_name}" has been approved and is now visible to customers.',
+                type='product_approved',
+                is_read=False
+            )
+            db.session.add(notification)
+            db.session.commit()
+        except Exception as notif_error:
+            app_logger.warning(f"Failed to create notification for cart product approval: {notif_error}")
+            db.session.rollback()
+        
+        return jsonify({
+            "message": "Product approved successfully",
+            "product": {
+                "id": product.id,
+                "product_name": product.product_name,
+                "status": product.status
+            }
+        }), 200
+        
+    except Exception as e:
+        db.session.rollback()
+        app_logger.exception(f"Approve cart product error: {e}")
+        return jsonify({"error": "Failed to approve product"}), 500
+
+
+@bp.route('/cart-products/<int:product_id>/reject', methods=['POST'])
+@admin_required
+def reject_cart_product(product_id):
+    """
+    POST /api/admin/cart-products/<product_id>/reject
+    Admin rejects a cart product (status = rejected) with required remarks
+    """
+    try:
+        product = CartProduct.query.get(product_id)
+        if not product:
+            return jsonify({"error": "Product not found"}), 404
+        
+        data = request.get_json() or {}
+        admin_remarks = data.get('remarks', '').strip()
+        
+        if not admin_remarks:
+            return jsonify({"error": "remarks are required for rejection"}), 400
+        
+        product.status = 'rejected'
+        product.admin_remarks = admin_remarks
+        db.session.commit()
+        
+        app_logger.info(f"Admin rejected cart product #{product_id}: {product.product_name}. Reason: {admin_remarks}")
+        
+        # Create notification for vendor
+        try:
+            notification = Notification(
+                user_id=product.vendor_id,
+                user_type='vendor',
+                title='Product Rejected',
+                message=f'Your product "{product.product_name}" was rejected. Reason: {admin_remarks}',
+                type='product_rejected',
+                is_read=False
+            )
+            db.session.add(notification)
+            db.session.commit()
+        except Exception as notif_error:
+            app_logger.warning(f"Failed to create notification for cart product rejection: {notif_error}")
+            db.session.rollback()
+        
+        return jsonify({
+            "message": "Product rejected successfully",
+            "product": {
+                "id": product.id,
+                "product_name": product.product_name,
+                "status": product.status,
+                "admin_remarks": product.admin_remarks
+            }
+        }), 200
+        
+    except Exception as e:
+        db.session.rollback()
+        app_logger.exception(f"Reject cart product error: {e}")
         return jsonify({"error": "Failed to reject product"}), 500

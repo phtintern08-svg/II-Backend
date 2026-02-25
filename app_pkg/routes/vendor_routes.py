@@ -5,12 +5,13 @@ Handles vendor-specific endpoints for quotations, orders, and profile management
 from flask import Blueprint, request, jsonify, send_file, current_app
 from datetime import datetime
 import os
+import json
 from sqlalchemy import text
 
 from app_pkg.models import (
     db, Vendor, VendorQuotation, VendorDocument, VendorOrderAssignment, Order,
     VendorQuotationSubmission, Notification, OrderStatusHistory, Customer,
-    DeliveryLog, Rider, VendorCapacity, ProductCatalog, MarketplaceProduct  # MarketplaceProduct for vendor product listings
+    DeliveryLog, Rider, VendorCapacity, ProductCatalog, MarketplaceProduct, CartProduct  # CartProduct for vendor-created products
 )
 from app_pkg.auth import login_required, role_required
 from app_pkg.file_upload import validate_and_save_file, delete_file, get_file_path_from_db
@@ -913,6 +914,145 @@ def delete_vendor_capacity(product_catalog_id):
         db.session.rollback()
         app_logger.exception(f"Delete vendor capacity error: {e}")
         return jsonify({"error": "Failed to clear capacity"}), 500
+
+
+@bp.route('/cart-products', methods=['GET'])
+@login_required
+@role_required(['vendor'])
+def get_cart_products():
+    """
+    GET /api/vendor/cart-products
+    Get all cart products for the logged-in vendor
+    """
+    try:
+        vendor_id = request.user_id
+        
+        products = CartProduct.query.filter_by(vendor_id=vendor_id).order_by(
+            CartProduct.created_at.desc()
+        ).all()
+        
+        products_list = []
+        for p in products:
+            products_list.append({
+                "id": p.id,
+                "product_type": p.product_type,
+                "product_name": p.product_name,
+                "description": p.description,
+                "cost_price": float(p.cost_price) if p.cost_price else 0,
+                "sizes": p.sizes if p.sizes else [],
+                "images": p.images if p.images else [],
+                "status": p.status,
+                "admin_remarks": p.admin_remarks,
+                "created_at": p.created_at.isoformat() if p.created_at else None,
+                "updated_at": p.updated_at.isoformat() if p.updated_at else None
+            })
+        
+        return jsonify({
+            "products": products_list,
+            "count": len(products_list)
+        }), 200
+        
+    except Exception as e:
+        app_logger.exception(f"Get cart products error: {e}")
+        return jsonify({"error": "Failed to retrieve products"}), 500
+
+
+@bp.route('/cart-products', methods=['POST'])
+@login_required
+@role_required(['vendor'])
+def create_cart_product():
+    """
+    POST /api/vendor/cart-products
+    Create a new cart product with image uploads
+    """
+    try:
+        vendor_id = request.user_id
+        vendor = Vendor.query.get(vendor_id)
+        if not vendor:
+            return jsonify({"error": "Vendor not found"}), 404
+
+        # Validate required form fields
+        product_type = request.form.get('product_type', '').strip()
+        product_name = request.form.get('product_name', '').strip()
+        description = request.form.get('description', '').strip()
+        cost_price = request.form.get('cost_price', '').strip()
+        sizes_json = request.form.get('sizes', '[]')
+
+        if not product_type or not product_name or not cost_price:
+            return jsonify({"error": "product_type, product_name, and cost_price are required"}), 400
+
+        # Validate cost price
+        try:
+            cost = float(cost_price)
+            if cost <= 0:
+                return jsonify({"error": "cost_price must be greater than 0"}), 400
+        except (ValueError, TypeError):
+            return jsonify({"error": "invalid cost_price format"}), 400
+
+        # Parse sizes
+        try:
+            sizes = json.loads(sizes_json) if sizes_json else []
+            if not isinstance(sizes, list) or len(sizes) == 0:
+                return jsonify({"error": "At least one size is required"}), 400
+        except json.JSONDecodeError:
+            return jsonify({"error": "Invalid sizes format"}), 400
+
+        # Handle image uploads
+        image_files = request.files.getlist('images')
+        if not image_files or len(image_files) == 0:
+            return jsonify({"error": "At least one image is required"}), 400
+
+        image_paths = []
+        for img_file in image_files:
+            if img_file and img_file.filename:
+                # Validate and save image
+                file_info, error = validate_and_save_file(
+                    img_file,
+                    '/api/vendor/cart-products',
+                    'vendor_products',
+                    vendor_id,
+                    'product_image',
+                    scan_virus=False
+                )
+                if error:
+                    return jsonify({"error": f"Image upload failed: {error}"}), 400
+                if file_info and file_info.get('path'):
+                    image_paths.append(file_info['path'])
+
+        if len(image_paths) == 0:
+            return jsonify({"error": "Failed to upload images"}), 400
+
+        # Create cart product
+        product = CartProduct(
+            vendor_id=vendor_id,
+            product_type=product_type,
+            product_name=product_name,
+            description=description,
+            cost_price=cost,
+            sizes=sizes,
+            images=image_paths,
+            status='pending'
+        )
+        
+        db.session.add(product)
+        db.session.commit()
+        
+        app_logger.info(f"Vendor #{vendor_id} created cart product #{product.id}: {product.product_name}")
+        
+        return jsonify({
+            "message": "Product submitted for admin approval",
+            "product": {
+                "id": product.id,
+                "product_name": product.product_name,
+                "status": product.status,
+                "created_at": product.created_at.isoformat() if product.created_at else None
+            }
+        }), 201
+        
+    except Exception as e:
+        db.session.rollback()
+        app_logger.exception(f"Create cart product error: {e}")
+        return jsonify({"error": "Failed to create product"}), 500
 
 
 @bp.route('/orders', methods=['GET'])
