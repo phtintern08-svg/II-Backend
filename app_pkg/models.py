@@ -869,6 +869,7 @@ class CartProduct(db.Model):
     vendor_id = db.Column(db.Integer, db.ForeignKey('vendors.id'), nullable=False)
     product_type_id = db.Column(db.Integer, db.ForeignKey('product_types.id'), nullable=False, index=True)
     product_type = db.Column(db.String(100), nullable=True)  # Keep for backward compatibility during migration
+    category = db.Column(db.String(100), nullable=True, index=True)  # Category dependent on product type (e.g., "Regular Fit" for T-Shirt)
     product_name = db.Column(db.String(150), nullable=False)
     description = db.Column(db.Text)
     cost_price = db.Column(db.Numeric(10, 2), nullable=False)

@@ -1219,6 +1219,7 @@ def get_cart_products():
                 "name": p.product_name,
                 "product_type": product_type_name,
                 "product_type_slug": product_type_slug,
+                "category": p.category or 'N/A',
                 "description": p.description or "",
                 "cost_price": float(p.cost_price) if p.cost_price else 0,
                 "sizes": sizes,

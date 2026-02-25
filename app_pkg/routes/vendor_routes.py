@@ -955,6 +955,7 @@ def get_cart_products():
             products_list.append({
                 "id": p.id,
                 "product_type": p.product_type,
+                "category": p.category,
                 "product_name": p.product_name,
                 "description": p.description,
                 "cost_price": float(p.cost_price) if p.cost_price else 0,
@@ -992,13 +993,15 @@ def create_cart_product():
 
         # Validate required form fields
         product_type_id = request.form.get('product_type_id', '').strip()
+        product_type_name = request.form.get('product_type', '').strip()  # Product type name for backward compatibility
+        category = request.form.get('category', '').strip()
         product_name = request.form.get('product_name', '').strip()
         description = request.form.get('description', '').strip()
         cost_price = request.form.get('cost_price', '').strip()
         sizes_json = request.form.get('sizes', '[]')
 
-        if not product_type_id or not product_name or not cost_price:
-            return jsonify({"error": "product_type_id, product_name, and cost_price are required"}), 400
+        if not product_type_id or not category or not product_name or not cost_price:
+            return jsonify({"error": "product_type_id, category, product_name, and cost_price are required"}), 400
 
         # Validate product_type_id exists and is active
         try:
@@ -1057,6 +1060,7 @@ def create_cart_product():
             vendor_id=vendor_id,
             product_type_id=product_type_id_int,
             product_type=product_type.name,  # Keep for backward compatibility
+            category=category,  # Category dependent on product type (e.g., "Regular Fit" for T-Shirt)
             product_name=product_name,
             description=description,
             cost_price=cost,
