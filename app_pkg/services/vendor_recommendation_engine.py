@@ -51,11 +51,13 @@ def get_recommended_vendors(order, product_catalog_ids, total_qty, db, models):
     VendorStock = getattr(models, 'VendorStock', None)
 
     # 📌 DISTANCE CONFIGURATION
-    # MAX_DISTANCE_KM: Used for distance score normalization (closer = higher score)
     # HARD_DISTANCE_CUTOFF_KM: Optional hard filter - exclude vendors beyond this distance (None = disabled)
-    # Set to None to allow all distances (only affects ranking), or set to a value (e.g., 100) to exclude far vendors
-    MAX_DISTANCE_KM = 200  # Normalization factor for distance scoring
-    HARD_DISTANCE_CUTOFF_KM = None  # Optional: Set to 100 to exclude vendors > 100km (None = no hard cutoff)
+    # Set to None to allow all distances (only affects ranking), or set to a value (e.g., 50) to exclude far vendors
+    # Example: HARD_DISTANCE_CUTOFF_KM = 50 → exclude vendors > 50km away (operational feasibility)
+    HARD_DISTANCE_CUTOFF_KM = None  # Optional: Set to 50 to exclude vendors > 50km (None = no hard cutoff)
+    
+    # Note: Distance scoring now uses tiered system (1.0 for <=5km, 0.8 for <=15km, etc.)
+    # No longer uses MAX_DISTANCE_KM for linear normalization
     
     MAX_LEAD_DAYS = 14
     WEIGHT_STOCK = 0.40
@@ -203,12 +205,21 @@ def get_recommended_vendors(order, product_catalog_ids, total_qty, db, models):
         stock_ratio = stock_available / total_qty if total_qty else 0
         stock_score = min(stock_ratio, 1.0)
 
-        # ✅ CRITICAL CHECK: Distance calculation safety - penalizes missing GPS (score = 0)
-        # Vendors without location should NOT get neutral benefit - they should be ranked lower
-        if distance_km is not None:
-            distance_score = max(0, 1 - (distance_km / MAX_DISTANCE_KM))
-        else:
+        # 🔥 TIERED DISTANCE SCORING: Industry-standard approach for nearby vendor priority
+        # Nearby vendors get higher scores, with clear tiers for operational feasibility
+        # This ensures nearby vendors are strongly prioritized while still allowing far vendors with better capacity
+        if distance_km is None:
             distance_score = 0  # Penalize vendors/orders without GPS - no neutral benefit
+        elif distance_km <= 5:
+            distance_score = 1.0  # Very nearby (0-5km) - maximum score
+        elif distance_km <= 15:
+            distance_score = 0.8  # Nearby (5-15km) - high score
+        elif distance_km <= 30:
+            distance_score = 0.6  # Moderate distance (15-30km) - medium score
+        elif distance_km <= 50:
+            distance_score = 0.4  # Far (30-50km) - lower score
+        else:
+            distance_score = 0.2  # Very far (>50km) - minimal score (but still included if no cutoff)
 
         capacity_ratio = min_capacity / total_qty if total_qty else 0
         capacity_score = min(capacity_ratio, 1.0)
@@ -242,17 +253,21 @@ def get_recommended_vendors(order, product_catalog_ids, total_qty, db, models):
         })
 
     # 🔥 DETERMINISTIC SORTING: Enterprise-grade tie-breaking for equal scores
-    # Priority order:
-    # 1. Higher score (descending)
-    # 2. Higher stock (descending) - prefer vendors with more ready inventory
-    # 3. Smaller distance (ascending) - prefer nearby vendors (9999 for missing GPS)
+    # This ensures nearby vendors appear at top while maintaining intelligent balancing
+    # Priority order (exactly as user specified):
+    # 1. Higher score (descending) - overall match quality
+    # 2. Smaller distance (ascending) - nearby vendors first (9999 for missing GPS = lowest priority)
+    # 3. Higher stock (descending) - prefer vendors with more ready inventory
     # 4. Faster lead time (ascending) - prefer faster delivery
     # 5. Lower price (ascending) - prefer cheaper vendors
+    # 
+    # ✅ KEY: Distance is SECOND priority (after score) - ensures nearby vendors rank higher
+    # This matches industry-standard "nearby vendor fetching" behavior
     candidates.sort(
         key=lambda x: (
-            -x["score"],  # Higher score first
+            -x["score"],  # Higher score first (primary ranking)
+            x["distance_km"] if x["distance_km"] is not None else 9999,  # Nearby first (9999 = missing GPS = lowest priority)
             -x["stock_available"],  # More stock preferred
-            x["distance_km"] if x["distance_km"] is not None else 9999,  # Closer preferred (9999 for missing GPS)
             x["lead_time_days"],  # Faster delivery preferred
             x["base_cost_per_piece"]  # Cheaper preferred
         )
