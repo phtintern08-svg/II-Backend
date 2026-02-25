@@ -991,14 +991,25 @@ def create_cart_product():
             return jsonify({"error": "Vendor not found"}), 404
 
         # Validate required form fields
-        product_type = request.form.get('product_type', '').strip()
+        product_type_id = request.form.get('product_type_id', '').strip()
         product_name = request.form.get('product_name', '').strip()
         description = request.form.get('description', '').strip()
         cost_price = request.form.get('cost_price', '').strip()
         sizes_json = request.form.get('sizes', '[]')
 
-        if not product_type or not product_name or not cost_price:
-            return jsonify({"error": "product_type, product_name, and cost_price are required"}), 400
+        if not product_type_id or not product_name or not cost_price:
+            return jsonify({"error": "product_type_id, product_name, and cost_price are required"}), 400
+
+        # Validate product_type_id exists and is active
+        try:
+            product_type_id_int = int(product_type_id)
+        except (ValueError, TypeError):
+            return jsonify({"error": "Invalid product_type_id format"}), 400
+        
+        from app_pkg.models import ProductType
+        product_type = ProductType.query.filter_by(id=product_type_id_int, is_active=True).first()
+        if not product_type:
+            return jsonify({"error": "Invalid or inactive product type"}), 400
 
         # Validate cost price
         try:
@@ -1044,7 +1055,8 @@ def create_cart_product():
         # Create cart product
         product = CartProduct(
             vendor_id=vendor_id,
-            product_type=product_type,
+            product_type_id=product_type_id_int,
+            product_type=product_type.name,  # Keep for backward compatibility
             product_name=product_name,
             description=description,
             cost_price=cost,

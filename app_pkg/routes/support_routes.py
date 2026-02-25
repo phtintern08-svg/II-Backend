@@ -8,7 +8,7 @@ import os
 import requests
 
 from config import Config
-from app_pkg.models import db, Category, Thread, Comment, Customer, Vendor, Support, Notification, ProductCatalog, MarketplaceProduct, CartProduct
+from app_pkg.models import db, Category, Thread, Comment, Customer, Vendor, Support, Notification, ProductCatalog, MarketplaceProduct, CartProduct, ProductType
 from werkzeug.security import check_password_hash, generate_password_hash
 from app_pkg.auth import login_required, role_required
 from app_pkg.schemas import category_schema, categories_schema, thread_schema, threads_schema, comment_schema, comments_schema
@@ -1122,12 +1122,41 @@ def get_marketplace_products():
         return jsonify({"error": "Failed to retrieve products"}), 500
 
 
+@bp.route('/product-types', methods=['GET'])
+def get_product_types():
+    """
+    GET /api/product-types
+    Get all active product types (standardized categories)
+    Public endpoint - no auth required
+    Used by vendors when creating products and customers when browsing by category
+    """
+    try:
+        product_types = ProductType.query.filter_by(is_active=True).order_by(ProductType.name).all()
+        
+        types_list = []
+        for pt in product_types:
+            types_list.append({
+                "id": pt.id,
+                "name": pt.name,
+                "slug": pt.slug
+            })
+        
+        return jsonify(types_list), 200
+        
+    except Exception as e:
+        app_logger.exception(f"Get product types error: {e}")
+        return jsonify({"error": "Failed to retrieve product types"}), 500
+
+
 @bp.route('/cart-products', methods=['GET'])
 def get_cart_products():
     """
-    GET /api/cart-products
+    GET /api/cart-products?category=<slug>
     Get all APPROVED cart products (public endpoint - no auth required)
     Customers only see APPROVED products (PENDING and REJECTED are hidden)
+    
+    Query Parameters:
+    - category (optional): Filter by product type slug (e.g., 't-shirt', 'hoodie')
     
     Returns product listing with:
     - Product images
@@ -1135,12 +1164,23 @@ def get_cart_products():
     - Cost price
     - Available sizes
     - Vendor information
+    - Product type name and slug
     """
     try:
-        # 🔥 PRODUCTION RULE: Customers must NEVER see PENDING or REJECTED products
-        products = CartProduct.query.filter_by(status='approved').order_by(
-            CartProduct.created_at.desc()
-        ).all()
+        category_slug = request.args.get('category', '').strip()
+        
+        # Build query - always filter by approved status
+        query = CartProduct.query.filter_by(status='approved')
+        
+        # Filter by category slug if provided
+        if category_slug:
+            # Join with product_types to filter by slug
+            query = query.join(ProductType, CartProduct.product_type_id == ProductType.id).filter(
+                ProductType.slug == category_slug,
+                ProductType.is_active == True
+            )
+        
+        products = query.order_by(CartProduct.created_at.desc()).all()
         
         products_list = []
         for p in products:
@@ -1169,10 +1209,16 @@ def get_cart_products():
             vendor = Vendor.query.get(p.vendor_id)
             vendor_name = vendor.business_name if vendor else f"Vendor #{p.vendor_id}"
             
+            # Get product type info
+            product_type = p.product_type_ref if hasattr(p, 'product_type_ref') and p.product_type_ref else None
+            product_type_name = product_type.name if product_type else (p.product_type or 'Unknown')
+            product_type_slug = product_type.slug if product_type else None
+            
             products_list.append({
                 "id": f"cp_{p.id}",
                 "name": p.product_name,
-                "product_type": p.product_type,
+                "product_type": product_type_name,
+                "product_type_slug": product_type_slug,
                 "description": p.description or "",
                 "cost_price": float(p.cost_price) if p.cost_price else 0,
                 "sizes": sizes,

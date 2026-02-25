@@ -3227,6 +3227,7 @@ def get_pending_cart_products():
             SELECT 
                 cp.id,
                 cp.vendor_id,
+                cp.product_type_id,
                 cp.product_type,
                 cp.product_name,
                 cp.description,
@@ -3238,9 +3239,12 @@ def get_pending_cart_products():
                 cp.created_at,
                 cp.updated_at,
                 v.business_name as vendor_name,
-                v.username as vendor_username
+                v.username as vendor_username,
+                pt.name as product_type_name,
+                pt.slug as product_type_slug
             FROM {vendor_db}.cart_products cp
             LEFT JOIN {vendor_db}.vendors v ON cp.vendor_id = v.id
+            LEFT JOIN {vendor_db}.product_types pt ON cp.product_type_id = pt.id
             WHERE cp.status = 'pending'
             ORDER BY cp.created_at ASC
         """)
@@ -3275,7 +3279,8 @@ def get_pending_cart_products():
                 "vendor_id": row.vendor_id,
                 "vendor_name": row.vendor_name or f"Vendor #{row.vendor_id}",
                 "vendor_username": row.vendor_username,
-                "product_type": row.product_type,
+                "product_type": row.product_type_name or row.product_type or 'Unknown',
+                "product_type_slug": row.product_type_slug,
                 "product_name": row.product_name,
                 "description": row.description,
                 "cost_price": float(row.cost_price) if row.cost_price else 0,

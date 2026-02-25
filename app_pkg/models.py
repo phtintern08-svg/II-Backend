@@ -811,6 +811,52 @@ class VendorCapacity(db.Model):
         return f'<VendorCapacity Vendor#{self.vendor_id} Product#{self.product_catalog_id} {self.daily_capacity}/day>'
 
 
+class ProductType(db.Model):
+    """
+    Master table for standardized product types.
+    Single source of truth for product categories.
+    Used by both vendors (when creating products) and customers (when browsing by category).
+    """
+    __bind_key__ = 'vendor'  # Stored in vendor DB for easy access
+    __tablename__ = 'product_types'
+    
+    id = db.Column(db.Integer, primary_key=True)
+    name = db.Column(db.String(100), unique=True, nullable=False)
+    slug = db.Column(db.String(100), unique=True, nullable=False, index=True)
+    is_active = db.Column(db.Boolean, default=True, nullable=False, index=True)
+    created_at = db.Column(db.DateTime, default=datetime.utcnow)
+    
+    # Relationship
+    cart_products = db.relationship('CartProduct', backref='product_type_ref', lazy=True)
+    
+    __table_args__ = {'extend_existing': True}
+    
+    def __repr__(self):
+        return f'<ProductType {self.name} ({self.slug})>'
+
+class ProductType(db.Model):
+    """
+    Master table for standardized product types.
+    Single source of truth for product categories.
+    Used by both vendors (when creating products) and customers (when browsing by category).
+    """
+    __bind_key__ = 'vendor'  # Stored in vendor DB for easy access
+    __tablename__ = 'product_types'
+    
+    id = db.Column(db.Integer, primary_key=True)
+    name = db.Column(db.String(100), unique=True, nullable=False)
+    slug = db.Column(db.String(100), unique=True, nullable=False, index=True)
+    is_active = db.Column(db.Boolean, default=True, nullable=False, index=True)
+    created_at = db.Column(db.DateTime, default=datetime.utcnow)
+    
+    # Relationship
+    cart_products = db.relationship('CartProduct', backref='product_type_ref', lazy=True)
+    
+    __table_args__ = {'extend_existing': True}
+    
+    def __repr__(self):
+        return f'<ProductType {self.name} ({self.slug})>'
+
 class CartProduct(db.Model):
     __bind_key__ = 'vendor'
     """
@@ -821,7 +867,8 @@ class CartProduct(db.Model):
     
     id = db.Column(db.Integer, primary_key=True)
     vendor_id = db.Column(db.Integer, db.ForeignKey('vendors.id'), nullable=False)
-    product_type = db.Column(db.String(100), nullable=False)
+    product_type_id = db.Column(db.Integer, db.ForeignKey('product_types.id'), nullable=False, index=True)
+    product_type = db.Column(db.String(100), nullable=True)  # Keep for backward compatibility during migration
     product_name = db.Column(db.String(150), nullable=False)
     description = db.Column(db.Text)
     cost_price = db.Column(db.Numeric(10, 2), nullable=False)
@@ -837,7 +884,7 @@ class CartProduct(db.Model):
     __table_args__ = (
         db.Index('idx_vendor_id', 'vendor_id'),
         db.Index('idx_status', 'status'),
-        db.Index('idx_product_type', 'product_type'),
+        db.Index('idx_product_type_id', 'product_type_id'),
         {'extend_existing': True}
     )
     
