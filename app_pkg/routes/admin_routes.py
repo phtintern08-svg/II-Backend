@@ -15,7 +15,7 @@ from app_pkg.models import (
     VendorDocument, VendorQuotationSubmission, RiderDocument, Notification,
     VendorOrderAssignment, OrderStatusHistory, DeliveryLog, ProductCatalog,
     DeliveryPartner, Support, ActivityLog, VendorQuotation, VendorCapacity,
-    VendorStock
+    VendorStock, MarketplaceProduct
 )
 from app_pkg.auth import login_required, admin_required
 from app_pkg.file_upload import get_file_path_from_db
@@ -3000,3 +3000,183 @@ def find_nearby_riders():
     except Exception as e:
         app_logger.exception(f"Find nearby riders error: {e}")
         return jsonify({"error": "Failed to find nearby riders"}), 500
+
+
+# ============================================================================
+# Marketplace Products Approval (Vendor → Admin Approval → Customer Display)
+# ============================================================================
+
+@bp.route('/products/pending', methods=['GET'])
+@admin_required
+def get_pending_products():
+    """
+    GET /api/admin/products/pending
+    Get all products with status='PENDING' for admin review
+    """
+    try:
+        from sqlalchemy import text
+        
+        # Get vendor information via cross-database join
+        # marketplace_products is in admin DB, vendors is in vendor DB
+        admin_db = current_app.config.get('DB_NAME_ADMIN', 'impromptuindian_admin')
+        vendor_db = current_app.config.get('DB_NAME_VENDOR', 'impromptuindian_vendor')
+        
+        sql = text(f"""
+            SELECT 
+                mp.id,
+                mp.vendor_id,
+                mp.product_name,
+                mp.description,
+                mp.price,
+                mp.sizes,
+                mp.colors,
+                mp.image_url,
+                mp.status,
+                mp.admin_comment,
+                mp.created_at,
+                mp.updated_at,
+                v.business_name as vendor_name,
+                v.username as vendor_username
+            FROM {admin_db}.marketplace_products mp
+            LEFT JOIN {vendor_db}.vendors v ON mp.vendor_id = v.id
+            WHERE mp.status = 'PENDING'
+            ORDER BY mp.created_at ASC
+        """)
+        
+        result = db.session.execute(sql)
+        products = []
+        
+        for row in result:
+            products.append({
+                "id": row.id,
+                "vendor_id": row.vendor_id,
+                "vendor_name": row.vendor_name or f"Vendor #{row.vendor_id}",
+                "vendor_username": row.vendor_username,
+                "product_name": row.product_name,
+                "description": row.description,
+                "price": float(row.price) if row.price else 0,
+                "sizes": row.sizes if row.sizes else [],
+                "colors": row.colors if row.colors else [],
+                "image_url": row.image_url,
+                "status": row.status,
+                "admin_comment": row.admin_comment,
+                "created_at": row.created_at.isoformat() if row.created_at else None,
+                "updated_at": row.updated_at.isoformat() if row.updated_at else None
+            })
+        
+        return jsonify({
+            "products": products,
+            "count": len(products)
+        }), 200
+        
+    except Exception as e:
+        app_logger.exception(f"Get pending products error: {e}")
+        return jsonify({"error": "Failed to retrieve pending products"}), 500
+
+
+@bp.route('/products/<int:product_id>/approve', methods=['PUT'])
+@admin_required
+def approve_product(product_id):
+    """
+    PUT /api/admin/products/<product_id>/approve
+    Admin approves a product (status = APPROVED)
+    """
+    try:
+        product = MarketplaceProduct.query.get(product_id)
+        if not product:
+            return jsonify({"error": "Product not found"}), 404
+        
+        if product.status == 'APPROVED':
+            return jsonify({"message": "Product already approved"}), 200
+        
+        product.status = 'APPROVED'
+        product.admin_comment = None  # Clear any previous rejection comment
+        db.session.commit()
+        
+        app_logger.info(f"Admin approved product #{product_id}: {product.product_name}")
+        
+        # Create notification for vendor
+        try:
+            notification = Notification(
+                user_id=product.vendor_id,
+                user_type='vendor',
+                title='Product Approved',
+                message=f'Your product "{product.product_name}" has been approved and is now visible to customers.',
+                notification_type='product_approved',
+                is_read=False
+            )
+            db.session.add(notification)
+            db.session.commit()
+        except Exception as notif_error:
+            app_logger.warning(f"Failed to create notification for product approval: {notif_error}")
+            db.session.rollback()
+        
+        return jsonify({
+            "message": "Product approved successfully",
+            "product": {
+                "id": product.id,
+                "product_name": product.product_name,
+                "status": product.status
+            }
+        }), 200
+        
+    except Exception as e:
+        db.session.rollback()
+        app_logger.exception(f"Approve product error: {e}")
+        return jsonify({"error": "Failed to approve product"}), 500
+
+
+@bp.route('/products/<int:product_id>/reject', methods=['PUT'])
+@admin_required
+def reject_product(product_id):
+    """
+    PUT /api/admin/products/<product_id>/reject
+    Admin rejects a product (status = REJECTED) with optional comment
+    """
+    try:
+        product = MarketplaceProduct.query.get(product_id)
+        if not product:
+            return jsonify({"error": "Product not found"}), 404
+        
+        data = request.get_json() or {}
+        admin_comment = data.get('admin_comment', '').strip()
+        
+        if not admin_comment:
+            return jsonify({"error": "admin_comment is required for rejection"}), 400
+        
+        product.status = 'REJECTED'
+        product.admin_comment = admin_comment
+        db.session.commit()
+        
+        app_logger.info(f"Admin rejected product #{product_id}: {product.product_name}. Reason: {admin_comment}")
+        
+        # Create notification for vendor
+        try:
+            notification = Notification(
+                user_id=product.vendor_id,
+                user_type='vendor',
+                title='Product Rejected',
+                message=f'Your product "{product.product_name}" was rejected. Reason: {admin_comment}',
+                notification_type='product_rejected',
+                is_read=False
+            )
+            db.session.add(notification)
+            db.session.commit()
+        except Exception as notif_error:
+            app_logger.warning(f"Failed to create notification for product rejection: {notif_error}")
+            db.session.rollback()
+        
+        return jsonify({
+            "message": "Product rejected successfully",
+            "product": {
+                "id": product.id,
+                "product_name": product.product_name,
+                "status": product.status,
+                "admin_comment": product.admin_comment
+            }
+        }), 200
+        
+    except Exception as e:
+        db.session.rollback()
+        app_logger.exception(f"Reject product error: {e}")
+        return jsonify({"error": "Failed to reject product"}), 500

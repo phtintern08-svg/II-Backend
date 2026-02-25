@@ -8,7 +8,7 @@ import os
 import requests
 
 from config import Config
-from app_pkg.models import db, Category, Thread, Comment, Customer, Vendor, Support, Notification, ProductCatalog
+from app_pkg.models import db, Category, Thread, Comment, Customer, Vendor, Support, Notification, ProductCatalog, MarketplaceProduct
 from werkzeug.security import check_password_hash, generate_password_hash
 from app_pkg.auth import login_required, role_required
 from app_pkg.schemas import category_schema, categories_schema, thread_schema, threads_schema, comment_schema, comments_schema
@@ -1053,3 +1053,69 @@ def get_product_catalog():
     except Exception as e:
         app_logger.exception(f"Get product catalog error: {e}")
         return jsonify({"error": "Failed to retrieve product catalog"}), 500
+
+
+@bp.route('/products', methods=['GET'])
+def get_marketplace_products():
+    """
+    GET /api/products
+    Get all APPROVED marketplace products (public endpoint - no auth required)
+    Customers only see APPROVED products (PENDING and REJECTED are hidden)
+    
+    Returns Flipkart-style product listing with:
+    - Product image
+    - Product name
+    - Starting price
+    - Available colors
+    - Available sizes
+    """
+    try:
+        # 🔥 PRODUCTION RULE: Customers must NEVER see PENDING or REJECTED products
+        products = MarketplaceProduct.query.filter_by(status='APPROVED').order_by(
+            MarketplaceProduct.created_at.desc()
+        ).all()
+        
+        products_list = []
+        for p in products:
+            # Generate product variants for each size/color combination
+            # This creates individual product cards like the old static array
+            sizes = p.sizes if p.sizes else []
+            colors = p.colors if p.colors else []
+            
+            # If no sizes/colors specified, create a single default variant
+            if not sizes and not colors:
+                products_list.append({
+                    "id": f"mp_{p.id}",
+                    "name": p.product_name,
+                    "description": p.description or "",
+                    "price": float(p.price) if p.price else 0,
+                    "color": None,
+                    "size": None,
+                    "image": p.image_url or "https://images.unsplash.com/photo-1500530855697-b586d89ba3ee?q=80",
+                    "sizes": [],
+                    "colors": []
+                })
+            else:
+                # Create variants for each size/color combination
+                for size in (sizes if sizes else [None]):
+                    for color in (colors if colors else [None]):
+                        products_list.append({
+                            "id": f"mp_{p.id}_{size or 'default'}_{color or 'default'}",
+                            "name": p.product_name,
+                            "description": p.description or "",
+                            "price": float(p.price) if p.price else 0,
+                            "color": color,
+                            "size": size,
+                            "image": p.image_url or "https://images.unsplash.com/photo-1500530855697-b586d89ba3ee?q=80",
+                            "sizes": sizes,
+                            "colors": colors
+                        })
+        
+        return jsonify({
+            "products": products_list,
+            "count": len(products_list)
+        }), 200
+        
+    except Exception as e:
+        app_logger.exception(f"Get marketplace products error: {e}")
+        return jsonify({"error": "Failed to retrieve products"}), 500

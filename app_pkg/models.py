@@ -993,4 +993,31 @@ class ActivityLog(db.Model):
     timestamp = db.Column(db.DateTime, default=datetime.utcnow, nullable=False, index=True)
     
     def __repr__(self):
-        return f'<ActivityLog {self.user_type} #{self.user_id} - {self.action_type} at {self.timestamp}>'  
+        return f'<ActivityLog {self.user_type} #{self.user_id} - {self.action_type} at {self.timestamp}>'
+
+
+class MarketplaceProduct(db.Model):
+    __bind_key__ = 'admin'
+    """
+    Marketplace products submitted by vendors, requiring admin approval.
+    Customers only see APPROVED products.
+    """
+    __tablename__ = 'marketplace_products'
+    
+    id = db.Column(db.Integer, primary_key=True)
+    vendor_id = db.Column(db.Integer, nullable=False, index=True)  # References vendor (cross-schema)
+    product_name = db.Column(db.String(255), nullable=False)
+    description = db.Column(db.Text)
+    price = db.Column(db.Numeric(10, 2), nullable=False)
+    sizes = db.Column(MySQLJSON)  # JSON array: ["S","M","L","XL"]
+    colors = db.Column(MySQLJSON)  # JSON array: ["Black","White","Red"]
+    image_url = db.Column(db.Text)
+    status = db.Column(db.Enum('PENDING', 'APPROVED', 'REJECTED', name='product_status'), default='PENDING', index=True)
+    admin_comment = db.Column(db.Text)  # Admin's rejection reason or notes
+    created_at = db.Column(db.DateTime, default=datetime.utcnow, index=True)
+    updated_at = db.Column(db.DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
+    
+    __table_args__ = {'extend_existing': True}
+    
+    def __repr__(self):
+        return f'<MarketplaceProduct #{self.id} - {self.product_name} ({self.status}) by Vendor#{self.vendor_id}>'  

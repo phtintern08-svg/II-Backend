@@ -10,7 +10,7 @@ from sqlalchemy import text
 from app_pkg.models import (
     db, Vendor, VendorQuotation, VendorDocument, VendorOrderAssignment, Order,
     VendorQuotationSubmission, Notification, OrderStatusHistory, Customer,
-    DeliveryLog, Rider, VendorCapacity, ProductCatalog  # VendorCapacity for Made-to-Order
+    DeliveryLog, Rider, VendorCapacity, ProductCatalog, MarketplaceProduct  # MarketplaceProduct for vendor product listings
 )
 from app_pkg.auth import login_required, role_required
 from app_pkg.file_upload import validate_and_save_file, delete_file, get_file_path_from_db
@@ -1580,3 +1580,178 @@ def get_new_orders():
     except Exception as e:
         app_logger.exception(f"Get new orders error: {e}")
         return jsonify({"error": "Failed to retrieve new orders"}), 500
+
+
+# ============================================================================
+# Marketplace Products (Vendor → Admin Approval → Customer Display)
+# ============================================================================
+
+@bp.route('/products', methods=['POST'])
+@login_required
+@role_required(['vendor'])
+def add_marketplace_product():
+    """
+    POST /api/vendor/products
+    Vendor adds a new product (status = PENDING)
+    """
+    try:
+        vendor_id = request.user_id
+        data = request.get_json()
+        
+        # Validate required fields
+        if not data.get('product_name') or not data.get('price'):
+            return jsonify({"error": "product_name and price are required"}), 400
+        
+        # Validate price is positive
+        try:
+            price = float(data['price'])
+            if price <= 0:
+                return jsonify({"error": "price must be greater than 0"}), 400
+        except (ValueError, TypeError):
+            return jsonify({"error": "invalid price format"}), 400
+        
+        # Create new product
+        product = MarketplaceProduct(
+            vendor_id=vendor_id,
+            product_name=data['product_name'],
+            description=data.get('description', ''),
+            price=price,
+            sizes=data.get('sizes', []),  # JSON array
+            colors=data.get('colors', []),  # JSON array
+            image_url=data.get('image_url', ''),
+            status='PENDING'
+        )
+        
+        db.session.add(product)
+        db.session.commit()
+        
+        app_logger.info(f"Vendor #{vendor_id} added product #{product.id}: {product.product_name}")
+        
+        return jsonify({
+            "message": "Product added successfully",
+            "product": {
+                "id": product.id,
+                "product_name": product.product_name,
+                "status": product.status,
+                "created_at": product.created_at.isoformat() if product.created_at else None
+            }
+        }), 201
+        
+    except Exception as e:
+        db.session.rollback()
+        app_logger.exception(f"Add marketplace product error: {e}")
+        return jsonify({"error": "Failed to add product"}), 500
+
+
+@bp.route('/products', methods=['GET'])
+@login_required
+@role_required(['vendor'])
+def get_vendor_products():
+    """
+    GET /api/vendor/products
+    Get all products for the logged-in vendor (with status)
+    """
+    try:
+        vendor_id = request.user_id
+        
+        products = MarketplaceProduct.query.filter_by(vendor_id=vendor_id).order_by(
+            MarketplaceProduct.created_at.desc()
+        ).all()
+        
+        products_list = []
+        for p in products:
+            # Status badge mapping
+            status_badge = {
+                'PENDING': '🟡 Pending',
+                'APPROVED': '🟢 Approved',
+                'REJECTED': '🔴 Rejected'
+            }.get(p.status, p.status)
+            
+            products_list.append({
+                "id": p.id,
+                "product_name": p.product_name,
+                "description": p.description,
+                "price": float(p.price) if p.price else 0,
+                "sizes": p.sizes if p.sizes else [],
+                "colors": p.colors if p.colors else [],
+                "image_url": p.image_url,
+                "status": p.status,
+                "status_badge": status_badge,
+                "admin_comment": p.admin_comment,
+                "created_at": p.created_at.isoformat() if p.created_at else None,
+                "updated_at": p.updated_at.isoformat() if p.updated_at else None
+            })
+        
+        return jsonify({
+            "products": products_list,
+            "count": len(products_list)
+        }), 200
+        
+    except Exception as e:
+        app_logger.exception(f"Get vendor products error: {e}")
+        return jsonify({"error": "Failed to retrieve products"}), 500
+
+
+@bp.route('/products/<int:product_id>', methods=['PUT'])
+@login_required
+@role_required(['vendor'])
+def update_vendor_product(product_id):
+    """
+    PUT /api/vendor/products/<product_id>
+    Vendor updates a product.
+    If product is APPROVED, status resets to PENDING (requires re-approval).
+    """
+    try:
+        vendor_id = request.user_id
+        data = request.get_json()
+        
+        product = MarketplaceProduct.query.filter_by(id=product_id, vendor_id=vendor_id).first()
+        if not product:
+            return jsonify({"error": "Product not found"}), 404
+        
+        # 🔥 PRODUCTION RULE: If product is APPROVED, reset to PENDING on edit
+        was_approved = product.status == 'APPROVED'
+        
+        # Update fields
+        if 'product_name' in data:
+            product.product_name = data['product_name']
+        if 'description' in data:
+            product.description = data['description']
+        if 'price' in data:
+            try:
+                price = float(data['price'])
+                if price <= 0:
+                    return jsonify({"error": "price must be greater than 0"}), 400
+                product.price = price
+            except (ValueError, TypeError):
+                return jsonify({"error": "invalid price format"}), 400
+        if 'sizes' in data:
+            product.sizes = data['sizes']
+        if 'colors' in data:
+            product.colors = data['colors']
+        if 'image_url' in data:
+            product.image_url = data['image_url']
+        
+        # Reset status to PENDING if it was APPROVED
+        if was_approved:
+            product.status = 'PENDING'
+            product.admin_comment = None  # Clear previous admin comment
+        
+        db.session.commit()
+        
+        app_logger.info(f"Vendor #{vendor_id} updated product #{product_id}. Status reset to PENDING: {was_approved}")
+        
+        return jsonify({
+            "message": "Product updated successfully",
+            "product": {
+                "id": product.id,
+                "product_name": product.product_name,
+                "status": product.status,
+                "requires_reapproval": was_approved
+            }
+        }), 200
+        
+    except Exception as e:
+        db.session.rollback()
+        app_logger.exception(f"Update vendor product error: {e}")
+        return jsonify({"error": "Failed to update product"}), 500
