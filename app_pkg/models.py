@@ -51,6 +51,8 @@ class Address(db.Model):
     landmark = db.Column(db.String(255))
     country = db.Column(db.String(100))
     alternative_phone = db.Column(db.String(20))
+    latitude = db.Column(db.Float)  # GPS coordinates from "Use Current Location" or geocoding
+    longitude = db.Column(db.Float)
     created_at = db.Column(db.DateTime, default=datetime.utcnow)
 
     def __repr__(self):

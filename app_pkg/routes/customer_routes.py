@@ -108,7 +108,9 @@ def get_addresses():
             "pincode": a.pincode,
             "landmark": a.landmark,
             "country": a.country,
-            "alternative_phone": a.alternative_phone
+            "alternative_phone": a.alternative_phone,
+            "latitude": float(a.latitude) if a.latitude is not None else None,
+            "longitude": float(a.longitude) if a.longitude is not None else None
         } for a in addresses]
         
         return jsonify({
@@ -154,6 +156,50 @@ def add_address():
         if existing:
             return jsonify({"error": f"Address type '{data['address_type']}' already exists. Please update the existing address instead."}), 409
         
+        # 🔥 GEOCODING: Extract latitude/longitude if provided (from "Use Current Location" or geocoding)
+        latitude = None
+        longitude = None
+        if 'latitude' in data and 'longitude' in data:
+            try:
+                latitude = float(data['latitude']) if data['latitude'] is not None else None
+                longitude = float(data['longitude']) if data['longitude'] is not None else None
+                # Validate coordinates (0,0 is invalid - likely error)
+                if latitude == 0.0 and longitude == 0.0:
+                    latitude = None
+                    longitude = None
+                    app_logger.warning(f"Invalid coordinates (0,0) for address creation - ignoring")
+            except (ValueError, TypeError) as e:
+                app_logger.warning(f"Invalid latitude/longitude values: {e}")
+        
+        # If lat/lng not provided, try geocoding from address
+        if latitude is None or longitude is None:
+            try:
+                from flask import current_app
+                import requests
+                geocode_query = f"{data['address_line1']}, {data['city']}, {data['state']}, {data['pincode']}, {data.get('country', 'India')}".strip()
+                api_key = current_app.config.get('MAPPLS_REST_KEY') or current_app.config.get('MAPPLS_API_KEY')
+                if api_key:
+                    url = f"https://apis.mappls.com/advancedmaps/v1/{api_key}/geo_code"
+                    params = {"addr": geocode_query}
+                    headers = {
+                        'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36',
+                        'Referer': request.host_url,
+                        'Origin': request.host_url.rstrip('/')
+                    }
+                    response = requests.get(url, params=params, headers=headers, timeout=5)
+                    if response.status_code == 200:
+                        geo_data = response.json()
+                        if geo_data.get("results") and len(geo_data["results"]) > 0:
+                            result = geo_data["results"][0]
+                            lat_val = float(result.get("latitude", 0))
+                            lon_val = float(result.get("longitude", 0))
+                            if lat_val != 0.0 or lon_val != 0.0:
+                                latitude = lat_val
+                                longitude = lon_val
+                                app_logger.info(f"Geocoded address during creation: {geocode_query} → ({latitude}, {longitude})")
+            except Exception as e:
+                app_logger.warning(f"Geocoding failed for address creation (non-critical): {e}")
+        
         new_address = Address(
             customer_id=request.user_id,
             address_type=address_type,
@@ -164,7 +210,9 @@ def add_address():
             pincode=data['pincode'],
             landmark=data.get('landmark'),
             country=data.get('country', 'India'),
-            alternative_phone=data.get('alternative_phone')
+            alternative_phone=data.get('alternative_phone'),
+            latitude=latitude,  # GPS coordinates from frontend or geocoded
+            longitude=longitude
         )
         
         db.session.add(new_address)
@@ -181,7 +229,9 @@ def add_address():
             "pincode": new_address.pincode,
             "landmark": new_address.landmark,
             "country": new_address.country,
-            "alternative_phone": new_address.alternative_phone
+            "alternative_phone": new_address.alternative_phone,
+            "latitude": float(new_address.latitude) if new_address.latitude is not None else None,
+            "longitude": float(new_address.longitude) if new_address.longitude is not None else None
         }), 201
         
     except Exception as e:
@@ -227,6 +277,51 @@ def update_address(address_id):
         # Also handle alternative_phone if provided
         if 'alternative_phone' in data:
             setattr(address, 'alternative_phone', data['alternative_phone'])
+        
+        # 🔥 GEOCODING: Update latitude/longitude if provided (from "Use Current Location" or geocoding)
+        if 'latitude' in data or 'longitude' in data:
+            try:
+                if 'latitude' in data:
+                    lat_val = float(data['latitude']) if data['latitude'] is not None else None
+                    if lat_val == 0.0:
+                        lat_val = None
+                    address.latitude = lat_val
+                if 'longitude' in data:
+                    lon_val = float(data['longitude']) if data['longitude'] is not None else None
+                    if lon_val == 0.0:
+                        lon_val = None
+                    address.longitude = lon_val
+            except (ValueError, TypeError) as e:
+                app_logger.warning(f"Invalid latitude/longitude values during update: {e}")
+        
+        # If lat/lng not provided but address fields changed, try geocoding
+        if (address.latitude is None or address.longitude is None) and any(field in data for field in ['address_line1', 'city', 'state', 'pincode']):
+            try:
+                from flask import current_app
+                import requests
+                geocode_query = f"{address.address_line1}, {address.city}, {address.state}, {address.pincode}, {address.country or 'India'}".strip()
+                api_key = current_app.config.get('MAPPLS_REST_KEY') or current_app.config.get('MAPPLS_API_KEY')
+                if api_key:
+                    url = f"https://apis.mappls.com/advancedmaps/v1/{api_key}/geo_code"
+                    params = {"addr": geocode_query}
+                    headers = {
+                        'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36',
+                        'Referer': request.host_url,
+                        'Origin': request.host_url.rstrip('/')
+                    }
+                    response = requests.get(url, params=params, headers=headers, timeout=5)
+                    if response.status_code == 200:
+                        geo_data = response.json()
+                        if geo_data.get("results") and len(geo_data["results"]) > 0:
+                            result = geo_data["results"][0]
+                            lat_val = float(result.get("latitude", 0))
+                            lon_val = float(result.get("longitude", 0))
+                            if lat_val != 0.0 or lon_val != 0.0:
+                                address.latitude = lat_val
+                                address.longitude = lon_val
+                                app_logger.info(f"Geocoded address during update: {geocode_query} → ({lat_val}, {lon_val})")
+            except Exception as e:
+                app_logger.warning(f"Geocoding failed for address update (non-critical): {e}")
         
         db.session.commit()
         

@@ -25,7 +25,13 @@ def haversine_km(lat1, lon1, lat2, lon2):
 def get_recommended_vendors(order, product_catalog_ids, total_qty, db, models):
     """
     Rank vendors for an order by: requirement match, stock, distance, capacity, lead time.
-
+    
+    📌 BUSINESS LOGIC:
+    - "Nearby vendor" = vendor with smaller geographic distance from customer delivery location
+    - Distance influences ranking (weighted score) but doesn't dominate
+    - A far vendor with better capacity/stock can still rank higher than a close vendor with poor capacity
+    - This balanced approach matches Amazon/Flipkart-style marketplace allocation
+    
     Args:
         order: Order model instance
         product_catalog_ids: list of product_catalog ids (resolved from order)
@@ -37,16 +43,23 @@ def get_recommended_vendors(order, product_catalog_ids, total_qty, db, models):
         list of dicts: [{"vendor_id", "vendor_name", "stock_available", "distance_km",
                         "capacity_available", "lead_time_days", "base_cost_per_piece",
                         "score", "breakdown": {...}}, ...]
+        Sorted by: score DESC (higher score = better match), then lead_time, then price
     """
     Vendor = models.Vendor
     VendorQuotation = models.VendorQuotation
     VendorCapacity = models.VendorCapacity
     VendorStock = getattr(models, 'VendorStock', None)
 
-    MAX_DISTANCE_KM = 200
+    # 📌 DISTANCE CONFIGURATION
+    # MAX_DISTANCE_KM: Used for distance score normalization (closer = higher score)
+    # HARD_DISTANCE_CUTOFF_KM: Optional hard filter - exclude vendors beyond this distance (None = disabled)
+    # Set to None to allow all distances (only affects ranking), or set to a value (e.g., 100) to exclude far vendors
+    MAX_DISTANCE_KM = 200  # Normalization factor for distance scoring
+    HARD_DISTANCE_CUTOFF_KM = None  # Optional: Set to 100 to exclude vendors > 100km (None = no hard cutoff)
+    
     MAX_LEAD_DAYS = 14
     WEIGHT_STOCK = 0.40
-    WEIGHT_DISTANCE = 0.30
+    WEIGHT_DISTANCE = 0.30  # Distance influences ranking but doesn't dominate (balanced marketplace approach)
     WEIGHT_CAPACITY = 0.20
     WEIGHT_LEAD_TIME = 0.10
 
@@ -159,11 +172,25 @@ def get_recommended_vendors(order, product_catalog_ids, total_qty, db, models):
             stock_available = sum(s.available_quantity for s in vendor_stocks if s.product_catalog_id in product_catalog_ids)
 
         distance_km = None
-        if order_lat is not None and order_lon is not None and vendor.latitude and vendor.longitude:
+        # ✅ CRITICAL FIX: Use `is not None` instead of truthy check
+        # This allows 0.0 coordinates (equator/prime meridian) which are valid GPS locations
+        if (
+            order_lat is not None and
+            order_lon is not None and
+            vendor.latitude is not None and
+            vendor.longitude is not None
+        ):
             distance_km = haversine_km(
                 order_lat, order_lon,
                 float(vendor.latitude), float(vendor.longitude)
             )
+            
+            # 🔥 OPTIONAL HARD FILTER: Distance cutoff (operational feasibility)
+            # If HARD_DISTANCE_CUTOFF_KM is set, exclude vendors beyond this distance
+            # Example: HARD_DISTANCE_CUTOFF_KM = 100 → exclude vendors > 100km away
+            # Set to None to disable (all distances allowed, only affects ranking)
+            if HARD_DISTANCE_CUTOFF_KM is not None and distance_km > HARD_DISTANCE_CUTOFF_KM:
+                continue  # Exclude vendor - too far for operational feasibility
 
         # Get quotation for primary product (for pricing display) - from bulk-loaded map
         quot = quotation_map.get(vid)
@@ -176,12 +203,12 @@ def get_recommended_vendors(order, product_catalog_ids, total_qty, db, models):
         stock_ratio = stock_available / total_qty if total_qty else 0
         stock_score = min(stock_ratio, 1.0)
 
-        # ✅ CRITICAL CHECK: Distance calculation safety - defaults to 0.5 if lat/lng missing
-        # Prevents crash if vendor or order location is null
+        # ✅ CRITICAL CHECK: Distance calculation safety - penalizes missing GPS (score = 0)
+        # Vendors without location should NOT get neutral benefit - they should be ranked lower
         if distance_km is not None:
             distance_score = max(0, 1 - (distance_km / MAX_DISTANCE_KM))
         else:
-            distance_score = 0.5  # Neutral score if distance cannot be calculated
+            distance_score = 0  # Penalize vendors/orders without GPS - no neutral benefit
 
         capacity_ratio = min_capacity / total_qty if total_qty else 0
         capacity_score = min(capacity_ratio, 1.0)
