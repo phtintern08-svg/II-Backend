@@ -834,6 +834,54 @@ def get_all_orders():
         return jsonify({"error": "Failed to retrieve orders"}), 500
 
 
+@bp.route('/orders/<int:order_id>/eligible-vendors', methods=['GET'])
+@admin_required
+def get_eligible_vendors_for_order(order_id):
+    """
+    GET /api/admin/orders/<order_id>/eligible-vendors
+    Returns ONLY eligible vendors (hard-filtered) ranked by score.
+    
+    Hard Filters (ELIMINATION):
+    - Must have approved quotation for ALL required products
+    - Must have active capacity where daily_capacity * lead_time_days >= order_quantity
+    - Must pass bulk check: max_bulk_capacity = 0 OR max_bulk_capacity >= order_quantity
+    - Must be verified (approved/active)
+    - Stock check: stock_available >= order_quantity (if stock exists, else use capacity)
+    
+    Ranking (after filtering):
+    - Score based on stock, distance, capacity, lead time
+    """
+    try:
+        from app_pkg.services.vendor_recommendation_engine import get_recommended_vendors
+
+        order = Order.query.get(order_id)
+        if not order:
+            return jsonify({"error": "Order not found"}), 404
+
+        total_qty = order.get_effective_quantity()
+        product_catalog_ids = _resolve_order_to_product_catalog_ids(order)
+        if not product_catalog_ids:
+            return jsonify({
+                "eligible_vendors": [],
+                "message": "Could not resolve order to product catalog.",
+                "order_product": f"{order.product_type or ''} / {order.category or ''} / {order.neck_type or ''} / {order.fabric or ''}"
+            }), 200
+
+        import app_pkg.models as models
+        # Recommendation engine already does hard filtering + ranking
+        candidates = get_recommended_vendors(order, product_catalog_ids, total_qty, db, models)
+        
+        return jsonify({
+            "eligible_vendors": candidates,
+            "order_quantity": total_qty,
+            "product_catalog_ids": product_catalog_ids,
+            "message": f"Found {len(candidates)} eligible vendor(s) based on requirements, capacity, and stock."
+        }), 200
+    except Exception as e:
+        app_logger.exception(f"Get eligible vendors error: {e}")
+        return jsonify({"error": "Failed to get eligible vendors"}), 500
+
+
 @bp.route('/orders/<int:order_id>/recommended-vendors', methods=['GET'])
 @admin_required
 def get_recommended_vendors_for_order(order_id):
@@ -1005,6 +1053,19 @@ def assign_order_to_vendor(order_id):
         if not order:
             return jsonify({"error": "Order not found"}), 404
         
+        # 🔥 CRITICAL: Prevent double assignment (race condition protection)
+        # If order already has a vendor assigned, reject new assignment
+        if order.selected_vendor_id is not None:
+            existing_vendor = Vendor.query.get(order.selected_vendor_id)
+            vendor_name = existing_vendor.business_name if existing_vendor else f"Vendor #{order.selected_vendor_id}"
+            app_logger.warning(
+                f"Assignment blocked: Order {order_id} already assigned to vendor {order.selected_vendor_id}"
+            )
+            return jsonify({
+                "error": f"Order is already assigned to {vendor_name}. "
+                        f"Cannot assign to another vendor. Please refresh the page."
+            }), 409  # 409 Conflict
+        
         vendor = Vendor.query.get(vendor_id)
         if not vendor:
             return jsonify({"error": "Vendor not found"}), 404
@@ -1017,6 +1078,34 @@ def assign_order_to_vendor(order_id):
         # 🔥 BULK ORDER FIX: Use helper method to get effective quantity
         # This ensures correct quantity is used for bulk orders (bulk_quantity) vs sample orders (quantity)
         total_qty = order.get_effective_quantity()
+        
+        # 🔥 CRITICAL SECURITY: Re-validate vendor eligibility before assignment
+        # Frontend filtering is not enough - admin could modify request manually
+        # Backend must enforce eligibility as source of truth
+        from app_pkg.services.vendor_recommendation_engine import get_recommended_vendors
+        import app_pkg.models as models
+        product_catalog_ids = _resolve_order_to_product_catalog_ids(order)
+        if not product_catalog_ids:
+            return jsonify({"error": "Could not resolve order to product catalog. Cannot validate eligibility."}), 400
+        
+        eligible_vendors = get_recommended_vendors(order, product_catalog_ids, total_qty, db, models)
+        eligible_vendor_ids = [v["vendor_id"] for v in eligible_vendors]
+        
+        if vendor_id not in eligible_vendor_ids:
+            app_logger.warning(
+                f"Assignment blocked: Vendor {vendor_id} not eligible for order {order_id}. "
+                f"Eligible vendors: {eligible_vendor_ids}"
+            )
+            return jsonify({
+                "error": f"Vendor {vendor_id} is not eligible for this order. "
+                        f"Vendor must have: approved quotation for all products, sufficient capacity, "
+                        f"and be verified. Please select from eligible vendors only."
+            }), 400
+        
+        # 🔥 CRITICAL: Verify vendor verification status (double-check)
+        if vendor.verification_status not in ('approved', 'active'):
+            app_logger.warning(f"Assignment blocked: Vendor {vendor_id} verification_status={vendor.verification_status}")
+            return jsonify({"error": "Vendor is not verified. Only approved/active vendors can be assigned."}), 400
         
         # Assign vendor to order
         order.selected_vendor_id = vendor_id
@@ -1068,15 +1157,44 @@ def assign_order_to_vendor(order_id):
         )
         db.session.add(notif)
 
-        # Deduct vendor_stock when assigning (within same transaction)
+        # 🔥 CRITICAL CONCURRENCY SAFETY: Deduct vendor_stock with row-level locking
+        # Prevents race condition: two admins assigning simultaneously → negative stock
+        # 📌 CONCEPTUAL SEPARATION: Stock = ready goods, Capacity = production ability
+        # If vendor has stock, deduct it. If no stock row exists, vendor uses capacity (made-to-order)
         product_items = _resolve_order_to_product_items(order)
         for pcid, qty in product_items:
-            stock_row = VendorStock.query.filter_by(
+            # Use with_for_update() to lock row during transaction
+            stock_row = db.session.query(VendorStock).filter_by(
                 vendor_id=vendor_id,
                 product_catalog_id=pcid
-            ).first()
-            if stock_row and stock_row.available_quantity >= qty:
+            ).with_for_update().first()
+            
+            if stock_row:
+                # Vendor has stock - deduct it
+                if stock_row.available_quantity < qty:
+                    # Rollback transaction if insufficient stock
+                    db.session.rollback()
+                    app_logger.warning(
+                        f"Stock deduction failed: Order {order_id}, Product {pcid}, "
+                        f"Required {qty}, Available {stock_row.available_quantity}"
+                    )
+                    return jsonify({
+                        "error": f"Insufficient stock for product. Available: {stock_row.available_quantity}, Required: {qty}"
+                    }), 400
+                
+                # Deduct stock atomically
                 stock_row.available_quantity = stock_row.available_quantity - qty
+                app_logger.info(
+                    f"Stock deducted: Vendor {vendor_id}, Product {pcid}, "
+                    f"Quantity {qty}, Remaining {stock_row.available_quantity}"
+                )
+            else:
+                # No stock row exists - vendor will fulfill via capacity (made-to-order)
+                # This is expected for capacity-based vendors (production model)
+                app_logger.info(
+                    f"Order {order_id}, Product {pcid}: No stock row for vendor {vendor_id}. "
+                    f"Vendor will fulfill via production capacity (made-to-order model)."
+                )
 
         db.session.commit()
         
@@ -1502,14 +1620,27 @@ def recalculate_product_catalog_pricing(product_catalog_ids):
             VendorQuotation.product_id == pcid,
             VendorQuotation.status == 'approved'
         ).first()
-        avg_price = float(agg.avg_price) if agg and agg.avg_price else 0.0
+        avg_price = float(agg.avg_price) if agg and agg.avg_price else None
         vendor_count = int(agg.cnt) if agg and agg.cnt else 0
-        final_price = round(avg_price * 1.30, 2) if avg_price else 0.0
         pc = ProductCatalog.query.get(pcid)
         if pc:
-            pc.average_price = avg_price
-            pc.final_price = final_price
-            pc.vendor_count = vendor_count
+            # 🔥 SECURITY: Only update pricing if we have approved vendors
+            # If vendor_count = 0, keep previous price (don't set to ₹0)
+            # This prevents accidental zero-price exposure if all vendors are rejected
+            if vendor_count > 0 and avg_price is not None:
+                final_price = round(avg_price * 1.30, 2)
+                pc.average_price = avg_price
+                pc.final_price = final_price
+                pc.vendor_count = vendor_count
+            elif vendor_count == 0:
+                # No approved vendors - keep existing price, set vendor_count to 0
+                # Frontend should check vendor_count > 0 before displaying price
+                pc.vendor_count = 0
+                # Don't modify average_price or final_price - keep last known good price
+                app_logger.warning(
+                    f"Product {pcid} has no approved vendors. Keeping previous price: "
+                    f"avg={pc.average_price}, final={pc.final_price}"
+                )
             pc.updated_at = datetime.utcnow()
     db.session.flush()
 
