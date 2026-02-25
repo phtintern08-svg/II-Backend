@@ -1265,12 +1265,35 @@ def get_payments():
 def approve_vendor(vendor_id):
     """
     POST /api/admin/vendors/<vendor_id>/approve
-    Approve vendor verification request
+    Approve vendor (set verification_status to 'approved' or 'active')
+    🔥 GPS VALIDATION: Vendor must have latitude/longitude before approval
     """
     try:
         vendor = Vendor.query.get(vendor_id)
         if not vendor:
             return jsonify({"error": "Vendor not found"}), 404
+        
+        # 🔥 GPS VALIDATION: Vendor must have GPS location before approval (required for distance-based ranking)
+        if vendor.latitude is None or vendor.longitude is None:
+            return jsonify({
+                "error": "Vendor GPS location required",
+                "message": "Vendor must set their latitude and longitude (GPS location) before approval. This is required for distance-based order assignment."
+            }), 400
+        
+        # Validate coordinates are not 0.0 (invalid)
+        try:
+            lat = float(vendor.latitude)
+            lon = float(vendor.longitude)
+            if lat == 0.0 and lon == 0.0:
+                return jsonify({
+                    "error": "Invalid GPS location",
+                    "message": "Vendor GPS coordinates cannot be (0,0). Please set a valid location."
+                }), 400
+        except (ValueError, TypeError):
+            return jsonify({
+                "error": "Invalid GPS location format",
+                "message": "Vendor GPS coordinates must be valid numbers."
+            }), 400
         
         # Set default values
         vendor.commission_rate = 15.0

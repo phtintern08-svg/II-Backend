@@ -241,5 +241,20 @@ def get_recommended_vendors(order, product_catalog_ids, total_qty, db, models):
             }
         })
 
-    candidates.sort(key=lambda x: (-x["score"], x["lead_time_days"], x["base_cost_per_piece"]))
+    # 🔥 DETERMINISTIC SORTING: Enterprise-grade tie-breaking for equal scores
+    # Priority order:
+    # 1. Higher score (descending)
+    # 2. Higher stock (descending) - prefer vendors with more ready inventory
+    # 3. Smaller distance (ascending) - prefer nearby vendors (9999 for missing GPS)
+    # 4. Faster lead time (ascending) - prefer faster delivery
+    # 5. Lower price (ascending) - prefer cheaper vendors
+    candidates.sort(
+        key=lambda x: (
+            -x["score"],  # Higher score first
+            -x["stock_available"],  # More stock preferred
+            x["distance_km"] if x["distance_km"] is not None else 9999,  # Closer preferred (9999 for missing GPS)
+            x["lead_time_days"],  # Faster delivery preferred
+            x["base_cost_per_piece"]  # Cheaper preferred
+        )
+    )
     return candidates

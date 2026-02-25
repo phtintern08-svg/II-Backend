@@ -359,50 +359,84 @@ def create_order():
             effective_quantity = quantity
             order_quantity = quantity
         
-        # 🔥 GEOCODING: Geocode address to get latitude/longitude for distance-based vendor ranking
-        # Build geocoding query from address components
-        geocode_query = f"{address_line1}, {city}, {state}, {pincode}, {country}".strip()
-        order_lat = None
-        order_lon = None
+        # 🔥 GPS COORDINATES: Priority order for getting latitude/longitude:
+        # 1. Use provided latitude/longitude from payload (if customer selected address with GPS)
+        # 2. Fetch from address table if address_id is provided
+        # 3. Fall back to geocoding if neither available
+        order_lat = validated_data.get('latitude')
+        order_lon = validated_data.get('longitude')
         
-        try:
-            from flask import current_app
-            import requests
-            # Use REST key for backend geocoding (same as support_routes.py)
-            api_key = current_app.config.get('MAPPLS_REST_KEY') or current_app.config.get('MAPPLS_API_KEY')
-            if api_key:
-                # Use Mappls geocoding API (same as support_routes.py)
-                url = f"https://apis.mappls.com/advancedmaps/v1/{api_key}/geo_code"
-                params = {"addr": geocode_query}  # Mappls uses "addr" parameter
-                headers = {
-                    'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36',
-                    'Referer': request.host_url,
-                    'Origin': request.host_url.rstrip('/')
-                }
-                response = requests.get(url, params=params, headers=headers, timeout=5)
-                if response.status_code == 200:
-                    data = response.json()
-                    # Mappls response format: {"results": [{"latitude": ..., "longitude": ...}]}
-                    if data.get("results") and len(data["results"]) > 0:
-                        result = data["results"][0]
-                        order_lat = float(result.get("latitude", 0))
-                        order_lon = float(result.get("longitude", 0))
-                        # Validate coordinates (0,0 is invalid - likely error)
-                        if order_lat != 0.0 or order_lon != 0.0:
-                            app_logger.info(f"Geocoded order address: {geocode_query} → ({order_lat}, {order_lon})")
-                        else:
-                            app_logger.warning(f"Geocoding returned (0,0) - likely invalid for: {geocode_query}")
-                            order_lat = None
-                            order_lon = None
-                    else:
-                        app_logger.warning(f"Geocoding returned no results for: {geocode_query}")
+        # If lat/lon provided, validate they're not 0.0 (invalid coordinates)
+        if order_lat is not None and order_lon is not None:
+            try:
+                order_lat = float(order_lat)
+                order_lon = float(order_lon)
+                if order_lat == 0.0 and order_lon == 0.0:
+                    app_logger.warning("Invalid GPS coordinates (0,0) provided - will attempt geocoding")
+                    order_lat = None
+                    order_lon = None
                 else:
-                    app_logger.warning(f"Mappls geocoding API returned {response.status_code} for order creation")
-            else:
-                app_logger.warning("MAPPLS_REST_KEY not configured - geocoding skipped")
-        except Exception as e:
-            # Don't fail order creation if geocoding fails - log and continue
-            app_logger.warning(f"Geocoding failed for order (non-critical): {e}")
+                    app_logger.info(f"Using provided GPS coordinates: ({order_lat}, {order_lon})")
+            except (ValueError, TypeError):
+                app_logger.warning(f"Invalid GPS coordinate format - will attempt geocoding")
+                order_lat = None
+                order_lon = None
+        
+        # If still no coordinates, try fetching from address table (if address_id provided)
+        if order_lat is None or order_lon is None:
+            address_id = validated_data.get('address_id')
+            if address_id:
+                try:
+                    from app_pkg.models import Address
+                    address = Address.query.filter_by(id=address_id, customer_id=customer_id).first()
+                    if address and address.latitude is not None and address.longitude is not None:
+                        order_lat = float(address.latitude)
+                        order_lon = float(address.longitude)
+                        app_logger.info(f"Fetched GPS coordinates from address #{address_id}: ({order_lat}, {order_lon})")
+                except Exception as e:
+                    app_logger.warning(f"Failed to fetch GPS from address table: {e}")
+        
+        # If still no coordinates, fall back to geocoding
+        if order_lat is None or order_lon is None:
+            geocode_query = f"{address_line1}, {city}, {state}, {pincode}, {country}".strip()
+            try:
+                from flask import current_app
+                import requests
+                # Use REST key for backend geocoding (same as support_routes.py)
+                api_key = current_app.config.get('MAPPLS_REST_KEY') or current_app.config.get('MAPPLS_API_KEY')
+                if api_key:
+                    # Use Mappls geocoding API (same as support_routes.py)
+                    url = f"https://apis.mappls.com/advancedmaps/v1/{api_key}/geo_code"
+                    params = {"addr": geocode_query}  # Mappls uses "addr" parameter
+                    headers = {
+                        'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36',
+                        'Referer': request.host_url,
+                        'Origin': request.host_url.rstrip('/')
+                    }
+                    response = requests.get(url, params=params, headers=headers, timeout=5)
+                    if response.status_code == 200:
+                        data = response.json()
+                        # Mappls response format: {"results": [{"latitude": ..., "longitude": ...}]}
+                        if data.get("results") and len(data["results"]) > 0:
+                            result = data["results"][0]
+                            order_lat = float(result.get("latitude", 0))
+                            order_lon = float(result.get("longitude", 0))
+                            # Validate coordinates (0,0 is invalid - likely error)
+                            if order_lat != 0.0 or order_lon != 0.0:
+                                app_logger.info(f"Geocoded order address: {geocode_query} → ({order_lat}, {order_lon})")
+                            else:
+                                app_logger.warning(f"Geocoding returned (0,0) - likely invalid for: {geocode_query}")
+                                order_lat = None
+                                order_lon = None
+                        else:
+                            app_logger.warning(f"Geocoding returned no results for: {geocode_query}")
+                    else:
+                        app_logger.warning(f"Mappls geocoding API returned {response.status_code} for order creation")
+                else:
+                    app_logger.warning("MAPPLS_REST_KEY not configured - geocoding skipped")
+            except Exception as e:
+                # Don't fail order creation if geocoding fails - log and continue
+                app_logger.warning(f"Geocoding failed for order (non-critical): {e}")
         
         # Store original validated values (not normalized) to preserve canonical representation
         # Normalization is only for catalog lookup, not storage
