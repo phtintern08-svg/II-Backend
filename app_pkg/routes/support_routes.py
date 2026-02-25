@@ -1057,60 +1057,76 @@ def get_product_catalog():
 
 
 @bp.route('/products', methods=['GET'])
-def get_marketplace_products():
+def get_products():
     """
-    GET /api/products
-    Get all APPROVED marketplace products (public endpoint - no auth required)
+    GET /api/products?product_type=<type>
+    Get all APPROVED cart products (public endpoint - no auth required)
     Customers only see APPROVED products (PENDING and REJECTED are hidden)
     
-    Returns Flipkart-style product listing with:
+    Query Parameters:
+    - product_type (optional): Filter by product type name (e.g., 'T-Shirt', 'Hoodie')
+    
+    Returns product listing with:
     - Product image
     - Product name
-    - Starting price
-    - Available colors
+    - Cost price
     - Available sizes
+    - Product type
+    - Category
     """
     try:
-        # 🔥 PRODUCTION RULE: Customers must NEVER see PENDING or REJECTED products
-        products = MarketplaceProduct.query.filter_by(status='APPROVED').order_by(
-            MarketplaceProduct.created_at.desc()
-        ).all()
+        import json
+        
+        product_type = request.args.get('product_type', '').strip()
+        
+        # Build query - always filter by approved status
+        query = CartProduct.query.filter_by(status='approved')
+        
+        # Filter by product_type if provided
+        if product_type:
+            query = query.filter(CartProduct.product_type == product_type)
+        
+        products = query.order_by(CartProduct.created_at.desc()).all()
         
         products_list = []
         for p in products:
-            # Generate product variants for each size/color combination
-            # This creates individual product cards like the old static array
-            sizes = p.sizes if p.sizes else []
-            colors = p.colors if p.colors else []
+            # Parse JSON strings to arrays (MySQL JSON columns return as strings)
+            sizes = p.sizes
+            if isinstance(sizes, str):
+                try:
+                    sizes = json.loads(sizes)
+                except (json.JSONDecodeError, TypeError):
+                    sizes = []
+            if not isinstance(sizes, list):
+                sizes = []
             
-            # If no sizes/colors specified, create a single default variant
-            if not sizes and not colors:
-                products_list.append({
-                    "id": f"mp_{p.id}",
-                    "name": p.product_name,
-                    "description": p.description or "",
-                    "price": float(p.price) if p.price else 0,
-                    "color": None,
-                    "size": None,
-                    "image": p.image_url or "https://images.unsplash.com/photo-1500530855697-b586d89ba3ee?q=80",
-                    "sizes": [],
-                    "colors": []
-                })
+            images = p.images
+            if isinstance(images, str):
+                try:
+                    images = json.loads(images)
+                except (json.JSONDecodeError, TypeError):
+                    images = []
+            if not isinstance(images, list):
+                images = []
+            
+            # Get first image or default
+            image_url = None
+            if images and len(images) > 0:
+                image_url = f"/api/uploads/{images[0]}"
             else:
-                # Create variants for each size/color combination
-                for size in (sizes if sizes else [None]):
-                    for color in (colors if colors else [None]):
-                        products_list.append({
-                            "id": f"mp_{p.id}_{size or 'default'}_{color or 'default'}",
-                            "name": p.product_name,
-                            "description": p.description or "",
-                            "price": float(p.price) if p.price else 0,
-                            "color": color,
-                            "size": size,
-                            "image": p.image_url or "https://images.unsplash.com/photo-1500530855697-b586d89ba3ee?q=80",
-                            "sizes": sizes,
-                            "colors": colors
-                        })
+                image_url = "https://images.unsplash.com/photo-1500530855697-b586d89ba3ee?q=80"
+            
+            products_list.append({
+                "id": f"cp_{p.id}",
+                "name": p.product_name,
+                "description": p.description or "",
+                "price": float(p.cost_price) if p.cost_price else 0,
+                "product_type": p.product_type or 'Unknown',
+                "category": p.category or 'N/A',
+                "image": image_url,
+                "sizes": sizes,
+                "colors": []  # Cart products don't have colors, but keeping for compatibility
+            })
         
         return jsonify({
             "products": products_list,
@@ -1118,7 +1134,7 @@ def get_marketplace_products():
         }), 200
         
     except Exception as e:
-        app_logger.exception(f"Get marketplace products error: {e}")
+        app_logger.exception(f"Get products error: {e}")
         return jsonify({"error": "Failed to retrieve products"}), 500
 
 
