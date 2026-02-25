@@ -3249,6 +3249,27 @@ def get_pending_cart_products():
         products = []
         
         for row in result:
+            # Parse JSON strings to arrays (MySQL JSON columns return as strings)
+            sizes = row.sizes
+            if isinstance(sizes, str):
+                try:
+                    import json
+                    sizes = json.loads(sizes)
+                except (json.JSONDecodeError, TypeError):
+                    sizes = []
+            if not isinstance(sizes, list):
+                sizes = []
+            
+            images = row.images
+            if isinstance(images, str):
+                try:
+                    import json
+                    images = json.loads(images)
+                except (json.JSONDecodeError, TypeError):
+                    images = []
+            if not isinstance(images, list):
+                images = []
+            
             products.append({
                 "id": row.id,
                 "vendor_id": row.vendor_id,
@@ -3258,8 +3279,8 @@ def get_pending_cart_products():
                 "product_name": row.product_name,
                 "description": row.description,
                 "cost_price": float(row.cost_price) if row.cost_price else 0,
-                "sizes": row.sizes if row.sizes else [],
-                "images": row.images if row.images else [],
+                "sizes": sizes,
+                "images": images,
                 "status": row.status,
                 "admin_remarks": row.admin_remarks,
                 "created_at": row.created_at.isoformat() if row.created_at else None,

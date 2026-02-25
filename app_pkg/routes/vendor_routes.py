@@ -933,14 +933,33 @@ def get_cart_products():
         
         products_list = []
         for p in products:
+            # Parse JSON strings to arrays (MySQL JSON columns return as strings)
+            sizes = p.sizes
+            if isinstance(sizes, str):
+                try:
+                    sizes = json.loads(sizes)
+                except (json.JSONDecodeError, TypeError):
+                    sizes = []
+            if not isinstance(sizes, list):
+                sizes = []
+            
+            images = p.images
+            if isinstance(images, str):
+                try:
+                    images = json.loads(images)
+                except (json.JSONDecodeError, TypeError):
+                    images = []
+            if not isinstance(images, list):
+                images = []
+            
             products_list.append({
                 "id": p.id,
                 "product_type": p.product_type,
                 "product_name": p.product_name,
                 "description": p.description,
                 "cost_price": float(p.cost_price) if p.cost_price else 0,
-                "sizes": p.sizes if p.sizes else [],
-                "images": p.images if p.images else [],
+                "sizes": sizes,
+                "images": images,
                 "status": p.status,
                 "admin_remarks": p.admin_remarks,
                 "created_at": p.created_at.isoformat() if p.created_at else None,

@@ -1144,8 +1144,26 @@ def get_cart_products():
         
         products_list = []
         for p in products:
-            images = p.images if p.images else []
-            sizes = p.sizes if p.sizes else []
+            # Parse JSON strings to arrays (MySQL JSON columns return as strings)
+            sizes = p.sizes
+            if isinstance(sizes, str):
+                try:
+                    import json
+                    sizes = json.loads(sizes)
+                except (json.JSONDecodeError, TypeError):
+                    sizes = []
+            if not isinstance(sizes, list):
+                sizes = []
+            
+            images = p.images
+            if isinstance(images, str):
+                try:
+                    import json
+                    images = json.loads(images)
+                except (json.JSONDecodeError, TypeError):
+                    images = []
+            if not isinstance(images, list):
+                images = []
             
             # Get vendor info
             vendor = Vendor.query.get(p.vendor_id)
