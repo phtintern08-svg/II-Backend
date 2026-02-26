@@ -68,7 +68,8 @@ class Category(db.Model):
     description = db.Column(db.Text)
     created_at = db.Column(db.DateTime, default=datetime.utcnow)
 
-    threads = db.relationship('Thread', backref='category', lazy=True, cascade='all, delete')
+    # Note: Thread relationship removed - Thread is now in support DB, cannot have cross-database relationship
+    # If you need category for threads, use SupportTicketCategory in support DB
 
     def __repr__(self):
         return f'<Category {self.name}>'
@@ -387,9 +388,21 @@ class Thread(db.Model):
     title = db.Column(db.String(255), nullable=False)
     content = db.Column(db.Text, nullable=False)
     user_id = db.Column(db.Integer, nullable=False)  # Cross-schema: references customer schema
-    category_id = db.Column(db.Integer, nullable=True)  # Reference to categories.id in admin DB (no FK constraint)
+    ticket_id = db.Column(
+        db.Integer,
+        db.ForeignKey('support_tickets.id'),
+        nullable=True
+    )  # Reference to support_tickets.id (ticket messages)
+    category_id = db.Column(
+        db.Integer,
+        db.ForeignKey('support_ticket_categories.id'),
+        nullable=True
+    )  # Reference to support_ticket_categories.id in support DB
     created_at = db.Column(db.DateTime, default=datetime.utcnow)
 
+    # Relationships
+    ticket = db.relationship('SupportTicket', backref='messages', lazy=True)
+    category = db.relationship('SupportTicketCategory', backref='threads', lazy=True)
     comments = db.relationship('Comment', backref='thread', lazy=True, cascade='all, delete-orphan')
 
     def __repr__(self):
@@ -667,7 +680,11 @@ class SupportTicket(db.Model):
     user_id = db.Column(db.Integer, nullable=False)
     user_type = db.Column(db.String(20), nullable=False)  # 'customer', 'vendor', 'rider'
     
-    category_id = db.Column(db.Integer, nullable=True)  # Reference to support_ticket_categories.id
+    category_id = db.Column(
+        db.Integer,
+        db.ForeignKey('support_ticket_categories.id'),
+        nullable=True
+    )  # Reference to support_ticket_categories.id
     priority = db.Column(db.String(20), default='medium')  # 'low', 'medium', 'high', 'critical'
     
     subject = db.Column(db.String(255), nullable=False)
@@ -677,7 +694,11 @@ class SupportTicket(db.Model):
     status = db.Column(db.String(50), default='open')  # 'open', 'assigned', 'in_progress', 'escalated', 'resolved', 'closed'
     
     # Assignment
-    assigned_to = db.Column(db.Integer, nullable=True)  # Reference to support_users.id
+    assigned_to = db.Column(
+        db.Integer,
+        db.ForeignKey('support_users.id'),
+        nullable=True
+    )  # Reference to support_users.id
     
     # SLA
     sla_deadline = db.Column(db.DateTime, nullable=True)
@@ -692,7 +713,9 @@ class SupportTicket(db.Model):
     resolved_at = db.Column(db.DateTime, nullable=True)
     
     # Relationships
-    messages = db.relationship('Thread', backref='ticket', lazy=True)
+    category = db.relationship('SupportTicketCategory', backref='tickets', lazy=True)
+    assigned_agent = db.relationship('SupportUser', backref='assigned_tickets', lazy=True)
+    # messages relationship is defined via Thread.ticket_id foreign key (backref='messages')
     
     def __repr__(self):
         return f'<SupportTicket #{self.id} - {self.user_type} - {self.status}>'
@@ -708,6 +731,10 @@ class SupportTicketCategory(db.Model):
     is_active = db.Column(db.Boolean, default=True, nullable=False)
     created_at = db.Column(db.DateTime, default=datetime.utcnow)
     updated_at = db.Column(db.DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
+    
+    # Relationships (via backrefs from Thread and SupportTicket)
+    # threads - defined via Thread.category_id backref='threads'
+    # tickets - defined via SupportTicket.category_id backref='tickets'
     
     def __repr__(self):
         return f'<SupportTicketCategory {self.name}>'
