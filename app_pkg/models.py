@@ -950,29 +950,6 @@ class ProductType(db.Model):
     def __repr__(self):
         return f'<ProductType {self.name} ({self.slug})>'
 
-class ProductType(db.Model):
-    """
-    Master table for standardized product types.
-    Single source of truth for product categories.
-    Used by both vendors (when creating products) and customers (when browsing by category).
-    """
-    __bind_key__ = 'vendor'  # Stored in vendor DB for easy access
-    __tablename__ = 'product_types'
-    
-    id = db.Column(db.Integer, primary_key=True)
-    name = db.Column(db.String(100), unique=True, nullable=False)
-    slug = db.Column(db.String(100), unique=True, nullable=False, index=True)
-    is_active = db.Column(db.Boolean, default=True, nullable=False, index=True)
-    created_at = db.Column(db.DateTime, default=datetime.utcnow)
-    
-    # Relationship
-    cart_products = db.relationship('CartProduct', backref='product_type_ref', lazy=True)
-    
-    __table_args__ = {'extend_existing': True}
-    
-    def __repr__(self):
-        return f'<ProductType {self.name} ({self.slug})>'
-
 class CartProduct(db.Model):
     __bind_key__ = 'vendor'
     """
