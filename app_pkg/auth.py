@@ -506,7 +506,7 @@ def verify_user_exists(user_id, role):
                 f"Process ID: {os.getpid()}"
             )
         elif role == 'support':
-            user = Support.query.get(user_id)
+            user = SupportUser.query.get(user_id)
         else:
             app_logger.warning(
                 f"verify_user_exists - Unknown role: {role}, User ID: {user_id}, "

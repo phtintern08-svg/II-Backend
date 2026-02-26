@@ -13,7 +13,7 @@ import os
 import hashlib
 from datetime import datetime, timedelta
 
-from app_pkg.models import db, Admin, Customer, Vendor, Rider, Support, SupportUser, OTPLog, EmailVerificationToken
+from app_pkg.models import db, Admin, Customer, Vendor, Rider, SupportUser, OTPLog, EmailVerificationToken
 from app_pkg.auth import generate_token, verify_token, get_token_from_request, send_verification_email, require_auth
 import secrets
 from app_pkg.validation import sanitize_text

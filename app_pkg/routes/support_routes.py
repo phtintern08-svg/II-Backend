@@ -8,7 +8,7 @@ import os
 import requests
 
 from config import Config
-from app_pkg.models import db, Category, Thread, Comment, Customer, Vendor, Support, Notification, ProductCatalog, MarketplaceProduct, CartProduct, ProductType
+from app_pkg.models import db, Category, Thread, Comment, Customer, Vendor, SupportUser, Notification, ProductCatalog, MarketplaceProduct, CartProduct, ProductType
 from werkzeug.security import check_password_hash, generate_password_hash
 from app_pkg.auth import login_required, role_required
 from app_pkg.schemas import category_schema, categories_schema, thread_schema, threads_schema, comment_schema, comments_schema
@@ -508,16 +508,16 @@ def get_support_profile():
     Get support profile information
     """
     try:
-        support = Support.query.get(request.user_id)
+        support = SupportUser.query.get(request.user_id)
         if not support:
             return jsonify({"error": "Support user not found"}), 404
         
         support_data = {
             "id": support.id,
-            "username": support.username,
             "name": support.name,
             "email": support.email,
             "phone": support.phone,
+            "role": support.role,
             "is_active": support.is_active,
             "created_at": support.created_at.isoformat() if support.created_at else None
         }
@@ -539,13 +539,13 @@ def update_support_profile():
     """
     try:
         data = request.get_json()
-        support = Support.query.get(request.user_id)
+        support = SupportUser.query.get(request.user_id)
         
         if not support:
             return jsonify({"error": "Support user not found"}), 404
         
-        # Update allowed fields
-        allowed_fields = ['username', 'name', 'phone']
+        # Update allowed fields (SupportUser doesn't have username, only name)
+        allowed_fields = ['name', 'phone']
         for field in allowed_fields:
             if field in data:
                 setattr(support, field, data[field])
@@ -636,7 +636,7 @@ def change_support_password():
         if not current_password or not new_password:
             return jsonify({"error": "Current password and new password are required"}), 400
         
-        support = Support.query.get(request.user_id)
+        support = SupportUser.query.get(request.user_id)
         if not support:
             return jsonify({"error": "Support user not found"}), 404
         

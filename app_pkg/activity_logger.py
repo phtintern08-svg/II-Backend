@@ -4,7 +4,7 @@ Helper function to log user actions across the platform
 """
 from flask import request
 from datetime import datetime
-from app_pkg.models import db, ActivityLog, Admin, Customer, Vendor, Rider, Support
+from app_pkg.models import db, ActivityLog, Admin, Customer, Vendor, Rider, SupportUser
 from app_pkg.logger_config import app_logger
 
 
@@ -50,8 +50,8 @@ def log_activity(
             rider = Rider.query.get(user_id)
             user_name = rider.name if rider else f"Rider #{user_id}"
         elif user_type == 'support':
-            support = Support.query.get(user_id)
-            user_name = support.username if support else f"Support #{user_id}"
+            support = SupportUser.query.get(user_id)
+            user_name = support.name if support else f"Support #{user_id}"
         else:
             user_name = f"{user_type} #{user_id}"
         
