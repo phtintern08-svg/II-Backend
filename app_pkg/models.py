@@ -380,14 +380,14 @@ class Notification(db.Model):
 
 
 class Thread(db.Model):
-    __bind_key__ = 'admin'
+    __bind_key__ = 'support'
     __tablename__ = 'threads'
 
     id = db.Column(db.Integer, primary_key=True)
     title = db.Column(db.String(255), nullable=False)
     content = db.Column(db.Text, nullable=False)
     user_id = db.Column(db.Integer, nullable=False)  # Cross-schema: references customer schema
-    category_id = db.Column(db.Integer, db.ForeignKey('categories.id'), nullable=True)
+    category_id = db.Column(db.Integer, nullable=True)  # Reference to categories.id in admin DB (no FK constraint)
     created_at = db.Column(db.DateTime, default=datetime.utcnow)
 
     comments = db.relationship('Comment', backref='thread', lazy=True, cascade='all, delete-orphan')
@@ -397,7 +397,7 @@ class Thread(db.Model):
 
 
 class Comment(db.Model):
-    __bind_key__ = 'admin'
+    __bind_key__ = 'support'
     __tablename__ = 'comments'
 
     id = db.Column(db.Integer, primary_key=True)
@@ -639,7 +639,7 @@ class Support(db.Model):
         return f'<Support {self.username} - {self.email}>'
 
 class SupportUser(db.Model):
-    __bind_key__ = 'admin'
+    __bind_key__ = 'support'
     """Support user model for admin-managed support credentials"""
     __tablename__ = 'support_users'
     
@@ -657,39 +657,48 @@ class SupportUser(db.Model):
         return f'<SupportUser {self.name} - {self.email} ({self.role})>'
 
 class SupportTicket(db.Model):
-    __bind_key__ = 'admin'
+    __bind_key__ = 'support'
     """Support tickets for all user types"""
     __tablename__ = 'support_tickets'
     
     id = db.Column(db.Integer, primary_key=True)
+    ticket_number = db.Column(db.String(20), unique=True, nullable=True)
+    
     user_id = db.Column(db.Integer, nullable=False)
     user_type = db.Column(db.String(20), nullable=False)  # 'customer', 'vendor', 'rider'
     
-    category = db.Column(db.String(50), nullable=False)  # 'delivery_issue', 'payment_issue', 'technical_issue', 'other'
+    category_id = db.Column(db.Integer, nullable=True)  # Reference to support_ticket_categories.id
+    priority = db.Column(db.String(20), default='medium')  # 'low', 'medium', 'high', 'critical'
+    
     subject = db.Column(db.String(255), nullable=False)
     description = db.Column(db.Text, nullable=False)
     
-    # Attachments
+    # Status
+    status = db.Column(db.String(50), default='open')  # 'open', 'assigned', 'in_progress', 'escalated', 'resolved', 'closed'
+    
+    # Assignment
+    assigned_to = db.Column(db.Integer, nullable=True)  # Reference to support_users.id
+    
+    # SLA
+    sla_deadline = db.Column(db.DateTime, nullable=True)
+    
+    # Attachments (legacy - consider moving to separate table)
     attachment_image = db.Column(db.LargeBinary)
     attachment_filename = db.Column(db.String(255))
     
-    # Status
-    status = db.Column(db.String(50), default='open')  # 'open', 'in_progress', 'resolved', 'closed'
-    priority = db.Column(db.String(20), default='normal')  # 'low', 'normal', 'high', 'urgent'
-    
-    # Admin Response
-    admin_response = db.Column(db.Text)
-    admin_id = db.Column(db.Integer, db.ForeignKey('admins.id'))
-    
+    # Timestamps
     created_at = db.Column(db.DateTime, default=datetime.utcnow)
     updated_at = db.Column(db.DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
-    resolved_at = db.Column(db.DateTime)
+    resolved_at = db.Column(db.DateTime, nullable=True)
+    
+    # Relationships
+    messages = db.relationship('Thread', backref='ticket', lazy=True)
     
     def __repr__(self):
         return f'<SupportTicket #{self.id} - {self.user_type} - {self.status}>'
 
 class SupportTicketCategory(db.Model):
-    __bind_key__ = 'admin'
+    __bind_key__ = 'support'
     """Ticket categories managed by admin"""
     __tablename__ = 'support_ticket_categories'
     
@@ -704,7 +713,7 @@ class SupportTicketCategory(db.Model):
         return f'<SupportTicketCategory {self.name}>'
 
 class SupportPriorityRule(db.Model):
-    __bind_key__ = 'admin'
+    __bind_key__ = 'support'
     """Priority rules with SLA times"""
     __tablename__ = 'support_priority_rules'
     
@@ -720,7 +729,7 @@ class SupportPriorityRule(db.Model):
         return f'<SupportPriorityRule {self.priority_level} - {self.sla_hours}h>'
 
 class SupportEscalationRule(db.Model):
-    __bind_key__ = 'admin'
+    __bind_key__ = 'support'
     """Escalation rules for automatic ticket escalation"""
     __tablename__ = 'support_escalation_rules'
     
@@ -736,7 +745,7 @@ class SupportEscalationRule(db.Model):
         return f'<SupportEscalationRule {self.hours_threshold}h -> {self.escalate_to_role}>'
 
 class SupportAutoAssignment(db.Model):
-    __bind_key__ = 'admin'
+    __bind_key__ = 'support'
     """Auto-assignment configuration"""
     __tablename__ = 'support_auto_assignment'
     

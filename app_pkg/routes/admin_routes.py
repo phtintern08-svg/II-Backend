@@ -3454,13 +3454,19 @@ def create_support_user():
         # Check if email already exists
         existing = SupportUser.query.filter_by(email=email).first()
         if existing:
-            return jsonify({"error": "Email already in use"}), 400
+            return jsonify({
+                "error": "Email already exists",
+                "message": f"The email address '{email}' is already registered to another support user."
+            }), 400
         
         # Check if phone already exists (if provided)
         if phone:
             existing_phone = SupportUser.query.filter_by(phone=phone).first()
             if existing_phone:
-                return jsonify({"error": "Phone number already in use"}), 400
+                return jsonify({
+                    "error": "Phone number already exists",
+                    "message": f"The phone number '{phone}' is already registered to another support user."
+                }), 400
         
         # Hash password
         hashed_password = generate_password_hash(password)
@@ -3668,87 +3674,118 @@ def get_support_overview():
         from datetime import datetime, timedelta
         from sqlalchemy import func
         
-        # Total open tickets
-        total_open = SupportTicket.query.filter(
-            SupportTicket.status.in_(['open', 'in_progress'])
-        ).count()
+        # Safe query with error handling
+        try:
+            # Total open tickets
+            total_open = SupportTicket.query.filter(
+                SupportTicket.status.in_(['open', 'in_progress', 'assigned'])
+            ).count()
+        except Exception as e:
+            app_logger.warning(f"Error querying open tickets: {e}")
+            total_open = 0
         
-        # Escalated tickets (tickets that exceeded SLA)
-        escalated_count = SupportTicket.query.filter(
-            SupportTicket.status.in_(['open', 'in_progress']),
-            SupportTicket.priority.in_(['high', 'urgent'])
-        ).count()
+        try:
+            # Escalated tickets
+            escalated_count = SupportTicket.query.filter(
+                SupportTicket.status == 'escalated'
+            ).count()
+        except Exception as e:
+            app_logger.warning(f"Error querying escalated tickets: {e}")
+            escalated_count = 0
         
-        # SLA breach count (tickets past their SLA)
-        # This is a simplified calculation - in production, you'd compare against priority rules
-        sla_breach_count = SupportTicket.query.filter(
-            SupportTicket.status.in_(['open', 'in_progress']),
-            func.timestampdiff(func.HOUR, SupportTicket.created_at, func.now()) > 24
-        ).count()
+        try:
+            # SLA breach count (tickets past their SLA deadline)
+            now = datetime.utcnow()
+            sla_breach_count = SupportTicket.query.filter(
+                SupportTicket.status.in_(['open', 'in_progress', 'assigned']),
+                SupportTicket.sla_deadline.isnot(None),
+                SupportTicket.sla_deadline < now
+            ).count()
+        except Exception as e:
+            app_logger.warning(f"Error querying SLA breaches: {e}")
+            sla_breach_count = 0
         
-        # Average resolution time (in hours)
-        resolved_tickets = SupportTicket.query.filter(
-            SupportTicket.status == 'resolved',
-            SupportTicket.resolved_at.isnot(None)
-        ).all()
-        
-        avg_resolution_hours = 0
-        if resolved_tickets:
-            total_hours = sum([
-                (ticket.resolved_at - ticket.created_at).total_seconds() / 3600
-                for ticket in resolved_tickets
-                if ticket.resolved_at and ticket.created_at
-            ])
-            avg_resolution_hours = round(total_hours / len(resolved_tickets), 1)
+        try:
+            # Average resolution time (in hours)
+            resolved_tickets = SupportTicket.query.filter(
+                SupportTicket.status.in_(['resolved', 'closed']),
+                SupportTicket.resolved_at.isnot(None)
+            ).all()
+            
+            avg_resolution_hours = 0
+            if resolved_tickets:
+                total_hours = sum([
+                    (ticket.resolved_at - ticket.created_at).total_seconds() / 3600
+                    for ticket in resolved_tickets
+                    if ticket.resolved_at and ticket.created_at
+                ])
+                avg_resolution_hours = round(total_hours / len(resolved_tickets), 1) if resolved_tickets else 0
+        except Exception as e:
+            app_logger.warning(f"Error calculating avg resolution time: {e}")
+            avg_resolution_hours = 0
         
         # Agent workload
-        active_users = SupportUser.query.filter_by(is_active=True).all()
-        agent_workload = []
-        agent_performance = []
-        
-        for user in active_users:
-            active_tickets = SupportTicket.query.filter(
-                SupportTicket.status.in_(['open', 'in_progress'])
-                # Note: In production, you'd have an assigned_to field
-            ).count()
+        try:
+            active_users = SupportUser.query.filter_by(is_active=True).all()
+            agent_workload = []
+            agent_performance = []
             
-            resolved_today = SupportTicket.query.filter(
-                SupportTicket.status == 'resolved',
-                func.date(SupportTicket.resolved_at) == func.curdate()
-                # Note: In production, you'd filter by assigned_to
-            ).count()
-            
-            agent_workload.append({
-                "id": user.id,
-                "name": user.name,
-                "role": user.role,
-                "active_tickets": active_tickets
-            })
-            
-            agent_performance.append({
-                "id": user.id,
-                "name": user.name,
-                "role": user.role,
-                "active_tickets": active_tickets,
-                "resolved_today": resolved_today,
-                "avg_response_time": "N/A",  # Would calculate from ticket history
-                "is_active": user.is_active
-            })
+            for user in active_users:
+                try:
+                    active_tickets = SupportTicket.query.filter(
+                        SupportTicket.assigned_to == user.id,
+                        SupportTicket.status.in_(['open', 'in_progress', 'assigned'])
+                    ).count()
+                except Exception:
+                    active_tickets = 0
+                
+                try:
+                    resolved_today = SupportTicket.query.filter(
+                        SupportTicket.assigned_to == user.id,
+                        SupportTicket.status.in_(['resolved', 'closed']),
+                        func.date(SupportTicket.resolved_at) == func.curdate()
+                    ).count()
+                except Exception:
+                    resolved_today = 0
+                
+                agent_workload.append({
+                    "id": user.id,
+                    "name": user.name,
+                    "role": user.role,
+                    "active_tickets": active_tickets
+                })
+                
+                agent_performance.append({
+                    "id": user.id,
+                    "name": user.name,
+                    "role": user.role,
+                    "active_tickets": active_tickets,
+                    "resolved_today": resolved_today,
+                    "avg_response_time": "N/A",  # Would calculate from ticket history
+                    "is_active": user.is_active
+                })
+        except Exception as e:
+            app_logger.warning(f"Error querying agent workload: {e}")
+            agent_workload = []
+            agent_performance = []
         
-        # Recent escalations (simplified)
-        recent_escalations = SupportTicket.query.filter(
-            SupportTicket.status.in_(['open', 'in_progress']),
-            func.timestampdiff(func.HOUR, SupportTicket.created_at, func.now()) > 12
-        ).order_by(SupportTicket.created_at.desc()).limit(10).all()
-        
-        escalations_list = [{
-            "id": ticket.id,
-            "user_type": ticket.user_type,
-            "category": ticket.category,
-            "escalated_to": "Senior Support",  # Would be calculated from escalation rules
-            "hours_since_created": int((datetime.utcnow() - ticket.created_at).total_seconds() / 3600),
-            "sla_status": "breached" if (datetime.utcnow() - ticket.created_at).total_seconds() / 3600 > 24 else "OK"
-        } for ticket in recent_escalations]
+        # Recent escalations
+        try:
+            recent_escalations = SupportTicket.query.filter(
+                SupportTicket.status == 'escalated'
+            ).order_by(SupportTicket.created_at.desc()).limit(10).all()
+            
+            escalations_list = [{
+                "id": ticket.id,
+                "user_type": ticket.user_type,
+                "subject": ticket.subject,
+                "escalated_to": "Senior Support",  # Would be calculated from escalation rules
+                "hours_since_created": int((datetime.utcnow() - ticket.created_at).total_seconds() / 3600) if ticket.created_at else 0,
+                "sla_status": "breached" if ticket.sla_deadline and ticket.sla_deadline < datetime.utcnow() else "OK"
+            } for ticket in recent_escalations]
+        except Exception as e:
+            app_logger.warning(f"Error querying escalations: {e}")
+            escalations_list = []
         
         # Customer satisfaction (placeholder - would come from ratings)
         satisfaction_percent = 85  # Would calculate from ticket ratings
