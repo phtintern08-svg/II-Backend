@@ -14,8 +14,9 @@ from app_pkg.models import (
     db, Admin, Customer, Vendor, Rider, Order, OTPLog, Payment, 
     VendorDocument, VendorQuotationSubmission, RiderDocument, Notification,
     VendorOrderAssignment, OrderStatusHistory, DeliveryLog, ProductCatalog,
-    DeliveryPartner, Support, ActivityLog, VendorQuotation, VendorCapacity,
-    VendorStock, MarketplaceProduct, CartProduct
+    DeliveryPartner, Support, SupportUser, SupportTicket, SupportTicketCategory,
+    SupportPriorityRule, SupportEscalationRule, SupportAutoAssignment, ActivityLog, 
+    VendorQuotation, VendorCapacity, VendorStock, MarketplaceProduct, CartProduct
 )
 from app_pkg.auth import login_required, admin_required
 from app_pkg.file_upload import get_file_path_from_db
@@ -3413,3 +3414,819 @@ def reject_cart_product(product_id):
         db.session.rollback()
         app_logger.exception(f"Reject cart product error: {e}")
         return jsonify({"error": "Failed to reject product"}), 500
+
+
+# ============================================================================
+# Support Users Management Routes (Admin Only)
+# ============================================================================
+
+@bp.route('/support-users', methods=['POST'])
+@admin_required
+def create_support_user():
+    """
+    POST /api/admin/support-users
+    Create a new support user (admin only)
+    """
+    try:
+        from werkzeug.security import generate_password_hash
+        
+        data = request.get_json()
+        if not data:
+            return jsonify({"error": "Request body required"}), 400
+        
+        name = data.get('name', '').strip()
+        email = data.get('email', '').strip().lower()
+        phone = data.get('phone', '').strip() if data.get('phone') else None
+        password = data.get('password', '').strip()
+        role = data.get('role', 'support').strip()
+        
+        # Validation
+        if not name or not email or not password:
+            return jsonify({"error": "Name, email, and password are required"}), 400
+        
+        if len(password) < 6:
+            return jsonify({"error": "Password must be at least 6 characters"}), 400
+        
+        valid_roles = ['support', 'senior_support', 'manager']
+        if role not in valid_roles:
+            return jsonify({"error": f"Invalid role. Must be one of: {', '.join(valid_roles)}"}), 400
+        
+        # Check if email already exists
+        existing = SupportUser.query.filter_by(email=email).first()
+        if existing:
+            return jsonify({"error": "Email already in use"}), 400
+        
+        # Check if phone already exists (if provided)
+        if phone:
+            existing_phone = SupportUser.query.filter_by(phone=phone).first()
+            if existing_phone:
+                return jsonify({"error": "Phone number already in use"}), 400
+        
+        # Hash password
+        hashed_password = generate_password_hash(password)
+        
+        # Create user
+        user = SupportUser(
+            name=name,
+            email=email,
+            phone=phone,
+            password_hash=hashed_password,
+            role=role,
+            is_active=True
+        )
+        
+        db.session.add(user)
+        db.session.commit()
+        
+        # Log activity
+        log_activity_from_request(
+            action=f"Created support user: {name} ({email})",
+            action_type="support_user_created",
+            entity_type="support_user",
+            entity_id=user.id
+        )
+        
+        return jsonify({
+            "message": "Support user created successfully",
+            "user": {
+                "id": user.id,
+                "name": user.name,
+                "email": user.email,
+                "phone": user.phone,
+                "role": user.role,
+                "is_active": user.is_active
+            }
+        }), 201
+        
+    except Exception as e:
+        db.session.rollback()
+        app_logger.exception(f"Create support user error: {e}")
+        return jsonify({"error": "Failed to create support user"}), 500
+
+
+@bp.route('/support-users', methods=['GET'])
+@admin_required
+def list_support_users():
+    """
+    GET /api/admin/support-users
+    List all support users (admin only)
+    """
+    try:
+        users = SupportUser.query.order_by(SupportUser.created_at.desc()).all()
+        
+        users_list = [{
+            "id": user.id,
+            "name": user.name,
+            "email": user.email,
+            "phone": user.phone,
+            "role": user.role,
+            "is_active": user.is_active,
+            "created_at": user.created_at.isoformat() if user.created_at else None
+        } for user in users]
+        
+        return jsonify({"users": users_list}), 200
+        
+    except Exception as e:
+        app_logger.exception(f"List support users error: {e}")
+        return jsonify({"error": "Failed to retrieve support users"}), 500
+
+
+@bp.route('/support-users/<int:user_id>/reset-password', methods=['POST'])
+@admin_required
+def reset_support_user_password(user_id):
+    """
+    POST /api/admin/support-users/<user_id>/reset-password
+    Reset support user password (admin only)
+    """
+    try:
+        from werkzeug.security import generate_password_hash
+        
+        data = request.get_json()
+        if not data:
+            return jsonify({"error": "Request body required"}), 400
+        
+        password = data.get('password', '').strip()
+        if not password:
+            return jsonify({"error": "Password is required"}), 400
+        
+        if len(password) < 6:
+            return jsonify({"error": "Password must be at least 6 characters"}), 400
+        
+        user = SupportUser.query.get(user_id)
+        if not user:
+            return jsonify({"error": "Support user not found"}), 404
+        
+        # Hash and update password
+        user.password_hash = generate_password_hash(password)
+        db.session.commit()
+        
+        # Log activity
+        log_activity_from_request(
+            action=f"Reset password for support user: {user.name} ({user.email})",
+            action_type="support_user_password_reset",
+            entity_type="support_user",
+            entity_id=user.id
+        )
+        
+        return jsonify({"message": "Password reset successfully"}), 200
+        
+    except Exception as e:
+        db.session.rollback()
+        app_logger.exception(f"Reset support user password error: {e}")
+        return jsonify({"error": "Failed to reset password"}), 500
+
+
+@bp.route('/support-users/<int:user_id>/toggle-status', methods=['POST'])
+@admin_required
+def toggle_support_user_status(user_id):
+    """
+    POST /api/admin/support-users/<user_id>/toggle-status
+    Activate or deactivate support user (admin only)
+    """
+    try:
+        data = request.get_json()
+        is_active = data.get('is_active', True) if data else True
+        
+        user = SupportUser.query.get(user_id)
+        if not user:
+            return jsonify({"error": "Support user not found"}), 404
+        
+        user.is_active = bool(is_active)
+        db.session.commit()
+        
+        # Log activity
+        action = "activated" if is_active else "deactivated"
+        log_activity_from_request(
+            action=f"{action.capitalize()} support user: {user.name} ({user.email})",
+            action_type="support_user_status_changed",
+            entity_type="support_user",
+            entity_id=user.id
+        )
+        
+        return jsonify({
+            "message": f"User {action} successfully",
+            "user": {
+                "id": user.id,
+                "name": user.name,
+                "email": user.email,
+                "is_active": user.is_active
+            }
+        }), 200
+        
+    except Exception as e:
+        db.session.rollback()
+        app_logger.exception(f"Toggle support user status error: {e}")
+        return jsonify({"error": "Failed to update user status"}), 500
+
+
+@bp.route('/support-users/<int:user_id>', methods=['DELETE'])
+@admin_required
+def delete_support_user(user_id):
+    """
+    DELETE /api/admin/support-users/<user_id>
+    Delete support user (admin only)
+    """
+    try:
+        user = SupportUser.query.get(user_id)
+        if not user:
+            return jsonify({"error": "Support user not found"}), 404
+        
+        user_name = user.name
+        user_email = user.email
+        
+        db.session.delete(user)
+        db.session.commit()
+        
+        # Log activity
+        log_activity_from_request(
+            action=f"Deleted support user: {user_name} ({user_email})",
+            action_type="support_user_deleted",
+            entity_type="support_user",
+            entity_id=user_id
+        )
+        
+        return jsonify({"message": "Support user deleted successfully"}), 200
+        
+    except Exception as e:
+        db.session.rollback()
+        app_logger.exception(f"Delete support user error: {e}")
+        return jsonify({"error": "Failed to delete support user"}), 500
+
+
+# ============================================================================
+# Support Overview & Settings Routes (Admin Only)
+# ============================================================================
+
+@bp.route('/support/overview', methods=['GET'])
+@admin_required
+def get_support_overview():
+    """
+    GET /api/admin/support/overview
+    Get support overview statistics (admin only)
+    """
+    try:
+        from datetime import datetime, timedelta
+        from sqlalchemy import func
+        
+        # Total open tickets
+        total_open = SupportTicket.query.filter(
+            SupportTicket.status.in_(['open', 'in_progress'])
+        ).count()
+        
+        # Escalated tickets (tickets that exceeded SLA)
+        escalated_count = SupportTicket.query.filter(
+            SupportTicket.status.in_(['open', 'in_progress']),
+            SupportTicket.priority.in_(['high', 'urgent'])
+        ).count()
+        
+        # SLA breach count (tickets past their SLA)
+        # This is a simplified calculation - in production, you'd compare against priority rules
+        sla_breach_count = SupportTicket.query.filter(
+            SupportTicket.status.in_(['open', 'in_progress']),
+            func.timestampdiff(func.HOUR, SupportTicket.created_at, func.now()) > 24
+        ).count()
+        
+        # Average resolution time (in hours)
+        resolved_tickets = SupportTicket.query.filter(
+            SupportTicket.status == 'resolved',
+            SupportTicket.resolved_at.isnot(None)
+        ).all()
+        
+        avg_resolution_hours = 0
+        if resolved_tickets:
+            total_hours = sum([
+                (ticket.resolved_at - ticket.created_at).total_seconds() / 3600
+                for ticket in resolved_tickets
+                if ticket.resolved_at and ticket.created_at
+            ])
+            avg_resolution_hours = round(total_hours / len(resolved_tickets), 1)
+        
+        # Agent workload
+        active_users = SupportUser.query.filter_by(is_active=True).all()
+        agent_workload = []
+        agent_performance = []
+        
+        for user in active_users:
+            active_tickets = SupportTicket.query.filter(
+                SupportTicket.status.in_(['open', 'in_progress'])
+                # Note: In production, you'd have an assigned_to field
+            ).count()
+            
+            resolved_today = SupportTicket.query.filter(
+                SupportTicket.status == 'resolved',
+                func.date(SupportTicket.resolved_at) == func.curdate()
+                # Note: In production, you'd filter by assigned_to
+            ).count()
+            
+            agent_workload.append({
+                "id": user.id,
+                "name": user.name,
+                "role": user.role,
+                "active_tickets": active_tickets
+            })
+            
+            agent_performance.append({
+                "id": user.id,
+                "name": user.name,
+                "role": user.role,
+                "active_tickets": active_tickets,
+                "resolved_today": resolved_today,
+                "avg_response_time": "N/A",  # Would calculate from ticket history
+                "is_active": user.is_active
+            })
+        
+        # Recent escalations (simplified)
+        recent_escalations = SupportTicket.query.filter(
+            SupportTicket.status.in_(['open', 'in_progress']),
+            func.timestampdiff(func.HOUR, SupportTicket.created_at, func.now()) > 12
+        ).order_by(SupportTicket.created_at.desc()).limit(10).all()
+        
+        escalations_list = [{
+            "id": ticket.id,
+            "user_type": ticket.user_type,
+            "category": ticket.category,
+            "escalated_to": "Senior Support",  # Would be calculated from escalation rules
+            "hours_since_created": int((datetime.utcnow() - ticket.created_at).total_seconds() / 3600),
+            "sla_status": "breached" if (datetime.utcnow() - ticket.created_at).total_seconds() / 3600 > 24 else "OK"
+        } for ticket in recent_escalations]
+        
+        # Customer satisfaction (placeholder - would come from ratings)
+        satisfaction_percent = 85  # Would calculate from ticket ratings
+        
+        return jsonify({
+            "total_open": total_open,
+            "escalated_count": escalated_count,
+            "sla_breach_count": sla_breach_count,
+            "avg_resolution_hours": avg_resolution_hours,
+            "agent_workload": agent_workload,
+            "agent_performance": agent_performance,
+            "recent_escalations": escalations_list,
+            "satisfaction_percent": satisfaction_percent
+        }), 200
+        
+    except Exception as e:
+        app_logger.exception(f"Get support overview error: {e}")
+        return jsonify({"error": "Failed to retrieve overview"}), 500
+
+
+# Categories Routes
+@bp.route('/support/categories', methods=['GET'])
+@admin_required
+def list_support_categories():
+    """List all ticket categories"""
+    try:
+        categories = SupportTicketCategory.query.order_by(SupportTicketCategory.name).all()
+        return jsonify({
+            "categories": [{
+                "id": cat.id,
+                "name": cat.name,
+                "description": cat.description,
+                "is_active": cat.is_active
+            } for cat in categories]
+        }), 200
+    except Exception as e:
+        app_logger.exception(f"List categories error: {e}")
+        return jsonify({"error": "Failed to retrieve categories"}), 500
+
+
+@bp.route('/support/categories', methods=['POST'])
+@admin_required
+def create_support_category():
+    """Create a new ticket category"""
+    try:
+        data = request.get_json()
+        name = data.get('name', '').strip()
+        description = data.get('description', '').strip()
+        
+        if not name:
+            return jsonify({"error": "Category name is required"}), 400
+        
+        # Check if category exists
+        existing = SupportTicketCategory.query.filter_by(name=name).first()
+        if existing:
+            return jsonify({"error": "Category already exists"}), 400
+        
+        category = SupportTicketCategory(name=name, description=description, is_active=True)
+        db.session.add(category)
+        db.session.commit()
+        
+        log_activity_from_request(
+            action=f"Created support category: {name}",
+            action_type="support_category_created",
+            entity_type="support_category",
+            entity_id=category.id
+        )
+        
+        return jsonify({
+            "message": "Category created successfully",
+            "category": {
+                "id": category.id,
+                "name": category.name,
+                "description": category.description,
+                "is_active": category.is_active
+            }
+        }), 201
+    except Exception as e:
+        db.session.rollback()
+        app_logger.exception(f"Create category error: {e}")
+        return jsonify({"error": "Failed to create category"}), 500
+
+
+@bp.route('/support/categories/<int:category_id>', methods=['GET'])
+@admin_required
+def get_support_category(category_id):
+    """Get a specific category"""
+    try:
+        category = SupportTicketCategory.query.get(category_id)
+        if not category:
+            return jsonify({"error": "Category not found"}), 404
+        
+        return jsonify({
+            "category": {
+                "id": category.id,
+                "name": category.name,
+                "description": category.description,
+                "is_active": category.is_active
+            }
+        }), 200
+    except Exception as e:
+        app_logger.exception(f"Get category error: {e}")
+        return jsonify({"error": "Failed to retrieve category"}), 500
+
+
+@bp.route('/support/categories/<int:category_id>', methods=['PUT'])
+@admin_required
+def update_support_category(category_id):
+    """Update a category"""
+    try:
+        category = SupportTicketCategory.query.get(category_id)
+        if not category:
+            return jsonify({"error": "Category not found"}), 404
+        
+        data = request.get_json()
+        if 'name' in data:
+            category.name = data['name'].strip()
+        if 'description' in data:
+            category.description = data.get('description', '').strip()
+        
+        db.session.commit()
+        
+        return jsonify({"message": "Category updated successfully"}), 200
+    except Exception as e:
+        db.session.rollback()
+        app_logger.exception(f"Update category error: {e}")
+        return jsonify({"error": "Failed to update category"}), 500
+
+
+@bp.route('/support/categories/<int:category_id>/toggle', methods=['POST'])
+@admin_required
+def toggle_support_category(category_id):
+    """Toggle category active status"""
+    try:
+        category = SupportTicketCategory.query.get(category_id)
+        if not category:
+            return jsonify({"error": "Category not found"}), 404
+        
+        data = request.get_json()
+        category.is_active = bool(data.get('is_active', not category.is_active))
+        db.session.commit()
+        
+        return jsonify({"message": "Category status updated"}), 200
+    except Exception as e:
+        db.session.rollback()
+        app_logger.exception(f"Toggle category error: {e}")
+        return jsonify({"error": "Failed to update category"}), 500
+
+
+# Priority Rules Routes
+@bp.route('/support/priority-rules', methods=['GET'])
+@admin_required
+def list_priority_rules():
+    """List all priority rules"""
+    try:
+        rules = SupportPriorityRule.query.order_by(SupportPriorityRule.priority_level).all()
+        return jsonify({
+            "rules": [{
+                "id": rule.id,
+                "priority_level": rule.priority_level,
+                "sla_hours": rule.sla_hours,
+                "description": rule.description,
+                "is_active": rule.is_active
+            } for rule in rules]
+        }), 200
+    except Exception as e:
+        app_logger.exception(f"List priority rules error: {e}")
+        return jsonify({"error": "Failed to retrieve priority rules"}), 500
+
+
+@bp.route('/support/priority-rules', methods=['POST'])
+@admin_required
+def create_priority_rule():
+    """Create a new priority rule"""
+    try:
+        data = request.get_json()
+        priority_level = data.get('priority_level', '').strip().lower()
+        sla_hours = data.get('sla_hours')
+        description = data.get('description', '').strip()
+        
+        if not priority_level or sla_hours is None:
+            return jsonify({"error": "Priority level and SLA hours are required"}), 400
+        
+        valid_levels = ['low', 'medium', 'high', 'critical']
+        if priority_level not in valid_levels:
+            return jsonify({"error": f"Invalid priority level. Must be one of: {', '.join(valid_levels)}"}), 400
+        
+        # Check if rule exists
+        existing = SupportPriorityRule.query.filter_by(priority_level=priority_level).first()
+        if existing:
+            return jsonify({"error": "Priority rule already exists"}), 400
+        
+        rule = SupportPriorityRule(
+            priority_level=priority_level,
+            sla_hours=int(sla_hours),
+            description=description,
+            is_active=True
+        )
+        db.session.add(rule)
+        db.session.commit()
+        
+        return jsonify({
+            "message": "Priority rule created successfully",
+            "rule": {
+                "id": rule.id,
+                "priority_level": rule.priority_level,
+                "sla_hours": rule.sla_hours,
+                "description": rule.description,
+                "is_active": rule.is_active
+            }
+        }), 201
+    except Exception as e:
+        db.session.rollback()
+        app_logger.exception(f"Create priority rule error: {e}")
+        return jsonify({"error": "Failed to create priority rule"}), 500
+
+
+@bp.route('/support/priority-rules/<int:rule_id>', methods=['GET'])
+@admin_required
+def get_priority_rule(rule_id):
+    """Get a specific priority rule"""
+    try:
+        rule = SupportPriorityRule.query.get(rule_id)
+        if not rule:
+            return jsonify({"error": "Priority rule not found"}), 404
+        
+        return jsonify({
+            "rule": {
+                "id": rule.id,
+                "priority_level": rule.priority_level,
+                "sla_hours": rule.sla_hours,
+                "description": rule.description,
+                "is_active": rule.is_active
+            }
+        }), 200
+    except Exception as e:
+        app_logger.exception(f"Get priority rule error: {e}")
+        return jsonify({"error": "Failed to retrieve priority rule"}), 500
+
+
+@bp.route('/support/priority-rules/<int:rule_id>', methods=['PUT'])
+@admin_required
+def update_priority_rule(rule_id):
+    """Update a priority rule"""
+    try:
+        rule = SupportPriorityRule.query.get(rule_id)
+        if not rule:
+            return jsonify({"error": "Priority rule not found"}), 404
+        
+        data = request.get_json()
+        if 'priority_level' in data:
+            rule.priority_level = data['priority_level'].strip().lower()
+        if 'sla_hours' in data:
+            rule.sla_hours = int(data['sla_hours'])
+        if 'description' in data:
+            rule.description = data.get('description', '').strip()
+        
+        db.session.commit()
+        
+        return jsonify({"message": "Priority rule updated successfully"}), 200
+    except Exception as e:
+        db.session.rollback()
+        app_logger.exception(f"Update priority rule error: {e}")
+        return jsonify({"error": "Failed to update priority rule"}), 500
+
+
+@bp.route('/support/priority-rules/<int:rule_id>/toggle', methods=['POST'])
+@admin_required
+def toggle_priority_rule(rule_id):
+    """Toggle priority rule active status"""
+    try:
+        rule = SupportPriorityRule.query.get(rule_id)
+        if not rule:
+            return jsonify({"error": "Priority rule not found"}), 404
+        
+        data = request.get_json()
+        rule.is_active = bool(data.get('is_active', not rule.is_active))
+        db.session.commit()
+        
+        return jsonify({"message": "Priority rule status updated"}), 200
+    except Exception as e:
+        db.session.rollback()
+        app_logger.exception(f"Toggle priority rule error: {e}")
+        return jsonify({"error": "Failed to update priority rule"}), 500
+
+
+# Escalation Rules Routes
+@bp.route('/support/escalation-rules', methods=['GET'])
+@admin_required
+def list_escalation_rules():
+    """List all escalation rules"""
+    try:
+        rules = SupportEscalationRule.query.order_by(SupportEscalationRule.hours_threshold).all()
+        return jsonify({
+            "rules": [{
+                "id": rule.id,
+                "hours_threshold": rule.hours_threshold,
+                "escalate_to_role": rule.escalate_to_role,
+                "notify_admin": rule.notify_admin,
+                "is_active": rule.is_active
+            } for rule in rules]
+        }), 200
+    except Exception as e:
+        app_logger.exception(f"List escalation rules error: {e}")
+        return jsonify({"error": "Failed to retrieve escalation rules"}), 500
+
+
+@bp.route('/support/escalation-rules', methods=['POST'])
+@admin_required
+def create_escalation_rule():
+    """Create a new escalation rule"""
+    try:
+        data = request.get_json()
+        hours_threshold = data.get('hours_threshold')
+        escalate_to_role = data.get('escalate_to_role', '').strip()
+        notify_admin = bool(data.get('notify_admin', False))
+        
+        if hours_threshold is None or not escalate_to_role:
+            return jsonify({"error": "Hours threshold and escalate to role are required"}), 400
+        
+        valid_roles = ['senior_support', 'manager', 'admin']
+        if escalate_to_role not in valid_roles:
+            return jsonify({"error": f"Invalid role. Must be one of: {', '.join(valid_roles)}"}), 400
+        
+        rule = SupportEscalationRule(
+            hours_threshold=int(hours_threshold),
+            escalate_to_role=escalate_to_role,
+            notify_admin=notify_admin,
+            is_active=True
+        )
+        db.session.add(rule)
+        db.session.commit()
+        
+        return jsonify({
+            "message": "Escalation rule created successfully",
+            "rule": {
+                "id": rule.id,
+                "hours_threshold": rule.hours_threshold,
+                "escalate_to_role": rule.escalate_to_role,
+                "notify_admin": rule.notify_admin,
+                "is_active": rule.is_active
+            }
+        }), 201
+    except Exception as e:
+        db.session.rollback()
+        app_logger.exception(f"Create escalation rule error: {e}")
+        return jsonify({"error": "Failed to create escalation rule"}), 500
+
+
+@bp.route('/support/escalation-rules/<int:rule_id>', methods=['GET'])
+@admin_required
+def get_escalation_rule(rule_id):
+    """Get a specific escalation rule"""
+    try:
+        rule = SupportEscalationRule.query.get(rule_id)
+        if not rule:
+            return jsonify({"error": "Escalation rule not found"}), 404
+        
+        return jsonify({
+            "rule": {
+                "id": rule.id,
+                "hours_threshold": rule.hours_threshold,
+                "escalate_to_role": rule.escalate_to_role,
+                "notify_admin": rule.notify_admin,
+                "is_active": rule.is_active
+            }
+        }), 200
+    except Exception as e:
+        app_logger.exception(f"Get escalation rule error: {e}")
+        return jsonify({"error": "Failed to retrieve escalation rule"}), 500
+
+
+@bp.route('/support/escalation-rules/<int:rule_id>', methods=['PUT'])
+@admin_required
+def update_escalation_rule(rule_id):
+    """Update an escalation rule"""
+    try:
+        rule = SupportEscalationRule.query.get(rule_id)
+        if not rule:
+            return jsonify({"error": "Escalation rule not found"}), 404
+        
+        data = request.get_json()
+        if 'hours_threshold' in data:
+            rule.hours_threshold = int(data['hours_threshold'])
+        if 'escalate_to_role' in data:
+            rule.escalate_to_role = data['escalate_to_role'].strip()
+        if 'notify_admin' in data:
+            rule.notify_admin = bool(data['notify_admin'])
+        
+        db.session.commit()
+        
+        return jsonify({"message": "Escalation rule updated successfully"}), 200
+    except Exception as e:
+        db.session.rollback()
+        app_logger.exception(f"Update escalation rule error: {e}")
+        return jsonify({"error": "Failed to update escalation rule"}), 500
+
+
+@bp.route('/support/escalation-rules/<int:rule_id>/toggle', methods=['POST'])
+@admin_required
+def toggle_escalation_rule(rule_id):
+    """Toggle escalation rule active status"""
+    try:
+        rule = SupportEscalationRule.query.get(rule_id)
+        if not rule:
+            return jsonify({"error": "Escalation rule not found"}), 404
+        
+        data = request.get_json()
+        rule.is_active = bool(data.get('is_active', not rule.is_active))
+        db.session.commit()
+        
+        return jsonify({"message": "Escalation rule status updated"}), 200
+    except Exception as e:
+        db.session.rollback()
+        app_logger.exception(f"Toggle escalation rule error: {e}")
+        return jsonify({"error": "Failed to update escalation rule"}), 500
+
+
+# Auto Assignment Routes
+@bp.route('/support/auto-assignment', methods=['GET'])
+@admin_required
+def get_auto_assignment():
+    """Get auto assignment configuration"""
+    try:
+        methods = SupportAutoAssignment.query.all()
+        
+        # Default methods if none exist
+        default_methods = ['round_robin', 'workload', 'category', 'manual']
+        method_map = {m.assignment_method: m for m in methods}
+        
+        result = []
+        for method_name in default_methods:
+            if method_name in method_map:
+                result.append({
+                    "assignment_method": method_map[method_name].assignment_method,
+                    "is_enabled": method_map[method_name].is_enabled,
+                    "config_json": method_map[method_name].config_json
+                })
+            else:
+                result.append({
+                    "assignment_method": method_name,
+                    "is_enabled": False,
+                    "config_json": None
+                })
+        
+        return jsonify({"methods": result}), 200
+    except Exception as e:
+        app_logger.exception(f"Get auto assignment error: {e}")
+        return jsonify({"error": "Failed to retrieve auto assignment"}), 500
+
+
+@bp.route('/support/auto-assignment', methods=['PUT'])
+@admin_required
+def update_auto_assignment():
+    """Update auto assignment configuration"""
+    try:
+        data = request.get_json()
+        assignment_method = data.get('assignment_method', '').strip()
+        is_enabled = bool(data.get('is_enabled', False))
+        config_json = data.get('config_json')
+        
+        if not assignment_method:
+            return jsonify({"error": "Assignment method is required"}), 400
+        
+        # Find or create
+        assignment = SupportAutoAssignment.query.filter_by(assignment_method=assignment_method).first()
+        if not assignment:
+            assignment = SupportAutoAssignment(assignment_method=assignment_method)
+            db.session.add(assignment)
+        
+        assignment.is_enabled = is_enabled
+        if config_json:
+            assignment.config_json = config_json
+        
+        db.session.commit()
+        
+        return jsonify({"message": "Auto assignment updated successfully"}), 200
+    except Exception as e:
+        db.session.rollback()
+        app_logger.exception(f"Update auto assignment error: {e}")
+        return jsonify({"error": "Failed to update auto assignment"}), 500

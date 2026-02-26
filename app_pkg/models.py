@@ -638,6 +638,24 @@ class Support(db.Model):
     def __repr__(self):
         return f'<Support {self.username} - {self.email}>'
 
+class SupportUser(db.Model):
+    __bind_key__ = 'admin'
+    """Support user model for admin-managed support credentials"""
+    __tablename__ = 'support_users'
+    
+    id = db.Column(db.Integer, primary_key=True)
+    name = db.Column(db.String(100), nullable=False)
+    email = db.Column(db.String(120), unique=True, nullable=False)
+    password_hash = db.Column(db.String(255), nullable=False)
+    phone = db.Column(db.String(20), unique=True, nullable=True)
+    role = db.Column(db.String(50), nullable=False, default='support')  # 'support', 'senior_support', 'manager'
+    is_active = db.Column(db.Boolean, default=True, nullable=False)
+    created_at = db.Column(db.DateTime, default=datetime.utcnow)
+    updated_at = db.Column(db.DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
+    
+    def __repr__(self):
+        return f'<SupportUser {self.name} - {self.email} ({self.role})>'
+
 class SupportTicket(db.Model):
     __bind_key__ = 'admin'
     """Support tickets for all user types"""
@@ -669,6 +687,68 @@ class SupportTicket(db.Model):
     
     def __repr__(self):
         return f'<SupportTicket #{self.id} - {self.user_type} - {self.status}>'
+
+class SupportTicketCategory(db.Model):
+    __bind_key__ = 'admin'
+    """Ticket categories managed by admin"""
+    __tablename__ = 'support_ticket_categories'
+    
+    id = db.Column(db.Integer, primary_key=True)
+    name = db.Column(db.String(100), nullable=False, unique=True)
+    description = db.Column(db.Text)
+    is_active = db.Column(db.Boolean, default=True, nullable=False)
+    created_at = db.Column(db.DateTime, default=datetime.utcnow)
+    updated_at = db.Column(db.DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
+    
+    def __repr__(self):
+        return f'<SupportTicketCategory {self.name}>'
+
+class SupportPriorityRule(db.Model):
+    __bind_key__ = 'admin'
+    """Priority rules with SLA times"""
+    __tablename__ = 'support_priority_rules'
+    
+    id = db.Column(db.Integer, primary_key=True)
+    priority_level = db.Column(db.String(20), nullable=False, unique=True)  # 'low', 'medium', 'high', 'critical'
+    sla_hours = db.Column(db.Integer, nullable=False)  # SLA in hours
+    description = db.Column(db.Text)
+    is_active = db.Column(db.Boolean, default=True, nullable=False)
+    created_at = db.Column(db.DateTime, default=datetime.utcnow)
+    updated_at = db.Column(db.DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
+    
+    def __repr__(self):
+        return f'<SupportPriorityRule {self.priority_level} - {self.sla_hours}h>'
+
+class SupportEscalationRule(db.Model):
+    __bind_key__ = 'admin'
+    """Escalation rules for automatic ticket escalation"""
+    __tablename__ = 'support_escalation_rules'
+    
+    id = db.Column(db.Integer, primary_key=True)
+    hours_threshold = db.Column(db.Integer, nullable=False)  # Hours before escalation
+    escalate_to_role = db.Column(db.String(50), nullable=False)  # 'senior_support', 'manager', 'admin'
+    notify_admin = db.Column(db.Boolean, default=False)
+    is_active = db.Column(db.Boolean, default=True, nullable=False)
+    created_at = db.Column(db.DateTime, default=datetime.utcnow)
+    updated_at = db.Column(db.DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
+    
+    def __repr__(self):
+        return f'<SupportEscalationRule {self.hours_threshold}h -> {self.escalate_to_role}>'
+
+class SupportAutoAssignment(db.Model):
+    __bind_key__ = 'admin'
+    """Auto-assignment configuration"""
+    __tablename__ = 'support_auto_assignment'
+    
+    id = db.Column(db.Integer, primary_key=True)
+    assignment_method = db.Column(db.String(50), nullable=False, unique=True)  # 'round_robin', 'workload', 'category', 'manual'
+    is_enabled = db.Column(db.Boolean, default=False, nullable=False)
+    config_json = db.Column(MySQLJSON)  # Additional configuration as JSON
+    created_at = db.Column(db.DateTime, default=datetime.utcnow)
+    updated_at = db.Column(db.DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
+    
+    def __repr__(self):
+        return f'<SupportAutoAssignment {self.assignment_method} - {"enabled" if self.is_enabled else "disabled"}>'
 
 class ProductCatalog(db.Model):
     __bind_key__ = 'admin'
