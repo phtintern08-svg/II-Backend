@@ -13,7 +13,7 @@ import os
 import hashlib
 from datetime import datetime, timedelta
 
-from app_pkg.models import db, Admin, Customer, Vendor, Rider, Support, OTPLog, EmailVerificationToken
+from app_pkg.models import db, Admin, Customer, Vendor, Rider, Support, SupportUser, OTPLog, EmailVerificationToken
 from app_pkg.auth import generate_token, verify_token, get_token_from_request, send_verification_email, require_auth
 import secrets
 from app_pkg.validation import sanitize_text
@@ -311,11 +311,19 @@ def authenticate():
                         }, 401)
             
             elif table_role == 'support':
-                # Support: email or phone (case-insensitive)
-                support = Support.query.filter(
-                    (Support.email.ilike(identifier)) | (Support.phone == identifier)
+                # Support: email or phone (case-insensitive) - using SupportUser from support DB
+                support = SupportUser.query.filter(
+                    (SupportUser.email.ilike(identifier)) | (SupportUser.phone == identifier)
                 ).first()
                 if support:
+                    # Check if account is active
+                    if not support.is_active:
+                        log_auth_event('login', False, identifier, support.id, 'support', request.remote_addr, error="Account inactive")
+                        return json_response({
+                            "error": "Account is inactive",
+                            "message": "Your support account has been deactivated. Please contact an administrator."
+                        }, 403)
+                    
                     if check_password_hash(support.password_hash, password):
                         user = support
                         role_found = 'support'
@@ -509,7 +517,7 @@ def authenticate():
             token = generate_token(
                 user_id=support.id,
                 role="support",
-                username=support.username,
+                username=support.name,  # SupportUser uses 'name' not 'username'
                 email=support.email,
                 phone=support.phone
             )
@@ -528,18 +536,28 @@ def authenticate():
             log_activity(
                 user_id=support.id,
                 user_type='support',
-                action=f"Logged in as support: {support.username or support.email}",
+                action=f"Logged in as support: {support.name or support.email}",
                 action_type="login",
                 entity_type="support",
                 entity_id=support.id,
                 ip_address=ip_address
             )
+            
+            # Update last login time
+            try:
+                from datetime import datetime
+                support.last_login_at = datetime.utcnow()
+                db.session.commit()
+            except Exception as e:
+                app_logger.warning(f"Failed to update last_login_at for support user {support.id}: {e}")
+                db.session.rollback()
+            
             redirect_url = build_subdomain_url('support', '/home.html')
             response = jsonify({
                 "message": "Login successful",
                 "role": "support",
                 "user_id": support.id,
-                "username": support.username,
+                "username": support.name,  # SupportUser uses 'name' not 'username'
                 "email": support.email,
                 "phone": support.phone,
                 "token": token,  # Include token in response for localStorage (cookie is HttpOnly)

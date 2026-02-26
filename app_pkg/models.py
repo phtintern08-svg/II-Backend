@@ -663,6 +663,7 @@ class SupportUser(db.Model):
     phone = db.Column(db.String(20), unique=True, nullable=True)
     role = db.Column(db.String(50), nullable=False, default='support')  # 'support', 'senior_support', 'manager'
     is_active = db.Column(db.Boolean, default=True, nullable=False)
+    last_login_at = db.Column(db.DateTime, nullable=True)
     created_at = db.Column(db.DateTime, default=datetime.utcnow)
     updated_at = db.Column(db.DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
     
