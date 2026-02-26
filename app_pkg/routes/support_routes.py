@@ -1116,6 +1116,13 @@ def get_products():
             else:
                 image_url = "https://images.unsplash.com/photo-1500530855697-b586d89ba3ee?q=80"
             
+            # Format all images for gallery
+            formatted_images = []
+            if images and len(images) > 0:
+                formatted_images = [f"/api/uploads/{img}" for img in images]
+            else:
+                formatted_images = [image_url]
+            
             products_list.append({
                 "id": f"cp_{p.id}",
                 "name": p.product_name,
@@ -1124,6 +1131,7 @@ def get_products():
                 "product_type": p.product_type or 'Unknown',
                 "category": p.category or 'N/A',
                 "image": image_url,
+                "images": formatted_images,  # Array of all images for gallery
                 "sizes": sizes,
                 "colors": []  # Cart products don't have colors, but keeping for compatibility
             })
