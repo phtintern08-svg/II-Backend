@@ -495,7 +495,7 @@ def update_vehicle():
         return jsonify({"error": "Failed to update vehicle details"}), 500
 
 
-@bp.route('/presence', methods=['GET', 'PUT'])
+@bp.route('/presence', methods=['GET', 'PUT', 'OPTIONS'])
 @login_required
 @role_required(['rider'])
 def update_presence():
@@ -503,7 +503,10 @@ def update_presence():
     GET/PUT /api/rider/presence
     Get or update rider online status and GPS coordinates.
     Rate limited: 1 location update per 5 sec per rider (Swiggy-style, safe for 1000+ riders).
+    OPTIONS (CORS preflight) returns 200 immediately - never rate limited.
     """
+    if request.method == 'OPTIONS':
+        return '', 200
     if request.method == 'GET':
         rider = Rider.query.get(request.user_id)
         if not rider:

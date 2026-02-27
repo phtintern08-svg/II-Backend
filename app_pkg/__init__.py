@@ -18,10 +18,15 @@ from app_pkg.auth import get_token_from_request, verify_token
 
 # Initialize extensions (without app binding)
 mail = Mail()
+def _exempt_options():
+    """Exempt OPTIONS (CORS preflight) from rate limiting - prevents fake CORS errors"""
+    return request.method == "OPTIONS"
+
 limiter = Limiter(
     key_func=get_remote_address,
     default_limits=["200 per day", "50 per hour"],
-    storage_uri="memory://"
+    storage_uri="memory://",
+    exempt_when=_exempt_options
 )
 csrf = CSRFProtect()
 
