@@ -1988,7 +1988,7 @@ def get_production_orders():
                 "quantity": o.quantity,
                 "status": o.status,
                 "progress": round(progress, 1),
-                "deadline": o.delivery_date,
+                "deadline": o.delivery_date.isoformat() if o.delivery_date else None,
                 "created_at": o.created_at.isoformat() if o.created_at else None
             })
         
