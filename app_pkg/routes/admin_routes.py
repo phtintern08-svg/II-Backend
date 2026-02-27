@@ -8,6 +8,7 @@ import os
 import math
 import csv
 import time
+import re
 from sqlalchemy import text, func
 
 from app_pkg.models import (
@@ -3444,8 +3445,33 @@ def create_support_user():
         if not name or not email or not password:
             return jsonify({"error": "Name, email, and password are required"}), 400
         
-        if len(password) < 6:
-            return jsonify({"error": "Password must be at least 6 characters"}), 400
+        # Password: min 8 chars, 1 upper, 1 lower, 1 number, 1 special (!@#$%^&*)
+        if len(password) < 8:
+            return jsonify({"error": "Password must be at least 8 characters"}), 400
+        if not re.search(r'[A-Z]', password):
+            return jsonify({"error": "Password must contain at least one uppercase letter"}), 400
+        if not re.search(r'[a-z]', password):
+            return jsonify({"error": "Password must contain at least one lowercase letter"}), 400
+        if not re.search(r'\d', password):
+            return jsonify({"error": "Password must contain at least one number"}), 400
+        if not re.search(r'[!@#$%^&*]', password):
+            return jsonify({"error": "Password must contain at least one special character (!@#$%^&*)"}), 400
+        
+        # Phone validation (Indian: 10 digits, first digit 6/7/8/9, prefixes +91/91/0 allowed)
+        if phone:
+            digits = re.sub(r'\D', '', phone)
+            core = digits
+            if len(digits) == 12 and digits.startswith('91'):
+                core = digits[2:]
+            elif len(digits) == 11 and digits.startswith('0'):
+                core = digits[1:]
+            elif len(digits) == 10:
+                core = digits
+            else:
+                return jsonify({"error": "Invalid phone number. Use 10 digits starting with 6/7/8/9. Prefixes +91, 91, or 0 allowed."}), 400
+            if len(core) != 10 or not re.match(r'^[6789]', core):
+                return jsonify({"error": "Invalid phone number. The 10-digit number must start with 6, 7, 8, or 9."}), 400
+            phone = core  # Normalize to 10 digits for storage
         
         valid_roles = ['support', 'senior_support', 'manager']
         if role not in valid_roles:
@@ -3555,8 +3581,17 @@ def reset_support_user_password(user_id):
         if not password:
             return jsonify({"error": "Password is required"}), 400
         
-        if len(password) < 6:
-            return jsonify({"error": "Password must be at least 6 characters"}), 400
+        # Password: min 8 chars, 1 upper, 1 lower, 1 number, 1 special (!@#$%^&*)
+        if len(password) < 8:
+            return jsonify({"error": "Password must be at least 8 characters"}), 400
+        if not re.search(r'[A-Z]', password):
+            return jsonify({"error": "Password must contain at least one uppercase letter"}), 400
+        if not re.search(r'[a-z]', password):
+            return jsonify({"error": "Password must contain at least one lowercase letter"}), 400
+        if not re.search(r'\d', password):
+            return jsonify({"error": "Password must contain at least one number"}), 400
+        if not re.search(r'[!@#$%^&*]', password):
+            return jsonify({"error": "Password must contain at least one special character (!@#$%^&*)"}), 400
         
         user = SupportUser.query.get(user_id)
         if not user:
