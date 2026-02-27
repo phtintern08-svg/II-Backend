@@ -474,6 +474,7 @@ class Rider(db.Model):
     # Live Location
     latitude = db.Column(db.Float)
     longitude = db.Column(db.Float)
+    location_accuracy = db.Column(db.Float)  # Meters - for dispatch: ORDER BY location_accuracy ASC
     last_location_update = db.Column(db.DateTime)  # For dispatch: rider active if < 15 sec ago
     current_address = db.Column(db.String(255))
     

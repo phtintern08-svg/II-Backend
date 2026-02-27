@@ -74,8 +74,12 @@ def find_nearest_riders(vendor_lat, vendor_lon, max_distance_km=10, limit=5):
         if distance <= max_distance_km:
             rider_distances.append((rider, distance))
     
-    # Sort by distance (nearest first)
-    rider_distances.sort(key=lambda x: x[1])
+    # Sort by distance (nearest first), then by accuracy (more accurate preferred)
+    def sort_key(item):
+        rider, dist = item
+        acc = rider.location_accuracy if rider.location_accuracy is not None else 9999
+        return (dist, acc)
+    rider_distances.sort(key=sort_key)
     
     # Return top N nearest riders
     return rider_distances[:limit]

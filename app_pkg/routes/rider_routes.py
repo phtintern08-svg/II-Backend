@@ -522,6 +522,7 @@ def update_presence():
         is_online = data.get('is_online')
         latitude = data.get('latitude')
         longitude = data.get('longitude')
+        accuracy = data.get('accuracy')
         
         rider = Rider.query.get(request.user_id)
         if not rider:
@@ -546,7 +547,9 @@ def update_presence():
             rider.latitude = float(latitude)
             rider.longitude = float(longitude)
             rider.last_location_update = datetime.utcnow()
-            app_logger.info(f"Rider {request.user_id} location: {latitude}, {longitude}")
+            if accuracy is not None:
+                rider.location_accuracy = float(accuracy)
+            app_logger.info(f"Rider {request.user_id} location: {latitude}, {longitude}, acc={accuracy}")
         
         db.session.commit()
         return jsonify({
