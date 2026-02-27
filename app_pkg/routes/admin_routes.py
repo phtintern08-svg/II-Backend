@@ -52,12 +52,14 @@ def find_nearest_riders(vendor_lat, vendor_lon, max_distance_km=10, limit=5):
     Find nearest available riders within max_distance_km radius
     Returns list of (rider, distance) tuples sorted by distance
     """
-    # Get all online and verified riders
+    # Get all online, verified, and ACTIVE riders (location updated in last 15 sec)
+    active_threshold = datetime.utcnow() - timedelta(seconds=15)
     riders = Rider.query.filter(
         Rider.is_online == True,
         Rider.verification_status == 'approved',
         Rider.latitude.isnot(None),
-        Rider.longitude.isnot(None)
+        Rider.longitude.isnot(None),
+        (Rider.last_location_update.is_(None)) | (Rider.last_location_update >= active_threshold)
     ).all()
     
     rider_distances = []

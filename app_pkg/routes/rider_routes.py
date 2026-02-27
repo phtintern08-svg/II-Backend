@@ -501,7 +501,8 @@ def update_vehicle():
 def update_presence():
     """
     GET/PUT /api/rider/presence
-    Get or update rider online status and GPS coordinates
+    Get or update rider online status and GPS coordinates.
+    Rate limited: 1 location update per 5 sec per rider (Swiggy-style, safe for 1000+ riders).
     """
     if request.method == 'GET':
         rider = Rider.query.get(request.user_id)
@@ -532,11 +533,20 @@ def update_presence():
                 rider.last_online_at = datetime.utcnow()
         
         if latitude is not None and longitude is not None:
+            # ---- LOCATION RATE LIMIT (5 sec) ----
+            if not hasattr(update_presence, "_last_update"):
+                update_presence._last_update = {}
+            rider_id = request.user_id
+            now = datetime.utcnow().timestamp()
+            last = update_presence._last_update.get(rider_id, 0)
+            if now - last < 5:
+                return jsonify({"message": "Skipped (rate limited)"}), 200
+            update_presence._last_update[rider_id] = now
+
             rider.latitude = float(latitude)
             rider.longitude = float(longitude)
-            # Log coordinates for verification
+            rider.last_location_update = datetime.utcnow()
             app_logger.info(f"Rider {request.user_id} location: {latitude}, {longitude}")
-            # Note: Reverse geocoding would require Mappls API integration
         
         db.session.commit()
         return jsonify({
