@@ -18,15 +18,10 @@ from app_pkg.auth import get_token_from_request, verify_token
 
 # Initialize extensions (without app binding)
 mail = Mail()
-def _exempt_options():
-    """Exempt OPTIONS (CORS preflight) from rate limiting - prevents fake CORS errors"""
-    return request.method == "OPTIONS"
-
 limiter = Limiter(
     key_func=get_remote_address,
     default_limits=["200 per day", "50 per hour"],
-    storage_uri="memory://",
-    exempt_when=_exempt_options
+    storage_uri="memory://"
 )
 csrf = CSRFProtect()
 
@@ -76,6 +71,15 @@ def create_app(config_class=Config):
     db.init_app(app)
     ma.init_app(app)
     mail.init_app(app)
+
+    # OPTIONS (CORS preflight) must bypass rate limiting - run BEFORE limiter
+    @app.before_request
+    def _bypass_limiter_for_options():
+        if request.method == "OPTIONS":
+            from flask import make_response
+            resp = make_response('', 200)
+            return resp
+
     limiter.init_app(app)
     
     # CSRF is disabled for APIs (WTF_CSRF_ENABLED = False in config)
