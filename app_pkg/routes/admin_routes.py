@@ -14,7 +14,7 @@ from app_pkg.models import (
     db, Admin, Customer, Vendor, Rider, Order, OTPLog, Payment, 
     VendorDocument, VendorQuotationSubmission, RiderDocument, Notification,
     VendorOrderAssignment, OrderStatusHistory, DeliveryLog, ProductCatalog,
-    DeliveryPartner, Support, SupportUser, SupportTicket, SupportTicketCategory,
+    DeliveryPartner, SupportUser, SupportTicket, SupportTicketCategory,
     SupportPriorityRule, SupportEscalationRule, SupportAutoAssignment, ActivityLog, 
     VendorQuotation, VendorCapacity, VendorStock, MarketplaceProduct, CartProduct
 )

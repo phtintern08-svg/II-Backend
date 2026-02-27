@@ -12,7 +12,7 @@ from functools import wraps
 from flask import request, jsonify, current_app
 from datetime import datetime, timedelta
 from email.message import EmailMessage
-from app_pkg.models import Admin, Customer, Vendor, Rider, Support
+from app_pkg.models import Admin, Customer, Vendor, Rider, SupportUser
 from app_pkg.logger_config import app_logger
 from config import Config
 
