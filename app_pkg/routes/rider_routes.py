@@ -14,11 +14,21 @@ from app_pkg.auth import login_required, role_required
 from app_pkg.file_upload import validate_and_save_file, delete_file, get_file_path_from_db
 from app_pkg.logger_config import app_logger
 from app_pkg.activity_logger import log_activity_from_request
-from flask_limiter import Limiter
+from app_pkg import limiter
 from flask_limiter.util import get_remote_address
+import math
 
 # Create blueprint
 bp = Blueprint('rider', __name__, url_prefix='/api/rider')
+
+def haversine_meters(lat1, lon1, lat2, lon2):
+    """Distance in meters between two points (decimal degrees)"""
+    lat1, lon1, lat2, lon2 = map(math.radians, [lat1, lon1, lat2, lon2])
+    dlat = lat2 - lat1
+    dlon = lon2 - lon1
+    a = math.sin(dlat/2)**2 + math.cos(lat1) * math.cos(lat2) * math.sin(dlon/2)**2
+    c = 2 * math.asin(math.sqrt(a))
+    return 6371000 * c  # Earth radius in meters
 
 # Custom key function for rate limiting by rider ID
 def get_rider_id_for_rate_limit():
@@ -498,12 +508,12 @@ def update_vehicle():
 @bp.route('/presence', methods=['GET', 'PUT', 'OPTIONS'])
 @login_required
 @role_required(['rider'])
+@limiter.limit("120 per minute", key_func=get_rider_id_for_rate_limit)
 def update_presence():
     """
     GET/PUT /api/rider/presence
     Get or update rider online status and GPS coordinates.
-    Rate limited: 1 location update per 5 sec per rider (Swiggy-style, safe for 1000+ riders).
-    OPTIONS (CORS preflight) returns 200 immediately - never rate limited.
+    Rate limited: 120/min per rider. OPTIONS bypassed. Skip DB update if moved < 10m (Swiggy-style).
     """
     if request.method == 'OPTIONS':
         return '', 200
@@ -537,18 +547,20 @@ def update_presence():
                 rider.last_online_at = datetime.utcnow()
         
         if latitude is not None and longitude is not None:
-            # ---- LOCATION RATE LIMIT (5 sec) ----
-            if not hasattr(update_presence, "_last_update"):
-                update_presence._last_update = {}
-            rider_id = request.user_id
-            now = datetime.utcnow().timestamp()
-            last = update_presence._last_update.get(rider_id, 0)
-            if now - last < 5:
-                return jsonify({"message": "Skipped (rate limited)"}), 200
-            update_presence._last_update[rider_id] = now
+            lat_f = float(latitude)
+            lon_f = float(longitude)
 
-            rider.latitude = float(latitude)
-            rider.longitude = float(longitude)
+            # Smart update: skip DB if moved < 10m (Swiggy-style)
+            if rider.latitude is not None and rider.longitude is not None:
+                moved_m = haversine_meters(
+                    rider.latitude, rider.longitude,
+                    lat_f, lon_f
+                )
+                if moved_m < 10:
+                    return jsonify({"message": "Skipped (no significant movement)", "skip": True}), 200
+
+            rider.latitude = lat_f
+            rider.longitude = lon_f
             rider.last_location_update = datetime.utcnow()
             if accuracy is not None:
                 rider.location_accuracy = float(accuracy)

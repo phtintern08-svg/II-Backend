@@ -81,6 +81,14 @@ def create_app(config_class=Config):
             return resp
 
     limiter.init_app(app)
+
+    # Skip OPTIONS from rate limit counters (belt-and-suspenders with before_request)
+    try:
+        @limiter.request_filter
+        def skip_options():
+            return request.method == "OPTIONS"
+    except AttributeError:
+        pass  # Flask-Limiter 3.5 may not have request_filter
     
     # CSRF is disabled for APIs (WTF_CSRF_ENABLED = False in config)
     # APIs use JWT tokens in Authorization headers, so CSRF protection is not needed
