@@ -331,11 +331,12 @@ class EscalationEngine:
     def check_and_escalate_tickets():
         """Background worker: Check tickets and escalate if needed"""
         try:
-            # Get escalation rules
+            # Get escalation rules from support database
+            # Fix: Use correct database binding (support, not admin)
             rules = db.session.execute(text("""
                 SELECT id, rule_name, condition_type, condition_value, 
                        escalate_to_level, escalate_to_role
-                FROM escalation_rules
+                FROM impromptuindian_support.escalation_rules
                 WHERE is_active = TRUE
             """)).fetchall()
             

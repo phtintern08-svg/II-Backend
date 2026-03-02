@@ -388,8 +388,13 @@ def get_customer_orders():
         # 🔥 FIX: Use full schema to return ALL order fields (not just limited subset)
         # This ensures frontend orders.js can display: neck_type, color, print_type, sample_size,
         # bulk_quantity, size_distribution, address fields, quotation_total_price, etc.
+        # IMPORTANT: status field is included automatically by SQLAlchemyAutoSchema
         from app_pkg.schemas import orders_schema
         orders_data = orders_schema.dump(orders)
+        
+        # Debug: Log status to verify it's being serialized
+        if orders_data and len(orders_data) > 0:
+            app_logger.debug(f"Order statuses being returned: {[(o.get('id'), o.get('status')) for o in orders_data[:3]]}")
         
         return jsonify({
             "orders": orders_data,
