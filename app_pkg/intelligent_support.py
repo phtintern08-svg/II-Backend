@@ -151,6 +151,38 @@ class AIAutoReply:
         except Exception as e:
             app_logger.error(f"Error logging AI attempt: {e}")
             db.session.rollback()
+    
+    @staticmethod
+    def detect_intent(message):
+        """
+        Static method to detect intent from message
+        Returns: {'intent': str, 'confidence': float}
+        """
+        try:
+            ai = AIAutoReply()
+            result = ai.analyze_message(message)
+            if result:
+                return {
+                    'intent': result.get('intent', 'general_issue'),
+                    'confidence': result.get('confidence', 0.5)
+                }
+            return {'intent': 'general_issue', 'confidence': 0.3}
+        except Exception as e:
+            app_logger.error(f"Error detecting intent: {e}")
+            return {'intent': 'general_issue', 'confidence': 0.3}
+    
+    @staticmethod
+    def generate_reply(message, ticket_id=None):
+        """
+        Static method to generate AI reply
+        Returns: {'reply': str, 'confidence': float, 'resolved': bool} or None
+        """
+        try:
+            ai = AIAutoReply()
+            return ai.analyze_message(message, ticket_id)
+        except Exception as e:
+            app_logger.error(f"Error generating AI reply: {e}")
+            return None
 
 
 # ============================================================================
@@ -383,6 +415,13 @@ class EscalationEngine:
             # Update ticket status
             ticket.status = 'escalated'
             db.session.commit()
+            
+            # Send Socket.IO notification
+            try:
+                from app_pkg.socketio_handlers import notify_ticket_escalated
+                notify_ticket_escalated(ticket.id)
+            except Exception as e:
+                app_logger.warning(f"Failed to send escalation notification: {e}")
             
             app_logger.info(f"Ticket {ticket.id} escalated to level {rule[4]}")
             

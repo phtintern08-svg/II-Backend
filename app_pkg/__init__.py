@@ -5,6 +5,7 @@ from flask_limiter import Limiter
 from flask_limiter.util import get_remote_address
 from flask_wtf.csrf import CSRFProtect
 from flask_talisman import Talisman
+from flask_socketio import SocketIO, join_room, leave_room, emit
 
 from config import Config
 from app_pkg.models import db
@@ -24,6 +25,9 @@ limiter = Limiter(
     storage_uri="memory://"
 )
 csrf = CSRFProtect()
+
+# Initialize Socket.IO (will be bound to app in create_app)
+socketio = None
 
 
 def create_app(config_class=Config):
@@ -285,6 +289,29 @@ def create_app(config_class=Config):
         """Serve portal selector page (protected by global lock)"""
         app_logger.info(f"✅ ROOT ROUTE HIT: {request.host}{request.path} | Serving portal selector")
         return render_template('portal_selector.html')
+
+    # Initialize Socket.IO for real-time support chat
+    global socketio
+    socketio = SocketIO(
+        app,
+        cors_allowed_origins="*",
+        async_mode="threading",  # Use threading for Passenger compatibility
+        logger=False,
+        engineio_logger=False
+    )
+    
+    # Register Socket.IO event handlers
+    from app_pkg import socketio_handlers
+    socketio_handlers.register_handlers(socketio)
+    
+    app_logger.info("✅ Socket.IO initialized for real-time support chat")
+    
+    # Start escalation worker in background thread
+    try:
+        from app_pkg.escalation_worker import start_escalation_worker_thread
+        start_escalation_worker_thread()
+    except Exception as e:
+        app_logger.warning(f"Failed to start escalation worker: {e}")
 
     # Register handlers
     register_error_handlers(app)

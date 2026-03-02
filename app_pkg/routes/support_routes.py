@@ -1766,3 +1766,251 @@ def create_ticket():
         app_logger.exception(f"Create ticket error: {e}")
         db.session.rollback()
         return jsonify({"error": "Failed to create ticket"}), 500
+
+
+# ============================================================================
+# AI Support Chat Endpoint
+# ============================================================================
+
+@bp.route('/ai-chat', methods=['POST'])
+def ai_chat():
+    """
+    POST /api/ai-chat
+    AI-powered support chat that collects issue info and creates smart tickets
+    """
+    try:
+        data = request.get_json()
+        if not data:
+            return jsonify({"error": "No data provided"}), 400
+        
+        message = data.get('message', '').strip()
+        order_id = data.get('order_id')
+        ticket_id = data.get('ticket_id')
+        customer_id = data.get('customer_id')
+        
+        if not message:
+            return jsonify({"error": "Message is required"}), 400
+        
+        if not customer_id:
+            return jsonify({"error": "Customer ID is required"}), 400
+        
+        # Import AI functions
+        from app_pkg.intelligent_support import AIAutoReply, SmartTicketContext, AutoAssignment
+        
+        # Detect intent from message
+        intent_result = AIAutoReply.detect_intent(message)
+        intent = intent_result.get('intent', 'general_issue')
+        confidence = intent_result.get('confidence', 0.5)
+        
+        # If no ticket exists, create one
+        if not ticket_id:
+            # Determine issue type from intent
+            issue_type_map = {
+                'order_status': 'order_inquiry',
+                'delivery_delay': 'delivery_delay',
+                'refund': 'refund_request',
+                'payment_failed': 'payment_issue',
+                'abuse': 'abuse_report'
+            }
+            issue_type = issue_type_map.get(intent, 'general_issue')
+            
+            # Get order details if order_id provided
+            order = None
+            vendor_id = None
+            rider_id = None
+            
+            if order_id:
+                try:
+                    from app_pkg.models import Order
+                    order = Order.query.filter_by(id=order_id).first()
+                    if order:
+                        vendor_id = getattr(order, 'vendor_id', None)
+                        rider_id = getattr(order, 'rider_id', None)
+                except Exception as e:
+                    app_logger.warning(f"Error fetching order {order_id}: {e}")
+            
+            # Generate ticket subject from intent
+            subject_map = {
+                'order_status': f'Order Status Inquiry - Order #{order_id}',
+                'delivery_delay': f'Delivery Delay - Order #{order_id}',
+                'refund': f'Refund Request - Order #{order_id}',
+                'payment_failed': f'Payment Issue - Order #{order_id}',
+                'abuse': 'Priority: Abuse Report'
+            }
+            subject = subject_map.get(intent, f'Support Request - Order #{order_id or "N/A"}')
+            
+            # Create smart ticket
+            new_ticket = SupportTicket(
+                ticket_number=None,  # Will be generated
+                user_id=customer_id,
+                user_type='customer',
+                subject=subject,
+                description=message,
+                status='open',
+                priority='high' if intent == 'abuse' else 'medium'
+            )
+            
+            # Set order context
+            if order_id:
+                try:
+                    new_ticket.order_id = order_id
+                except AttributeError:
+                    pass  # Column might not exist yet
+            
+            if vendor_id:
+                try:
+                    new_ticket.vendor_id = vendor_id
+                except AttributeError:
+                    pass
+            
+            if rider_id:
+                try:
+                    new_ticket.rider_id = rider_id
+                except AttributeError:
+                    pass
+            
+            if issue_type:
+                try:
+                    new_ticket.issue_type = issue_type
+                except AttributeError:
+                    pass
+            
+            # Generate ticket number
+            from datetime import datetime
+            year = datetime.utcnow().year
+            ticket_count = SupportTicket.query.filter(
+                db.func.extract('year', SupportTicket.created_at) == year
+            ).count() + 1
+            new_ticket.ticket_number = f"TKT-{year}-{str(ticket_count).zfill(5)}"
+            
+            db.session.add(new_ticket)
+            db.session.flush()  # Get ticket ID
+            
+            # Set assigned_at timestamp
+            try:
+                new_ticket.assigned_at = datetime.utcnow()
+            except AttributeError:
+                pass
+            
+            db.session.commit()
+            
+            ticket_id = new_ticket.id
+            
+            # Auto-assign agent
+            try:
+                agent_id = AutoAssignment.assign_agent()
+                if agent_id:
+                    try:
+                        new_ticket.assigned_agent_id = agent_id
+                    except AttributeError:
+                        # Fallback to assigned_to
+                        new_ticket.assigned_to = agent_id
+                    
+                    new_ticket.status = 'assigned'
+                    db.session.commit()
+                    app_logger.info(f"Ticket {ticket_id} auto-assigned to agent {agent_id}")
+            except Exception as e:
+                app_logger.warning(f"Auto-assignment failed: {e}")
+            
+            # Process with intelligent support
+            try:
+                from app_pkg.support_integration import process_new_ticket
+                process_new_ticket(
+                    ticket_id=new_ticket.id,
+                    order_id=order_id,
+                    customer_message=message
+                )
+            except Exception as e:
+                app_logger.warning(f"Intelligent support processing failed: {e}")
+            
+            # Generate AI reply
+            reply = f"✅ I've created support ticket {new_ticket.ticket_number} for your issue.\n\n"
+            reply += "An agent has been assigned and will join this conversation shortly.\n\n"
+            reply += "Is there anything else I can help you with?"
+            
+            return jsonify({
+                "reply": reply,
+                "ticket_id": new_ticket.ticket_number,
+                "ticket_id_raw": new_ticket.id,
+                "intent": intent,
+                "confidence": confidence
+            }), 200
+        
+        else:
+            # Ticket exists, continue conversation
+            # Find ticket (handle both string ticket_number and int id)
+            try:
+                ticket_id_int = int(ticket_id)
+            except (ValueError, TypeError):
+                ticket_id_int = None
+            
+            ticket = None
+            if ticket_id_int:
+                ticket = SupportTicket.query.filter(
+                    (SupportTicket.ticket_number == str(ticket_id)) |
+                    (SupportTicket.id == ticket_id_int)
+                ).first()
+            else:
+                ticket = SupportTicket.query.filter(
+                    SupportTicket.ticket_number == str(ticket_id)
+                ).first()
+            
+            if not ticket:
+                return jsonify({
+                    "error": "Ticket not found",
+                    "reply": "I couldn't find your ticket. Please start a new conversation."
+                }), 404
+            
+            # Try AI auto-reply
+            ai_reply_result = AIAutoReply.generate_reply(message, ticket.id)
+            
+            if ai_reply_result and ai_reply_result.get('confidence', 0) > 0.85:
+                # High confidence AI reply
+                reply = ai_reply_result.get('reply', 'I understand your concern. An agent will respond shortly.')
+                
+                # If resolved, update ticket
+                if ai_reply_result.get('resolved', False):
+                    try:
+                        ticket.status = 'resolved'
+                        ticket.resolved_at = datetime.utcnow()
+                        db.session.commit()
+                    except Exception as e:
+                        app_logger.warning(f"Error updating ticket status: {e}")
+                
+                return jsonify({
+                    "reply": reply,
+                    "ticket_id": ticket.ticket_number or str(ticket.id),
+                    "ai_reply": True
+                }), 200
+            else:
+                # Low confidence, forward to agent
+                reply = "I understand your concern. An agent will review your message and respond shortly."
+                
+                # Add message to ticket
+                try:
+                    from app_pkg.models import Thread
+                    thread = Thread(
+                        title=ticket.subject,
+                        content=message,
+                        user_id=customer_id,
+                        ticket_id=ticket.id
+                    )
+                    db.session.add(thread)
+                    ticket.updated_at = datetime.utcnow()
+                    db.session.commit()
+                except Exception as e:
+                    app_logger.warning(f"Error adding message to ticket: {e}")
+                
+                return jsonify({
+                    "reply": reply,
+                    "ticket_id": ticket.ticket_number or str(ticket.id),
+                    "ai_reply": False
+                }), 200
+        
+    except Exception as e:
+        app_logger.exception(f"AI chat error: {e}")
+        db.session.rollback()
+        return jsonify({
+            "error": "Failed to process your message",
+            "reply": "I'm sorry, I encountered an error. Please try again or contact support directly."
+        }), 500
