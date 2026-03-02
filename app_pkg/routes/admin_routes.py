@@ -1558,7 +1558,6 @@ def get_quotation_submissions():
                     "id": sub.id,
                     "vendor_id": sub.vendor_id,
                     "vendor_name": vendor.business_name or vendor.username or "Unknown",
-                    "proposed_commission_rate": float(sub.proposed_commission_rate) if sub.proposed_commission_rate else 0,
                     "filename": sub.quotation_filename or "No file",
                     "submitted_at": sub.submitted_at.isoformat() if sub.submitted_at else None,
                     "status": sub.status or "pending"
@@ -1819,11 +1818,6 @@ def approve_quotation_submission(submission_id):
         if submission.status == 'approved':
             return jsonify({"error": "This submission is already approved"}), 400
 
-        # Use vendor's proposed commission rate only - admin cannot edit
-        final_commission_rate = submission.proposed_commission_rate
-        if final_commission_rate is None or float(final_commission_rate) < 0:
-            return jsonify({"error": "Invalid commission rate in submission"}), 400
-
         vendor = Vendor.query.get(submission.vendor_id)
         if not vendor:
             return jsonify({"error": "Vendor not found"}), 404
@@ -1832,9 +1826,6 @@ def approve_quotation_submission(submission_id):
         submission.status = 'approved'
         submission.reviewed_at = datetime.utcnow()
         submission.admin_remarks = data.get('remarks', 'Approved')
-
-        # Update vendor's commission rate (vendor's proposed rate, not admin-editable)
-        vendor.commission_rate = float(final_commission_rate)
         
         # Process CSV and update product catalog
         processed_count = 0
@@ -1859,7 +1850,7 @@ def approve_quotation_submission(submission_id):
             user_id=vendor.id,
             user_type='vendor',
             title='Quotation Approved',
-            message=f'Your quotation has been approved with a commission rate of {final_commission_rate}%.',
+            message='Your quotation has been approved.',
             type='verification'
         )
         db.session.add(notif)

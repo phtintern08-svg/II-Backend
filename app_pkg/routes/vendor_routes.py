@@ -584,7 +584,6 @@ def submit_quotation_file():
         file = request.files['file']
         # SECURITY: Always use vendor_id from JWT, never from request body
         vendor_id = request.user_id
-        commission_rate = request.form.get('commission_rate')
         
         # Debug logging - read file to get actual size
         if file:
@@ -594,25 +593,11 @@ def submit_quotation_file():
         else:
             file_size = 0
         
-        app_logger.info(f"Quotation submit - file={file.filename if file else None}, commission_rate={commission_rate}, file_size={file_size}")
+        app_logger.info(f"Quotation submit - file={file.filename if file else None}, file_size={file_size}")
         
         if not file or file.filename == '':
             app_logger.warning(f"Quotation submit failed: File is empty or missing")
             return jsonify({"error": "File is required"}), 400
-        
-        if not commission_rate:
-            app_logger.warning(f"Quotation submit failed: Commission rate missing")
-            return jsonify({"error": "Commission rate is required"}), 400
-        
-        try:
-            commission_float = float(commission_rate)
-        except (ValueError, TypeError):
-            app_logger.warning(f"Quotation submit failed: Invalid commission rate format: {commission_rate}")
-            return jsonify({"error": "Commission rate must be a valid number"}), 400
-        
-        if commission_float < 15:
-            app_logger.warning(f"Quotation submit failed: Commission rate too low: {commission_float}")
-            return jsonify({"error": "Commission rate must be at least 15%"}), 400
         
         vendor = Vendor.query.get(vendor_id)
         if not vendor:
@@ -648,7 +633,6 @@ def submit_quotation_file():
             existing.quotation_file = file_info['path']
             existing.quotation_filename = file_info['filename']
             existing.quotation_mimetype = file_info['mimetype']
-            existing.proposed_commission_rate = commission_float
             existing.status = 'pending'
             existing.submitted_at = datetime.utcnow()
         else:
@@ -656,8 +640,7 @@ def submit_quotation_file():
                 vendor_id=vendor_id,
                 quotation_file=file_info['path'],
                 quotation_filename=file_info['filename'],
-                quotation_mimetype=file_info['mimetype'],
-                proposed_commission_rate=commission_float
+                quotation_mimetype=file_info['mimetype']
             )
             db.session.add(submission)
         
@@ -690,7 +673,6 @@ def get_quotation_status():
         return jsonify({
             "submitted": True,
             "status": submission.status,
-            "proposed_commission_rate": float(submission.proposed_commission_rate) if submission.proposed_commission_rate else 0,
             "filename": submission.quotation_filename,
             "submitted_at": submission.submitted_at.isoformat() if submission.submitted_at else None,
             "admin_remarks": submission.admin_remarks

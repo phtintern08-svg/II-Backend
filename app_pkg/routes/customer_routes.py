@@ -142,10 +142,10 @@ def add_address():
         
         # Normalize address type (prevent "Home" vs "home" issues)
         address_type = data['address_type'].lower().strip()
-        # Support: home, work, other, other1, other2, other3, etc.
-        valid_types = ['home', 'work', 'other'] + [f'other{i}' for i in range(1, 10)]
+        # Only allow: home, work, other
+        valid_types = ['home', 'work', 'other']
         if address_type not in valid_types:
-            return jsonify({"error": f"Invalid address_type. Must be one of: {', '.join(valid_types[:5])}..."}), 400
+            return jsonify({"error": f"Invalid address_type. Must be one of: {', '.join(valid_types)}"}), 400
         
         # Check if address type already exists for this customer
         existing = Address.query.filter_by(
@@ -268,10 +268,10 @@ def update_address(address_id):
         # Handle address_type separately with normalization
         if 'address_type' in data:
             address_type = data['address_type'].lower().strip()
-            # Support: home, work, other, other1, other2, other3, etc.
-            valid_types = ['home', 'work', 'other'] + [f'other{i}' for i in range(1, 10)]
+            # Only allow: home, work, other
+            valid_types = ['home', 'work', 'other']
             if address_type not in valid_types:
-                return jsonify({"error": f"Invalid address_type. Must be one of: {', '.join(valid_types[:5])}..."}), 400
+                return jsonify({"error": f"Invalid address_type. Must be one of: {', '.join(valid_types)}"}), 400
             address.address_type = address_type
         
         # Also handle alternative_phone if provided

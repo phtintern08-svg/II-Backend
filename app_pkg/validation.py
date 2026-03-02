@@ -154,6 +154,10 @@ class OrderSchema(Schema):
     sample_cost = fields.Decimal(validate=validate.Range(min=0), load_default=0.0)
     sample_size = fields.Str(validate=Length(max=10), allow_none=True)
     
+    # GPS coordinates (optional - for vendor distance ranking and rider assignment)
+    latitude = fields.Float(allow_none=True, validate=validate.Range(min=-90, max=90))
+    longitude = fields.Float(allow_none=True, validate=validate.Range(min=-180, max=180))
+    
     # Payment details (optional - stored for reference but not used in order validation)
     payment_method = fields.Str(validate=Length(max=50), allow_none=True)
     payment_details = fields.Str(validate=Length(max=1000), allow_none=True)
