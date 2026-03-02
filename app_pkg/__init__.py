@@ -27,8 +27,27 @@ limiter = Limiter(
 )
 csrf = CSRFProtect()
 
-# Initialize Socket.IO (will be bound to app in create_app)
-socketio = None
+# ✅ CRITICAL: Initialize Socket.IO globally WITHOUT app parameter
+# This is the correct pattern for Flask-SocketIO with Passenger
+# We'll call socketio.init_app(app) inside create_app()
+# Note: eventlet.monkey_patch() MUST be done in passenger_wsgi.py FIRST
+try:
+    import eventlet
+    # Don't monkey patch here - it's done FIRST in passenger_wsgi.py
+    # This ensures proper initialization order
+    async_mode = "eventlet"
+except ImportError:
+    async_mode = "threading"
+
+socketio = SocketIO(
+    cors_allowed_origins="*",
+    async_mode=async_mode,
+    logger=False,
+    engineio_logger=False,
+    ping_timeout=60,
+    ping_interval=25,
+    allow_upgrades=True
+)
 
 
 def create_app(config_class=Config):
@@ -292,27 +311,11 @@ def create_app(config_class=Config):
         return render_template('portal_selector.html')
 
     # Initialize Socket.IO for real-time support chat
+    # ✅ CRITICAL: Use init_app() pattern (required for Passenger compatibility)
     global socketio
-    # Install eventlet for proper WebSocket support in Passenger
-    try:
-        import eventlet
-        eventlet.monkey_patch()
-        async_mode = "eventlet"
-        app_logger.info("✅ Eventlet loaded - WebSocket support enabled")
-    except ImportError:
-        app_logger.warning("⚠️ Eventlet not installed - falling back to threading")
-        async_mode = "threading"
     
-    socketio = SocketIO(
-        app,
-        cors_allowed_origins="*",
-        async_mode=async_mode,
-        logger=False,
-        engineio_logger=False,
-        ping_timeout=60,
-        ping_interval=25,
-        allow_upgrades=True  # Enable WebSocket upgrades with eventlet
-    )
+    # Bind socketio to app (Flask-SocketIO automatically injects middleware)
+    socketio.init_app(app)
     
     # Register Socket.IO event handlers
     from app_pkg import socketio_handlers
