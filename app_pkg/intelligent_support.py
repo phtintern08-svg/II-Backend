@@ -427,16 +427,25 @@ class SupportAnalytics:
         """Get agent performance metrics"""
         try:
             results = db.session.execute(text("""
-                SELECT * FROM v_agent_performance
+                SELECT 
+                    ap.assigned_agent_id,
+                    su.name as agent_name,
+                    ap.total_assigned,
+                    ap.resolved_count,
+                    ap.avg_resolution_time_minutes,
+                    ap.avg_response_time_minutes,
+                    ap.sla_breaches
+                FROM v_agent_performance ap
+                LEFT JOIN support_users su ON su.id = ap.assigned_agent_id
             """)).fetchall()
             
             agents = []
             for row in results:
                 agents.append({
                     'agent_id': row[0],
-                    'agent_name': row[1],
-                    'total_assigned': row[2],
-                    'resolved_count': row[3],
+                    'agent_name': row[1] or f"Agent #{row[0]}",
+                    'total_assigned': row[2] or 0,
+                    'resolved_count': row[3] or 0,
                     'avg_resolution_time_minutes': float(row[4]) if row[4] else 0,
                     'avg_response_time_minutes': float(row[5]) if row[5] else 0,
                     'sla_breaches': row[6] or 0
@@ -505,12 +514,12 @@ class AutoAssignment:
     def assign_agent():
         """Assign ticket to agent with least load"""
         try:
-            # Get agent with least active tickets
+            # Get agent with least active tickets (using assigned_agent_id)
             result = db.session.execute(text("""
                 SELECT su.id, su.name, 
                        COUNT(st.id) as active_tickets
                 FROM support_users su
-                LEFT JOIN support_tickets st ON st.assigned_to = su.id 
+                LEFT JOIN support_tickets st ON st.assigned_agent_id = su.id 
                     AND st.status IN ('open', 'assigned', 'in_progress')
                 WHERE su.online_status = 1
                     AND su.role = 'agent'
@@ -536,9 +545,21 @@ class AutoAssignment:
             try:
                 ticket = SupportTicket.query.filter_by(id=ticket_id).first()
                 if ticket:
-                    ticket.assigned_to = agent_id
+                    # Set assigned_agent_id (enterprise standard)
+                    try:
+                        ticket.assigned_agent_id = agent_id
+                    except AttributeError:
+                        # Fallback to assigned_to if column doesn't exist yet
+                        ticket.assigned_to = agent_id
+                    
                     ticket.status = 'assigned'
-                    ticket.assigned_at = datetime.utcnow()
+                    
+                    # Set assigned_at timestamp
+                    try:
+                        ticket.assigned_at = datetime.utcnow()
+                    except AttributeError:
+                        pass  # Column might not exist yet
+                    
                     db.session.commit()
                     app_logger.info(f"Ticket {ticket_id} assigned to agent {agent_id}")
                     return agent_id

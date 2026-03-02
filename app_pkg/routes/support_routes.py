@@ -8,7 +8,7 @@ import os
 import requests
 
 from config import Config
-from app_pkg.models import db, Category, Thread, Comment, Customer, Vendor, SupportUser, Notification, ProductCatalog, MarketplaceProduct, CartProduct, ProductType
+from app_pkg.models import db, Category, Thread, Comment, Customer, Vendor, SupportUser, SupportTicket, SupportTicketCategory, Notification, ProductCatalog, MarketplaceProduct, CartProduct, ProductType
 from werkzeug.security import check_password_hash, generate_password_hash
 from app_pkg.auth import login_required, role_required
 from app_pkg.schemas import category_schema, categories_schema, thread_schema, threads_schema, comment_schema, comments_schema
@@ -1301,3 +1301,468 @@ def serve_uploaded_file(file_path):
     except Exception as e:
         app_logger.exception(f"Serve uploaded file error: {e}")
         return jsonify({"error": "Failed to serve file"}), 500
+
+
+# ============================================================================
+# Support Ticket Routes for Customer Frontend
+# ============================================================================
+
+@bp.route('/tickets/customer/<int:customer_id>', methods=['GET'])
+def get_customer_tickets(customer_id):
+    """
+    GET /api/tickets/customer/<customer_id>
+    Get all tickets for a customer
+    Returns empty array if no tickets exist (not 404)
+    """
+    try:
+        # Query tickets for this customer
+        tickets = SupportTicket.query.filter_by(
+            user_id=customer_id,
+            user_type='customer'
+        ).order_by(SupportTicket.created_at.desc()).all()
+        
+        # Format tickets for frontend
+        tickets_data = []
+        for ticket in tickets:
+            # Use ticket_number as ticket_id, fallback to id
+            ticket_id = ticket.ticket_number or str(ticket.id)
+            
+            tickets_data.append({
+                'ticket_id': ticket_id,
+                'id': ticket.id,
+                'subject': ticket.subject,
+                'category': ticket.category.name if ticket.category else 'Other',
+                'status': ticket.status,
+                'priority': ticket.priority,
+                'created_at': ticket.created_at.isoformat() if ticket.created_at else None,
+                'updated_at': ticket.updated_at.isoformat() if ticket.updated_at else None,
+                'resolved_at': ticket.resolved_at.isoformat() if ticket.resolved_at else None,
+                'sla_deadline': getattr(ticket, 'sla_deadline', None),
+                'sla_due_at': getattr(ticket, 'sla_due_at', None) or getattr(ticket, 'sla_deadline', None),
+                'assigned_to': ticket.assigned_to,
+                'order_id': getattr(ticket, 'order_id', None),
+                'vendor_id': getattr(ticket, 'vendor_id', None),
+                'rider_id': getattr(ticket, 'rider_id', None),
+                'issue_type': getattr(ticket, 'issue_type', None)
+            })
+        
+        # Return empty array if no tickets (not 404)
+        return jsonify(tickets_data), 200
+        
+    except Exception as e:
+        app_logger.exception(f"Get customer tickets error: {e}")
+        # Return empty array on error instead of 404
+        return jsonify([]), 200
+
+
+@bp.route('/tickets/<ticket_id>', methods=['GET'])
+def get_ticket_details(ticket_id):
+    """
+    GET /api/tickets/<ticket_id>
+    Get ticket details by ID or ticket number
+    """
+    try:
+        # Try to find by ticket_number first, then by id (handle both string and int)
+        try:
+            ticket_id_int = int(ticket_id)
+        except ValueError:
+            ticket_id_int = None
+        
+        if ticket_id_int:
+            ticket = SupportTicket.query.filter(
+                (SupportTicket.ticket_number == ticket_id) | 
+                (SupportTicket.id == ticket_id_int)
+            ).first()
+        else:
+            ticket = SupportTicket.query.filter(
+                SupportTicket.ticket_number == ticket_id
+            ).first()
+        
+        if not ticket:
+            return jsonify({"error": "Ticket not found"}), 404
+        
+        ticket_data = {
+            'ticket_id': ticket.ticket_number or f"TKT-{ticket.id}",
+            'id': ticket.id,
+            'subject': ticket.subject,
+            'description': ticket.description,
+            'category': ticket.category.name if ticket.category else 'Other',
+            'status': ticket.status,
+            'priority': ticket.priority,
+            'created_at': ticket.created_at.isoformat() if ticket.created_at else None,
+            'updated_at': ticket.updated_at.isoformat() if ticket.updated_at else None,
+            'resolved_at': ticket.resolved_at.isoformat() if ticket.resolved_at else None,
+            'sla_deadline': ticket.sla_deadline.isoformat() if ticket.sla_deadline else None,
+            'assigned_to': ticket.assigned_to,
+            'order_id': getattr(ticket, 'order_id', None),
+            'vendor_id': getattr(ticket, 'vendor_id', None),
+            'rider_id': getattr(ticket, 'rider_id', None),
+            'issue_type': getattr(ticket, 'issue_type', None)
+        }
+        
+        return jsonify(ticket_data), 200
+        
+    except Exception as e:
+        app_logger.exception(f"Get ticket details error: {e}")
+        return jsonify({"error": "Failed to retrieve ticket"}), 500
+
+
+@bp.route('/tickets/<ticket_id>/messages', methods=['GET'])
+def get_ticket_messages(ticket_id):
+    """
+    GET /api/tickets/<ticket_id>/messages
+    Get all messages for a ticket
+    Returns empty array if no messages exist
+    """
+    try:
+        # Find ticket (handle both string and int)
+        try:
+            ticket_id_int = int(ticket_id)
+        except ValueError:
+            ticket_id_int = None
+        
+        if ticket_id_int:
+            ticket = SupportTicket.query.filter(
+                (SupportTicket.ticket_number == ticket_id) | 
+                (SupportTicket.id == ticket_id_int)
+            ).first()
+        else:
+            ticket = SupportTicket.query.filter(
+                SupportTicket.ticket_number == ticket_id
+            ).first()
+        
+        if not ticket:
+            return jsonify({"error": "Ticket not found"}), 404
+        
+        # Get messages from Thread table (ticket_id foreign key)
+        messages = Thread.query.filter_by(ticket_id=ticket.id).order_by(Thread.created_at.asc()).all()
+        
+        messages_data = []
+        for msg in messages:
+            # Get comments for this thread
+            comments = Comment.query.filter_by(thread_id=msg.id).order_by(Comment.created_at.asc()).all()
+            
+            # Add thread as first message
+            messages_data.append({
+                'id': msg.id,
+                'message': msg.content,
+                'sender_id': msg.user_id,
+                'sender_type': 'customer',  # Assuming thread is from customer
+                'sender_name': 'Customer',
+                'created_at': msg.created_at.isoformat() if msg.created_at else None,
+                'timestamp': msg.created_at.isoformat() if msg.created_at else None,
+                'is_read': getattr(msg, 'is_read', False)
+            })
+            
+            # Add comments as messages
+            for comment in comments:
+                messages_data.append({
+                    'id': comment.id,
+                    'message': comment.content,
+                    'sender_id': comment.user_id,
+                    'sender_type': 'support_agent',  # Comments are typically from support
+                    'sender_name': 'Support Agent',
+                    'created_at': comment.created_at.isoformat() if comment.created_at else None,
+                    'timestamp': comment.created_at.isoformat() if comment.created_at else None,
+                    'is_read': getattr(comment, 'is_read', False)
+                })
+        
+        # Return empty array if no messages (not 404)
+        return jsonify(messages_data), 200
+        
+    except Exception as e:
+        app_logger.exception(f"Get ticket messages error: {e}")
+        # Return empty array on error instead of 404
+        return jsonify([]), 200
+
+
+@bp.route('/tickets/<ticket_id>/messages', methods=['POST'])
+def create_ticket_message(ticket_id):
+    """
+    POST /api/tickets/<ticket_id>/messages
+    Create a new message in a ticket
+    """
+    try:
+        data = request.get_json()
+        if not data:
+            return jsonify({"error": "No data provided"}), 400
+        
+        # Find ticket (handle both string and int)
+        try:
+            ticket_id_int = int(ticket_id)
+        except ValueError:
+            ticket_id_int = None
+        
+        if ticket_id_int:
+            ticket = SupportTicket.query.filter(
+                (SupportTicket.ticket_number == ticket_id) | 
+                (SupportTicket.id == ticket_id_int)
+            ).first()
+        else:
+            ticket = SupportTicket.query.filter(
+                SupportTicket.ticket_number == ticket_id
+            ).first()
+        
+        if not ticket:
+            return jsonify({"error": "Ticket not found"}), 404
+        
+        customer_id = data.get('customer_id')
+        message = data.get('message', '').strip()
+        
+        if not message:
+            return jsonify({"error": "Message is required"}), 400
+        
+        if not customer_id:
+            return jsonify({"error": "Customer ID is required"}), 400
+        
+        # Verify customer owns this ticket
+        if ticket.user_id != customer_id or ticket.user_type != 'customer':
+            return jsonify({"error": "Unauthorized"}), 403
+        
+        # Create message as Thread
+        new_thread = Thread(
+            title=ticket.subject,
+            content=message,
+            user_id=customer_id,
+            ticket_id=ticket.id
+        )
+        
+        db.session.add(new_thread)
+        db.session.commit()
+        
+        # Update ticket updated_at
+        ticket.updated_at = datetime.utcnow()
+        
+        # Update first_response_at if this is first message from customer
+        if not hasattr(ticket, 'first_response_at') or not ticket.first_response_at:
+            try:
+                ticket.first_response_at = datetime.utcnow()
+            except:
+                pass  # Column might not exist yet
+        
+        db.session.commit()
+        
+        return jsonify({
+            "success": True,
+            "message_id": new_thread.id,
+            "ticket_id": ticket.ticket_number or f"TKT-{ticket.id}"
+        }), 201
+        
+    except Exception as e:
+        app_logger.exception(f"Create ticket message error: {e}")
+        db.session.rollback()
+        return jsonify({"error": "Failed to create message"}), 500
+
+
+@bp.route('/tickets/unread-count', methods=['GET'])
+def get_unread_count():
+    """
+    GET /api/tickets/unread-count?customer_id=<id>
+    Get unread message count for a customer
+    Returns 0 if no unread messages (not 404)
+    """
+    try:
+        customer_id = request.args.get('customer_id', type=int)
+        
+        if not customer_id:
+            return jsonify({"error": "customer_id parameter required"}), 400
+        
+        # Get customer tickets
+        tickets = SupportTicket.query.filter_by(
+            user_id=customer_id,
+            user_type='customer'
+        ).all()
+        
+        if not tickets:
+            return jsonify({"count": 0}), 200
+        
+        # Count unread messages
+        unread_count = 0
+        
+        for ticket in tickets:
+            # Get messages for this ticket
+            messages = Thread.query.filter_by(ticket_id=ticket.id).all()
+            
+            for msg in messages:
+                # Check if message is read (default to False if column doesn't exist)
+                is_read = getattr(msg, 'is_read', False)
+                if not is_read:
+                    # Only count messages not from customer
+                    if msg.user_id != customer_id:
+                        unread_count += 1
+                
+                # Check comments
+                comments = Comment.query.filter_by(thread_id=msg.id).all()
+                for comment in comments:
+                    is_read = getattr(comment, 'is_read', False)
+                    if not is_read and comment.user_id != customer_id:
+                        unread_count += 1
+        
+        return jsonify({"count": unread_count}), 200
+        
+    except Exception as e:
+        app_logger.exception(f"Get unread count error: {e}")
+        # Return 0 on error instead of 404
+        return jsonify({"count": 0}), 200
+
+
+@bp.route('/tickets/<ticket_id>/mark-read', methods=['POST'])
+def mark_ticket_read(ticket_id):
+    """
+    POST /api/tickets/<ticket_id>/mark-read
+    Mark all messages in a ticket as read
+    """
+    try:
+        data = request.get_json() or {}
+        customer_id = data.get('customer_id')
+        
+        if not customer_id:
+            return jsonify({"error": "customer_id required"}), 400
+        
+        # Find ticket (handle both string and int)
+        try:
+            ticket_id_int = int(ticket_id)
+        except ValueError:
+            ticket_id_int = None
+        
+        if ticket_id_int:
+            ticket = SupportTicket.query.filter(
+                (SupportTicket.ticket_number == ticket_id) | 
+                (SupportTicket.id == ticket_id_int)
+            ).first()
+        else:
+            ticket = SupportTicket.query.filter(
+                SupportTicket.ticket_number == ticket_id
+            ).first()
+        
+        if not ticket:
+            return jsonify({"error": "Ticket not found"}), 404
+        
+        # Verify customer owns this ticket
+        if ticket.user_id != customer_id or ticket.user_type != 'customer':
+            return jsonify({"error": "Unauthorized"}), 403
+        
+        # Mark messages as read
+        messages = Thread.query.filter_by(ticket_id=ticket.id).all()
+        updated = 0
+        
+        for msg in messages:
+            # Only mark messages not from customer as read
+            if msg.user_id != customer_id:
+                try:
+                    msg.is_read = True
+                    if hasattr(msg, 'read_at'):
+                        msg.read_at = datetime.utcnow()
+                    updated += 1
+                except AttributeError:
+                    # Column doesn't exist yet, skip
+                    pass
+            
+            # Mark comments as read
+            comments = Comment.query.filter_by(thread_id=msg.id).all()
+            for comment in comments:
+                if comment.user_id != customer_id:
+                    try:
+                        comment.is_read = True
+                        if hasattr(comment, 'read_at'):
+                            comment.read_at = datetime.utcnow()
+                        updated += 1
+                    except AttributeError:
+                        pass
+        
+        db.session.commit()
+        
+        return jsonify({
+            "success": True,
+            "updated": updated
+        }), 200
+        
+    except Exception as e:
+        app_logger.exception(f"Mark ticket read error: {e}")
+        db.session.rollback()
+        return jsonify({"error": "Failed to mark as read"}), 500
+
+
+@bp.route('/tickets/create', methods=['POST'])
+def create_ticket():
+    """
+    POST /api/tickets/create
+    Create a new support ticket
+    """
+    try:
+        data = request.get_json()
+        if not data:
+            return jsonify({"error": "No data provided"}), 400
+        
+        customer_id = data.get('customer_id')
+        subject = data.get('subject', '').strip()
+        description = data.get('description', '').strip()
+        category = data.get('category', 'Other')
+        priority = data.get('priority', 'medium')
+        order_id = data.get('order_id')
+        
+        if not customer_id:
+            return jsonify({"error": "customer_id is required"}), 400
+        
+        if not subject or not description:
+            return jsonify({"error": "Subject and description are required"}), 400
+        
+        # Get or create category
+        category_obj = SupportTicketCategory.query.filter_by(name=category).first()
+        if not category_obj:
+            # Create default category if doesn't exist
+            category_obj = SupportTicketCategory(name=category, description=category, is_active=True)
+            db.session.add(category_obj)
+            db.session.flush()
+        
+        # Generate ticket number
+        from datetime import datetime
+        year = datetime.utcnow().year
+        ticket_count = SupportTicket.query.filter(
+            db.func.extract('year', SupportTicket.created_at) == year
+        ).count() + 1
+        ticket_number = f"TKT-{year}-{str(ticket_count).zfill(5)}"
+        
+        # Create ticket
+        new_ticket = SupportTicket(
+            ticket_number=ticket_number,
+            user_id=customer_id,
+            user_type='customer',
+            category_id=category_obj.id,
+            priority=priority,
+            subject=subject,
+            description=description,
+            status='open'
+        )
+        
+        # Set order_id if provided
+        if order_id:
+            try:
+                new_ticket.order_id = order_id
+            except AttributeError:
+                pass  # Column might not exist yet
+        
+        db.session.add(new_ticket)
+        db.session.commit()
+        
+        # Process with intelligent support (if available)
+        try:
+            from app_pkg.support_integration import process_new_ticket
+            process_new_ticket(
+                ticket_id=new_ticket.id,
+                order_id=order_id,
+                customer_message=description
+            )
+        except Exception as e:
+            app_logger.warning(f"Intelligent support processing failed: {e}")
+        
+        return jsonify({
+            "success": True,
+            "ticket_id": ticket_number,
+            "id": new_ticket.id
+        }), 201
+        
+    except Exception as e:
+        app_logger.exception(f"Create ticket error: {e}")
+        db.session.rollback()
+        return jsonify({"error": "Failed to create ticket"}), 500
