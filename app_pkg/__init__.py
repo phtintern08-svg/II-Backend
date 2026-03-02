@@ -31,6 +31,7 @@ csrf = CSRFProtect()
 # This is the correct pattern for Flask-SocketIO with Passenger
 # We'll call socketio.init_app(app) inside create_app()
 # Using gevent for better Passenger compatibility (no monkey patch needed)
+# ⭐ FORCE POLLING MODE for cPanel/Passenger shared hosting (WebSocket upgrades blocked)
 try:
     import gevent
     async_mode = "gevent"
@@ -48,7 +49,8 @@ socketio = SocketIO(
     engineio_logger=False,
     ping_timeout=60,
     ping_interval=25,
-    allow_upgrades=True
+    allow_upgrades=False,  # ⭐ CRITICAL: Disable WebSocket upgrades (Passenger blocks them)
+    transports=["polling"]  # ⭐ FORCE polling only (works perfectly on shared hosting)
 )
 
 
