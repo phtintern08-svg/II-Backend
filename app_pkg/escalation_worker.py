@@ -11,22 +11,27 @@ from app_pkg.intelligent_support import EscalationEngine
 from app_pkg.logger_config import app_logger
 
 
-def run_escalation_worker():
+def run_escalation_worker(app):
     """
     Background worker that checks tickets and escalates if needed
     Run this in a separate thread or process
+    
+    Args:
+        app: Flask application instance (needed for app context)
     """
     while True:
         try:
-            app_logger.info("Running escalation worker...")
+            # Run within Flask application context
+            with app.app_context():
+                app_logger.info("Running escalation worker...")
+                
+                # Check and escalate tickets
+                escalated_count = EscalationEngine.check_and_escalate_tickets()
+                
+                if escalated_count > 0:
+                    app_logger.info(f"Escalated {escalated_count} tickets")
             
-            # Check and escalate tickets
-            escalated_count = EscalationEngine.check_and_escalate_tickets()
-            
-            if escalated_count > 0:
-                app_logger.info(f"Escalated {escalated_count} tickets")
-            
-            # Sleep for 60 seconds before next check
+            # Sleep for 60 seconds before next check (outside app context)
             time.sleep(60)
             
         except Exception as e:
@@ -35,12 +40,18 @@ def run_escalation_worker():
             time.sleep(60)
 
 
-def start_escalation_worker_thread():
-    """Start escalation worker in a background thread"""
+def start_escalation_worker_thread(app):
+    """
+    Start escalation worker in a background thread
+    
+    Args:
+        app: Flask application instance
+    """
     import threading
     
     worker_thread = threading.Thread(
         target=run_escalation_worker,
+        args=(app,),
         daemon=True,
         name="EscalationWorker"
     )

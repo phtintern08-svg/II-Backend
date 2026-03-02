@@ -297,7 +297,9 @@ def create_app(config_class=Config):
         cors_allowed_origins="*",
         async_mode="threading",  # Use threading for Passenger compatibility
         logger=False,
-        engineio_logger=False
+        engineio_logger=False,
+        allow_upgrades=False,  # Disable WebSocket upgrades for Passenger compatibility
+        transports=["polling"]  # Use polling only (Passenger doesn't support WebSocket)
     )
     
     # Register Socket.IO event handlers
@@ -306,10 +308,10 @@ def create_app(config_class=Config):
     
     app_logger.info("✅ Socket.IO initialized for real-time support chat")
     
-    # Start escalation worker in background thread
+    # Start escalation worker in background thread (pass app for context)
     try:
         from app_pkg.escalation_worker import start_escalation_worker_thread
-        start_escalation_worker_thread()
+        start_escalation_worker_thread(app)
     except Exception as e:
         app_logger.warning(f"Failed to start escalation worker: {e}")
 
