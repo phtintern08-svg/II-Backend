@@ -707,6 +707,11 @@ class SupportTicket(db.Model):
     
     # SLA
     sla_deadline = db.Column(db.DateTime, nullable=True)
+    sla_due_at = db.Column(db.DateTime, nullable=True)  # SLA deadline for first response
+    
+    # Response tracking
+    first_response_at = db.Column(db.DateTime, nullable=True)  # When agent first responded
+    assigned_at = db.Column(db.DateTime, nullable=True)  # When ticket was assigned
     
     # Attachments (legacy - consider moving to separate table)
     attachment_image = db.Column(db.LargeBinary)

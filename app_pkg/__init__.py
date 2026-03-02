@@ -292,14 +292,25 @@ def create_app(config_class=Config):
 
     # Initialize Socket.IO for real-time support chat
     global socketio
+    # Install eventlet for proper WebSocket support in Passenger
+    try:
+        import eventlet
+        eventlet.monkey_patch()
+        async_mode = "eventlet"
+        app_logger.info("✅ Eventlet loaded - WebSocket support enabled")
+    except ImportError:
+        app_logger.warning("⚠️ Eventlet not installed - falling back to threading")
+        async_mode = "threading"
+    
     socketio = SocketIO(
         app,
         cors_allowed_origins="*",
-        async_mode="threading",  # Use threading for Passenger compatibility
+        async_mode=async_mode,
         logger=False,
         engineio_logger=False,
-        allow_upgrades=False,  # Disable WebSocket upgrades for Passenger compatibility
-        transports=["polling"]  # Use polling only (Passenger doesn't support WebSocket)
+        ping_timeout=60,
+        ping_interval=25,
+        allow_upgrades=True  # Enable WebSocket upgrades with eventlet
     )
     
     # Register Socket.IO event handlers

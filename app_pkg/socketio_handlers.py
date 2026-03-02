@@ -320,10 +320,22 @@ def register_handlers(socketio):
             order_id = data.get('order_id')
             customer_id = data.get('customer_id')
             
+            # If customer_id not provided, try to get from request context
+            if not customer_id:
+                # Try to get from JWT token or session
+                try:
+                    from app_pkg.auth import verify_token
+                    token = request.headers.get('Authorization', '').replace('Bearer ', '')
+                    if token:
+                        payload = verify_token(token)
+                        customer_id = payload.get('user_id')
+                except:
+                    pass
+            
             app_logger.info(f"✅ START SUPPORT - Order: {order_id}, Customer: {customer_id}")
             
             if not customer_id:
-                emit('error', {'msg': 'Customer ID required'})
+                emit('error', {'msg': 'Customer ID required. Please login again.'})
                 return
             
             if not order_id:
@@ -548,6 +560,9 @@ def register_handlers(socketio):
                             try:
                                 ticket.assigned_agent_id = agent_id
                                 ticket.status = 'assigned'
+                                # Set first_response_at when agent is assigned
+                                ticket.first_response_at = datetime.utcnow()
+                                ticket.assigned_at = datetime.utcnow()
                                 db.session.commit()
                                 
                                 emit('agent_joined', {
@@ -565,6 +580,9 @@ def register_handlers(socketio):
                         try:
                             ticket.assigned_agent_id = agent_id
                             ticket.status = 'assigned'
+                            # Set first_response_at when agent is assigned
+                            ticket.first_response_at = datetime.utcnow()
+                            ticket.assigned_at = datetime.utcnow()
                             db.session.commit()
                             
                             emit('agent_joined', {

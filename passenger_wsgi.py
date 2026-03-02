@@ -12,27 +12,34 @@ PROJECT_ROOT = os.path.dirname(__file__)
 ENV_PATH = os.path.join(PROJECT_ROOT, ".env")
 load_dotenv(ENV_PATH)
 
-# app.py lives directly inside backend/
-APP_FILE = os.path.join(PROJECT_ROOT, "app.py")
+# Add backend to path
+import sys
+if PROJECT_ROOT not in sys.path:
+    sys.path.insert(0, PROJECT_ROOT)
 
 captured_error = None
 
 try:
-    spec = importlib.util.spec_from_file_location("app", APP_FILE)
-    app_module = importlib.util.module_from_spec(spec)
-    spec.loader.exec_module(app_module)
-
-    if hasattr(app_module, "app"):
-        application = app_module.app
-    elif hasattr(app_module, "application"):
-        application = app_module.application
+    # ✅ CRITICAL: For Socket.IO WebSocket support in Passenger
+    # Import directly from app_pkg to get socketio instance
+    from app_pkg import create_app
+    from app_pkg import socketio
+    
+    # Create Flask app
+    flask_app = create_app()
+    
+    # Use Socket.IO WSGI app for WebSocket support
+    # This is REQUIRED for WebSocket upgrades to work in Passenger
+    if socketio:
+        application = socketio.wsgi_app(flask_app)
+        print("✅ Socket.IO WSGI app loaded for WebSocket support")
     else:
-        raise AttributeError(
-            "app.py loaded but no 'app' or 'application' variable found"
-        )
-
+        application = flask_app
+        print("⚠️ Socket.IO not available - using regular Flask app")
+        
 except Exception as e:
     captured_error = str(e) + "\n\n" + traceback.format_exc()
+    print(f"❌ Error loading app: {captured_error}", file=sys.stderr)
 
 # Fallback WSGI app to show error in browser
 if captured_error:
@@ -43,5 +50,3 @@ if captured_error:
         )
         body = "DEPLOYMENT FAILED\n\n" + captured_error
         return [body.encode("utf-8")]
-
-
