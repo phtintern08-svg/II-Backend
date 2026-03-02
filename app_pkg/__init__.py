@@ -30,14 +30,16 @@ csrf = CSRFProtect()
 # ✅ CRITICAL: Initialize Socket.IO globally WITHOUT app parameter
 # This is the correct pattern for Flask-SocketIO with Passenger
 # We'll call socketio.init_app(app) inside create_app()
-# Note: eventlet.monkey_patch() MUST be done in passenger_wsgi.py FIRST
+# Using gevent for better Passenger compatibility (no monkey patch needed)
 try:
-    import eventlet
-    # Don't monkey patch here - it's done FIRST in passenger_wsgi.py
-    # This ensures proper initialization order
-    async_mode = "eventlet"
+    import gevent
+    async_mode = "gevent"
 except ImportError:
-    async_mode = "threading"
+    try:
+        import eventlet
+        async_mode = "eventlet"
+    except ImportError:
+        async_mode = "threading"
 
 socketio = SocketIO(
     cors_allowed_origins="*",

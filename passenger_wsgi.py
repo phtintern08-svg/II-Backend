@@ -1,13 +1,11 @@
-# ✅ CRITICAL: Eventlet monkey patch MUST be first
-import eventlet
-eventlet.monkey_patch()
+# ✅ CRITICAL: For Passenger + Socket.IO integration
+# No monkey patch needed - gevent handles it internally
+# Socket.IO runs inside Passenger process
 
-# Import app factory
 from app_pkg import create_app
 
-# Create Flask app
+# Create Flask app (Socket.IO is already initialized and will be bound via socketio.init_app)
 app = create_app()
 
-# ✅ IMPORTANT: Flask-SocketIO automatically injects middleware when socketio.init_app(app) is called
-# So we just expose the Flask app - Socket.IO middleware is already attached
+# Passenger entrypoint - Socket.IO middleware is automatically attached
 application = app
