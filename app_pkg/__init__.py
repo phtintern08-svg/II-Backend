@@ -6,6 +6,7 @@ from flask_limiter.util import get_remote_address
 from flask_wtf.csrf import CSRFProtect
 from flask_talisman import Talisman
 from flask_socketio import SocketIO, join_room, leave_room, emit
+import traceback
 
 from config import Config
 from app_pkg.models import db
@@ -319,12 +320,16 @@ def create_app(config_class=Config):
     
     app_logger.info("✅ Socket.IO initialized for real-time support chat")
     
-    # Start escalation worker in background thread (pass app for context)
+    # Start escalation worker as Socket.IO background task (Eventlet-compatible)
+    # ✅ CRITICAL: Must use socketio.start_background_task() NOT threading.Thread()
+    # This is REQUIRED when using eventlet to avoid lock conflicts
     try:
-        from app_pkg.escalation_worker import start_escalation_worker_thread
-        start_escalation_worker_thread(app)
+        from app_pkg.escalation_worker import start_escalation_worker_background_task
+        start_escalation_worker_background_task(socketio, app)
+        app_logger.info("✅ Escalation worker started as background task")
     except Exception as e:
-        app_logger.warning(f"Failed to start escalation worker: {e}")
+        app_logger.warning(f"⚠️ Failed to start escalation worker: {e}")
+        app_logger.warning(traceback.format_exc())
 
     # Register handlers
     register_error_handlers(app)
