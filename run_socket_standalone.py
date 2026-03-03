@@ -32,16 +32,17 @@ CORS(app, resources={r"/*": {"origins": "*"}})
 
 # Create Socket.IO instance
 # ⭐ Use threading mode for stability (works on all shared hosting)
+# ⭐ CORS enabled for cross-origin connections from frontend
 socketio = SocketIO(
     app,
-    cors_allowed_origins="*",
+    cors_allowed_origins="*",  # ✅ Allow all origins (or whitelist specific domains)
     async_mode="threading",  # Stable on shared hosting
     logger=True,
     engineio_logger=True,
     ping_timeout=60,
     ping_interval=25,
-    allow_upgrades=True,  # Allow WebSocket (standalone server supports it)
-    transports=["websocket", "polling"]  # WebSocket preferred, polling fallback
+    allow_upgrades=True,  # ✅ Allow WebSocket (standalone server supports it)
+    transports=["websocket", "polling"]  # ✅ WebSocket preferred, polling fallback
 )
 
 # Import and register handlers from main app
