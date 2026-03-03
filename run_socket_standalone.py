@@ -86,10 +86,12 @@ if __name__ == "__main__":
     
     # Run Socket.IO server on port 3000
     # ⭐ This runs OUTSIDE Passenger - single process, stable sessions
+    # ⭐ allow_unsafe_werkzeug=True is required for shared hosting (no gunicorn/nginx)
     socketio.run(
         app,
         host="0.0.0.0",  # Listen on all interfaces
         port=3000,
         debug=False,
-        use_reloader=False  # Disable auto-reload in production
+        use_reloader=False,  # Disable auto-reload in production
+        allow_unsafe_werkzeug=True  # ✅ Required for shared hosting (Werkzeug is safe here)
     )
