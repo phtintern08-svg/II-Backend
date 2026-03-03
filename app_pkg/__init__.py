@@ -30,47 +30,17 @@ csrf = CSRFProtect()
 # ✅ CRITICAL: Initialize Socket.IO globally WITHOUT app parameter
 # This is the correct pattern for Flask-SocketIO with Passenger
 # We'll call socketio.init_app(app) inside create_app()
-# Using gevent for better Passenger compatibility (no monkey patch needed)
+# ⭐ FORCE THREADING MODE for Passenger (one async layer only - Passenger manages workers)
 # ⭐ FORCE POLLING MODE for cPanel/Passenger shared hosting (WebSocket upgrades blocked)
-try:
-    import gevent
-    async_mode = "gevent"
-except ImportError:
-    try:
-        import eventlet
-        async_mode = "eventlet"
-    except ImportError:
-        async_mode = "threading"
-
-# ✅ CRITICAL: Redis message queue for multi-worker session sharing
-# This solves the "Invalid session" problem when Passenger spawns multiple workers
-# Each worker has its own memory, so sessions must be shared via Redis
-# If Redis is not available, the system will fall back to single-worker mode
-message_queue = None
-try:
-    import redis
-    # Try to connect to Redis (default: localhost:6379)
-    # Most cPanel providers have Redis available
-    r = redis.Redis(host='localhost', port=6379, db=0, socket_connect_timeout=2)
-    r.ping()  # Test connection
-    message_queue = "redis://localhost:6379/0"
-    # Note: app_logger not available at module level, will log in create_app()
-except (ImportError, Exception) as e:
-    # Redis not available - will use single-worker mode
-    # User can set PASSENGER_MAX_POOL_SIZE=1 in cPanel environment variables
-    # Note: app_logger not available at module level, will log in create_app()
-    message_queue = None
-
 socketio = SocketIO(
     cors_allowed_origins="*",
-    async_mode=async_mode,
+    async_mode="threading",  # ⭐ CRITICAL: Use threading for Passenger (gevent/eventlet cause instability)
     logger=False,
     engineio_logger=False,
     ping_timeout=60,
     ping_interval=25,
     allow_upgrades=False,  # ⭐ CRITICAL: Disable WebSocket upgrades (Passenger blocks them)
-    transports=["polling"],  # ⭐ FORCE polling only (works perfectly on shared hosting)
-    message_queue=message_queue  # ⭐ CRITICAL: Shared sessions across Passenger workers
+    transports=["polling"]  # ⭐ FORCE polling only (works perfectly on shared hosting)
 )
 
 
@@ -166,6 +136,8 @@ def create_app(config_class=Config):
         ],
         "connect-src": [
             "'self'",
+            "https://support.impromptuindian.com",
+            "https://apparels.impromptuindian.com",
             "https://apis.mappls.com",
             "https://cdn.mappls.com",
             "https://*.mappls.com"
@@ -338,13 +310,6 @@ def create_app(config_class=Config):
     # ✅ CRITICAL: Use init_app() pattern (required for Passenger compatibility)
     global socketio
     
-    # Log Redis status (if available)
-    if socketio.server_options.get('message_queue'):
-        app_logger.info("✅ Redis message queue enabled - multi-worker session sharing active")
-    else:
-        app_logger.warning("⚠️ Redis not available - using single-worker mode")
-        app_logger.warning("⚠️ To enable multi-worker support: install Redis or set PASSENGER_MAX_POOL_SIZE=1")
-    
     # Bind socketio to app (Flask-SocketIO automatically injects middleware)
     socketio.init_app(app)
     
@@ -354,24 +319,16 @@ def create_app(config_class=Config):
     
     app_logger.info("✅ Socket.IO initialized for real-time support chat")
     
-    # Start escalation worker as Socket.IO background task (Gevent-compatible)
+    # Start escalation worker as Socket.IO background task (Eventlet-compatible)
     # ✅ CRITICAL: Must use socketio.start_background_task() NOT threading.Thread()
-    # This is REQUIRED when using gevent to avoid lock conflicts
-    # ⭐ CRITICAL: Only start worker ONCE per application instance
-    # Passenger spawns multiple workers, each calling create_app()
-    # Without this check, each worker would start its own escalation loop
-    # Result: duplicate escalations, duplicate DB writes, random bugs
-    if not hasattr(app, '_escalation_worker_started'):
-        try:
-            from app_pkg.escalation_worker import start_escalation_worker_background_task
-            start_escalation_worker_background_task(socketio, app)
-            app._escalation_worker_started = True  # Mark as started
-            app_logger.info("✅ Escalation worker started as background task (single instance)")
-        except Exception as e:
-            app_logger.warning(f"⚠️ Failed to start escalation worker: {e}")
-            app_logger.warning(traceback.format_exc())
-    else:
-        app_logger.info("ℹ️ Escalation worker already started (skipping duplicate)")
+    # This is REQUIRED when using eventlet to avoid lock conflicts
+    try:
+        from app_pkg.escalation_worker import start_escalation_worker_background_task
+        start_escalation_worker_background_task(socketio, app)
+        app_logger.info("✅ Escalation worker started as background task")
+    except Exception as e:
+        app_logger.warning(f"⚠️ Failed to start escalation worker: {e}")
+        app_logger.warning(traceback.format_exc())
 
     # Register handlers
     register_error_handlers(app)

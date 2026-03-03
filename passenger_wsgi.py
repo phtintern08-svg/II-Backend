@@ -1,6 +1,6 @@
 # ✅ CRITICAL: For Passenger + Socket.IO integration
-# No monkey patch needed - gevent handles it internally
-# Socket.IO runs inside Passenger process
+# Socket.IO runs inside Passenger process using threading mode
+# No separate socket server needed - everything runs through Passenger
 
 from app_pkg import create_app
 

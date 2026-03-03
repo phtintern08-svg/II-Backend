@@ -358,31 +358,21 @@ def register_handlers(socketio):
                 vendor_id = getattr(order, 'selected_vendor_id', None)
                 rider_id = getattr(order, 'rider_id', None)
                 
-                # Get available flows for this order status
-                # ✅ Use support database (same as support_tickets)
-                # ✅ Add error handling - system must not crash if table missing
+                # Get available flows for this order status (from admin database)
+                # ⭐ Enterprise-safe: Never crash if table missing
                 flows = []
                 try:
-                    # Get support database name from config
-                    support_db = current_app.config.get('DB_NAME_SUPPORT', 'impromptuindian_support')
-                    # Sanitize database name for safety
-                    if not all(c.isalnum() or c == '_' for c in support_db):
-                        support_db = 'impromptuindian_support'
-                    
-                    flows_query = text(f"""
+                    flows_query = text("""
                         SELECT issue_key, issue_title, ai_reply, auto_resolve, escalate_if_selected
-                        FROM {support_db}.support_order_flows
+                        FROM impromptuindian_admin.support_order_flows
                         WHERE order_status = :status
                         ORDER BY id ASC
                     """)
-                    
                     flows = db.session.execute(flows_query, {'status': order_status}).fetchall()
-                    app_logger.info(f"✅ Loaded {len(flows)} support flows for status: {order_status}")
                 except Exception as e:
-                    # ✅ Enterprise rule: Support system must never crash if admin config missing
-                    app_logger.warning(f"⚠️ Support flows table not found or error: {e}")
-                    app_logger.warning("⚠️ Chat will continue with fallback options")
-                    flows = []  # Empty flows - will use fallback options
+                    current_app.logger.error(f"Support flow query failed (table may not exist): {e}")
+                    # Continue with empty flows - fallback options will be shown
+                    flows = []
                 
                 # Create ticket
                 subject = f'Support Request - Order #{order_id}'
@@ -452,7 +442,7 @@ def register_handlers(socketio):
                 })
                 
                 # Send issue options (Flipkart-style buttons)
-                if flows and len(flows) > 0:
+                if flows:
                     options = [{
                         'key': flow.issue_key,
                         'title': flow.issue_title
@@ -463,16 +453,12 @@ def register_handlers(socketio):
                         'ticket_id': new_ticket.ticket_number or str(ticket_id)
                     })
                 else:
-                    # ✅ Fallback if no flows defined for this status (table missing or empty)
-                    # Enterprise rule: System must work even if admin hasn't configured flows
-                    app_logger.info(f"⚠️ No flows found for status '{order_status}' - using fallback options")
+                    # Fallback if no flows defined for this status
                     emit('ai_options', {
                         'options': [
+                            {'key': 'general_issue', 'title': 'General Issue'},
                             {'key': 'track_order', 'title': 'Track Order'},
-                            {'key': 'delivery_issue', 'title': 'Delivery Issue'},
-                            {'key': 'payment_issue', 'title': 'Payment Issue'},
-                            {'key': 'quality_issue', 'title': 'Quality Issue'},
-                            {'key': 'general_issue', 'title': 'General Issue'}
+                            {'key': 'cancel_order', 'title': 'Cancel Order'}
                         ],
                         'ticket_id': new_ticket.ticket_number or str(ticket_id)
                     })
@@ -531,31 +517,24 @@ def register_handlers(socketio):
                 
                 order_status = order.status if order else 'pending'
                 
-                # Get flow details
-                # ✅ Use support database with error handling
+                # Get flow details (from admin database)
+                # ⭐ Enterprise-safe: Never crash if table missing
                 flow_result = None
                 try:
-                    # Get support database name from config
-                    support_db = current_app.config.get('DB_NAME_SUPPORT', 'impromptuindian_support')
-                    # Sanitize database name for safety
-                    if not all(c.isalnum() or c == '_' for c in support_db):
-                        support_db = 'impromptuindian_support'
-                    
-                    flow_query = text(f"""
+                    flow_query = text("""
                         SELECT issue_key, issue_title, ai_reply, auto_resolve, escalate_if_selected
-                        FROM {support_db}.support_order_flows
+                        FROM impromptuindian_admin.support_order_flows
                         WHERE order_status = :status AND issue_key = :issue_key
                         LIMIT 1
                     """)
-                    
                     flow_result = db.session.execute(
                         flow_query, 
                         {'status': order_status, 'issue_key': issue_key}
                     ).fetchone()
                 except Exception as e:
-                    # ✅ Enterprise rule: Support system must never crash if admin config missing
-                    app_logger.warning(f"⚠️ Support flow query error: {e}")
-                    flow_result = None  # Will use fallback logic
+                    current_app.logger.error(f"Support flow query failed (table may not exist): {e}")
+                    # Continue without flow - will show generic response
+                    flow_result = None
                 
                 room = f"ticket_{ticket_id}"
                 
@@ -607,7 +586,14 @@ def register_handlers(socketio):
                             except Exception as e:
                                 app_logger.warning(f"Auto-assignment failed: {e}")
                 else:
-                    # Fallback: assign agent for unknown issues
+                    # Fallback: table missing or flow not found - assign agent
+                    emit('ai_message', {
+                        'text': 'Thank you for contacting us. A support agent will assist you shortly.',
+                        'ticket_id': ticket.ticket_number or str(ticket_id),
+                        'timestamp': datetime.utcnow().isoformat()
+                    }, room=room)
+                    
+                    # Auto-assign agent for unknown issues
                     agent_id = AutoAssignment.assign_agent()
                     if agent_id:
                         try:
