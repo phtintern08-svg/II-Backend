@@ -387,8 +387,9 @@ class EscalationEngine:
     def _should_escalate(ticket, rule):
         """Check if ticket should be escalated based on rule"""
         # Check if already escalated to this level
+        # ⭐ Explicitly use support database to avoid wrong database lookup
         existing = db.session.execute(text("""
-            SELECT id FROM ticket_escalations
+            SELECT id FROM impromptuindian_support.ticket_escalations
             WHERE ticket_id = :ticket_id AND level = :level
         """), {
             'ticket_id': ticket.id,
@@ -402,8 +403,9 @@ class EscalationEngine:
         """Escalate ticket to next level"""
         try:
             # Create escalation record
+            # ⭐ Explicitly use support database to avoid wrong database lookup
             db.session.execute(text("""
-                INSERT INTO ticket_escalations
+                INSERT INTO impromptuindian_support.ticket_escalations
                 (ticket_id, level, assigned_role, escalation_reason)
                 VALUES (:ticket_id, :level, :role, :reason)
             """), {
