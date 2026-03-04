@@ -5,9 +5,14 @@ PassengerStartupFile passenger_wsgi.py
 
 RewriteEngine On
 
-# Serve static files
+# 1. ROUTE SOCKET.IO TO STANDALONE SERVER (Port 3000)
+# This prevents the 404 by sending the traffic to your long-running process
+RewriteCond %{REQUEST_URI}  ^/socket.io [NC]
+RewriteRule ^socket.io/(.*) http://localhost:3000/socket.io/$1 [P,L]
+
+# 2. Serve static files
 RewriteCond %{REQUEST_FILENAME} -f
 RewriteRule ^ - [L]
 
-# Everything else → Flask Passenger
+# 3. Everything else → Flask Passenger
 RewriteRule ^(.*)$ passenger_wsgi.py/$1 [QSA,PT,L]
