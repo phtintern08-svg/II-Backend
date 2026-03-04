@@ -126,6 +126,7 @@ def create_app(config_class=Config):
         "connect-src": [
             "'self'",
             "https://support.impromptuindian.com",
+            "wss://support.impromptuindian.com",  # ✅ WSS support for WebSocket
             "https://apparels.impromptuindian.com",
             "https://apis.mappls.com",
             "https://cdn.mappls.com",
