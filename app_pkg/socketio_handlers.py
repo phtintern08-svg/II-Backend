@@ -186,12 +186,15 @@ def register_handlers(socketio):
             room = f"ticket_{ticket.id}"
             message_data = {
                 'message_id': message_id,
-                'ticket_id': ticket.ticket_number or str(ticket.id),
+                'ticket_id': ticket.ticket_number or str(ticket.id),  # Display ID
+                'ticket_id_raw': ticket.id,  # ✅ Numeric ID for room matching
                 'message': message,
                 'sender': sender,
                 'sender_id': sender_id,
                 'sender_name': sender_name,
-                'timestamp': datetime.utcnow().isoformat()
+                'sender_type': sender,  # ✅ For appendMessage compatibility
+                'timestamp': datetime.utcnow().isoformat(),
+                'created_at': datetime.utcnow().isoformat()  # ✅ For appendMessage compatibility
             }
             
             emit('receive_message', message_data, room=room)
