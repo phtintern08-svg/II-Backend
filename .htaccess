@@ -1,18 +1,20 @@
+RewriteEngine On
+
+# 1. THE BRIDGE: Forward all Socket.IO traffic to the standalone server on Port 3000
+RewriteCond %{REQUEST_URI}  ^/socket.io [NC]
+RewriteRule ^socket.io/(.*) http://localhost:3000/socket.io/$1 [P,L]
+
+# -------------------------------------------------------------------
+# 2. Standard Passenger / Flask Config
+# -------------------------------------------------------------------
 PassengerEnabled on
 PassengerAppRoot /home/impromptuindian/backend
 PassengerAppType wsgi
 PassengerStartupFile passenger_wsgi.py
 
-RewriteEngine On
-
-# 1. ROUTE SOCKET.IO TO STANDALONE SERVER (Port 3000)
-# This prevents the 404 by sending the traffic to your long-running process
-RewriteCond %{REQUEST_URI}  ^/socket.io [NC]
-RewriteRule ^socket.io/(.*) http://localhost:3000/socket.io/$1 [P,L]
-
-# 2. Serve static files
+# Serve physical static files if they exist
 RewriteCond %{REQUEST_FILENAME} -f
 RewriteRule ^ - [L]
 
-# 3. Everything else → Flask Passenger
+# Everything else goes to Flask
 RewriteRule ^(.*)$ passenger_wsgi.py/$1 [QSA,PT,L]
