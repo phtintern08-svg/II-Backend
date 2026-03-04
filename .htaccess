@@ -7,12 +7,19 @@ PassengerAppRoot /home/impromptuindian/backend
 PassengerAppType wsgi
 PassengerStartupFile passenger_wsgi.py
 
-# Allow Passenger to handle all routes
-Options -MultiViews
+PassengerAppEnv production
+PassengerBaseURI /
 
+# IMPORTANT: Disable buffering for Socket.IO
+PassengerBufferUpload off
+
+Options -MultiViews
 RewriteEngine On
 
-# ✅ IMPORTANT: Allow socket.io through Passenger (must be first)
+# ✅ CRITICAL: Route socket.io to Passenger (must be first)
+RewriteRule ^socket.io/(.*)$ /socket.io/$1 [L]
+
+# ✅ IMPORTANT: Allow socket.io through Passenger
 RewriteCond %{REQUEST_URI} ^/socket.io
 RewriteRule ^(.*)$ / [QSA,L]
 
