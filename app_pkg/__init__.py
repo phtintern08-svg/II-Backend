@@ -31,8 +31,17 @@ csrf = CSRFProtect()
 # ✅ Initialize Socket.IO globally (will be bound to app in create_app())
 # ⭐ CRITICAL: Use threading mode for Passenger (works on cPanel shared hosting)
 # ⭐ CRITICAL: Polling only (Passenger doesn't support WebSocket upgrades reliably)
+# ⭐ CRITICAL: CORS must allow cross-origin from apparels.impromptuindian.com
 socketio = SocketIO(
-    cors_allowed_origins="*",
+    cors_allowed_origins=[
+        "https://apparels.impromptuindian.com",
+        "https://rider.impromptuindian.com",
+        "https://vendor.impromptuindian.com",
+        "https://support.impromptuindian.com",
+        "https://admin.impromptuindian.com",
+        "http://localhost:5000",  # For local development
+        "http://localhost:3000",  # For local frontend development
+    ],
     async_mode="threading",  # ✅ Works with Passenger
     path="/socket.io",
     logger=True,
