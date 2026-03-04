@@ -386,6 +386,9 @@ def create_app(config_class=Config):
         app_logger.error("   PRODUCTION FIX: Set UPLOAD_FOLDER in cPanel → Setup Python App → Environment Variables")
         app_logger.error("   Example: /home/impromptuindian/uploads")
 
+    # ✅ Import Socket.IO event handlers (registers events)
+    import app_pkg.socket_events
+
     return app
 
 
