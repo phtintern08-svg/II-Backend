@@ -15,9 +15,12 @@ PassengerMaxPoolSize 1
 PassengerMinInstances 1
 PassengerMaxInstancesPerApp 1
 
-# If file exists serve it
+# ✅ FORCE socket.io to Flask (must be first)
+RewriteRule ^socket.io/(.*)$ passenger_wsgi.py/socket.io/$1 [QSA,PT,L]
+
+# If file exists serve normally
 RewriteCond %{REQUEST_FILENAME} -f
 RewriteRule ^ - [L]
 
-# Send EVERYTHING to Flask (including /socket.io)
+# Everything else to Flask
 RewriteRule ^(.*)$ passenger_wsgi.py/$1 [QSA,PT,L]
