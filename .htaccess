@@ -15,8 +15,10 @@ PassengerMaxPoolSize 1
 PassengerMinInstances 1
 PassengerMaxInstancesPerApp 1
 
-# ✅ FORCE socket.io to Flask (must be first)
-RewriteRule ^socket.io/(.*)$ passenger_wsgi.py/socket.io/$1 [QSA,PT,L]
+# ✅ Proxy Socket.IO to Gunicorn server (port 5001)
+# This routes /socket.io requests to the standalone Socket.IO server
+RewriteCond %{REQUEST_URI} ^/socket.io
+RewriteRule ^socket.io/(.*)$ http://127.0.0.1:5001/socket.io/$1 [P,L]
 
 # If file exists serve normally
 RewriteCond %{REQUEST_FILENAME} -f
