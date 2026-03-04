@@ -85,14 +85,32 @@ if __name__ == "__main__":
     print(f"📍 Working Directory: {backend_dir}")
     print("=" * 60)
     
+    # ⭐ SSL Configuration (Solution 2: SSL on port 3000)
+    # ⭐ Only enable if proxy doesn't work and you need direct WSS connection
+    # ⭐ Uncomment and set correct paths if needed:
+    # import ssl
+    # cert_file = os.path.expanduser("~/ssl/certs/support.impromptuindian.com.crt")
+    # key_file = os.path.expanduser("~/ssl/private/support.impromptuindian.com.key")
+    # ssl_context = None
+    # if os.path.exists(cert_file) and os.path.exists(key_file):
+    #     ssl_context = ssl.SSLContext(ssl.PROTOCOL_TLS_SERVER)
+    #     ssl_context.load_cert_chain(cert_file, key_file)
+    #     print(f"✅ SSL enabled: {cert_file}")
+    # else:
+    #     print(f"⚠️ SSL certificates not found - running without SSL (HTTP only)")
+    ssl_context = None  # ✅ Default: No SSL (using Solution 1: HTTPS reverse proxy)
+    
     # Run Socket.IO server on port 3000
     # ⭐ This runs OUTSIDE Passenger - single process, stable sessions
     # ⭐ allow_unsafe_werkzeug=True is required for shared hosting (no gunicorn/nginx)
+    # ⭐ ssl_context=None means HTTP (Solution 1: proxy handles SSL)
+    # ⭐ Set ssl_context to enable WSS directly (Solution 2: SSL on port 3000)
     socketio.run(
         app,
         host="0.0.0.0",  # Listen on all interfaces
         port=3000,
         debug=False,
         use_reloader=False,  # Disable auto-reload in production
-        allow_unsafe_werkzeug=True  # ✅ Required for shared hosting (Werkzeug is safe here)
+        allow_unsafe_werkzeug=True,  # ✅ Required for shared hosting (Werkzeug is safe here)
+        ssl_context=ssl_context  # ✅ None = HTTP (proxy handles SSL), or SSL context for WSS
     )
