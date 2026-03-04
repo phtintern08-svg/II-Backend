@@ -2,18 +2,16 @@ PassengerEnabled on
 PassengerAppRoot /home/impromptuindian/backend
 PassengerAppType wsgi
 PassengerStartupFile passenger_wsgi.py
-PassengerAppEnv production
 
-Options -MultiViews
 RewriteEngine On
 
-# Proxy Socket.IO to Gunicorn server
+# Proxy Socket.IO requests to gunicorn
 RewriteCond %{REQUEST_URI} ^/socket.io
 RewriteRule ^socket.io/(.*)$ http://127.0.0.1:5001/socket.io/$1 [P,L]
 
-# Serve static files normally
+# Serve static files
 RewriteCond %{REQUEST_FILENAME} -f
 RewriteRule ^ - [L]
 
-# Send everything else to Flask Passenger app
+# Everything else → Flask Passenger
 RewriteRule ^(.*)$ passenger_wsgi.py/$1 [QSA,PT,L]
