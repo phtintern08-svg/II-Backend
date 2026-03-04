@@ -5,10 +5,6 @@ PassengerStartupFile passenger_wsgi.py
 
 RewriteEngine On
 
-# Proxy Socket.IO requests to gunicorn
-RewriteCond %{REQUEST_URI} ^/socket.io
-RewriteRule ^socket.io/(.*)$ http://127.0.0.1:5001/socket.io/$1 [P,L]
-
 # Serve static files
 RewriteCond %{REQUEST_FILENAME} -f
 RewriteRule ^ - [L]
