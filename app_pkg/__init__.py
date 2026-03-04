@@ -5,8 +5,8 @@ from flask_limiter import Limiter
 from flask_limiter.util import get_remote_address
 from flask_wtf.csrf import CSRFProtect
 from flask_talisman import Talisman
-# ⭐ Socket.IO is handled by standalone server (run_socket_standalone.py)
-# ⭐ Flask app provides HTTP API only (no Socket.IO imports to avoid conflicts)
+from flask_socketio import SocketIO
+# ✅ Socket.IO runs inside Flask/Passenger (works on cPanel shared hosting)
 import traceback
 
 from config import Config
@@ -28,9 +28,20 @@ limiter = Limiter(
 )
 csrf = CSRFProtect()
 
-# ⭐ Socket.IO is handled by standalone server (run_socket_standalone.py)
-# ⭐ Flask app provides HTTP API only (no Socket.IO to avoid conflicts)
-# ⭐ Architecture: Browser → Apache proxy → localhost:3000 → Standalone Socket.IO server
+# ✅ Initialize Socket.IO globally (will be bound to app in create_app())
+# ⭐ CRITICAL: Use threading mode for Passenger (works on cPanel shared hosting)
+# ⭐ CRITICAL: Polling only (Passenger doesn't support WebSocket upgrades reliably)
+socketio = SocketIO(
+    cors_allowed_origins="*",
+    async_mode="threading",  # ✅ Works with Passenger
+    path="/socket.io",
+    logger=True,
+    engineio_logger=True,
+    ping_timeout=60,
+    ping_interval=25,
+    allow_upgrades=False,  # ✅ Disable WebSocket (Passenger blocks it)
+    transports=["polling"]  # ✅ Polling only (works perfectly on shared hosting)
+)
 
 
 def create_app(config_class=Config):
@@ -296,41 +307,24 @@ def create_app(config_class=Config):
         app_logger.info(f"✅ ROOT ROUTE HIT: {request.host}{request.path} | Serving portal selector")
         return render_template('portal_selector.html')
 
-    # ⭐ Socket.IO is handled by standalone server (run_socket_standalone.py)
-    # ⭐ Flask app provides HTTP API only (no Socket.IO to avoid conflicts)
-    # ⭐ Architecture: Browser → Apache proxy → localhost:3000 → Standalone Socket.IO server
+    # ✅ Initialize Socket.IO for real-time support chat (runs inside Passenger)
+    # ⭐ Architecture: Browser → Apache/Passenger → Flask + Socket.IO
+    global socketio
     
-    # Start escalation worker as regular background thread (no Socket.IO dependency)
+    # Bind Socket.IO to Flask app
+    socketio.init_app(app)
+    
+    # Register Socket.IO event handlers
+    from app_pkg import socketio_handlers
+    socketio_handlers.register_handlers(socketio)
+    
+    app_logger.info("✅ Socket.IO initialized for real-time support chat")
+    
+    # Start escalation worker as Socket.IO background task (threading-compatible)
     try:
-        import threading
-        import os
-        from app_pkg.escalation_worker import run_escalation_worker, LOCK_FILE
-        
-        # ⭐ Prevent multiple workers from starting (Passenger runs multiple processes)
-        if not os.path.exists(LOCK_FILE):
-            # Create lock file
-            try:
-                with open(LOCK_FILE, 'w') as f:
-                    f.write(str(os.getpid()))
-                
-                # Start escalation worker in background thread
-                worker_thread = threading.Thread(
-                    target=run_escalation_worker,
-                    args=(app,),
-                    daemon=True,
-                    name="EscalationWorker"
-                )
-                worker_thread.start()
-                app_logger.info("✅ Escalation worker started as background thread")
-            except Exception as e:
-                app_logger.warning(f"⚠️ Failed to start escalation worker: {e}")
-                if os.path.exists(LOCK_FILE):
-                    try:
-                        os.remove(LOCK_FILE)
-                    except:
-                        pass
-        else:
-            app_logger.info("⚠️ Escalation worker already running (lock file exists). Skipping start.")
+        from app_pkg.escalation_worker import start_escalation_worker_background_task
+        start_escalation_worker_background_task(socketio, app)
+        app_logger.info("✅ Escalation worker started as Socket.IO background task")
     except Exception as e:
         app_logger.warning(f"⚠️ Failed to start escalation worker: {e}")
         app_logger.warning(traceback.format_exc())

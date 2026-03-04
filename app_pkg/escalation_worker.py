@@ -49,6 +49,36 @@ def run_escalation_worker(app):
             sleep(60)
 
 
-# ⭐ Escalation worker is now started directly via threading.Thread() in __init__.py
-# ⭐ No longer needs Socket.IO instance (standalone server handles Socket.IO)
-# ⭐ Lock file prevents multiple instances across Passenger workers
+def start_escalation_worker_background_task(socketio_instance, app):
+    """
+    Start escalation worker as Socket.IO background task (Threading-compatible)
+    
+    ✅ MUST use socketio.start_background_task() for proper integration with Socket.IO
+    ⭐ SINGLE INSTANCE: Only one worker runs across all Passenger processes (lock file)
+    
+    Args:
+        socketio_instance: Socket.IO instance
+        app: Flask application instance
+    """
+    # ⭐ Prevent multiple workers from starting (Passenger runs multiple processes)
+    if os.path.exists(LOCK_FILE):
+        app_logger.info("⚠️ Escalation worker already running (lock file exists). Skipping start.")
+        return
+    
+    try:
+        # Create lock file
+        with open(LOCK_FILE, 'w') as f:
+            f.write(str(os.getpid()))
+        
+        # ✅ Use Socket.IO background task (threading-compatible)
+        socketio_instance.start_background_task(run_escalation_worker, app)
+        app_logger.info("✅ Escalation worker started as Socket.IO background task (single instance, threading-compatible)")
+    except Exception as e:
+        app_logger.error(f"❌ Failed to start escalation worker: {e}")
+        # Remove lock file on error
+        if os.path.exists(LOCK_FILE):
+            try:
+                os.remove(LOCK_FILE)
+            except:
+                pass
+        raise
