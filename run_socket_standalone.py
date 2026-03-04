@@ -86,19 +86,21 @@ if __name__ == "__main__":
     print("=" * 60)
     
     # ⭐ SSL Configuration (Solution 2: SSL on port 3000)
-    # ⭐ Only enable if proxy doesn't work and you need direct WSS connection
-    # ⭐ Uncomment and set correct paths if needed:
-    # import ssl
-    # cert_file = os.path.expanduser("~/ssl/certs/support.impromptuindian.com.crt")
-    # key_file = os.path.expanduser("~/ssl/private/support.impromptuindian.com.key")
-    # ssl_context = None
-    # if os.path.exists(cert_file) and os.path.exists(key_file):
-    #     ssl_context = ssl.SSLContext(ssl.PROTOCOL_TLS_SERVER)
-    #     ssl_context.load_cert_chain(cert_file, key_file)
-    #     print(f"✅ SSL enabled: {cert_file}")
-    # else:
-    #     print(f"⚠️ SSL certificates not found - running without SSL (HTTP only)")
-    ssl_context = None  # ✅ Default: No SSL (using Solution 1: HTTPS reverse proxy)
+    # ⭐ Direct WSS connection bypasses Nginx/Passenger WebSocket restrictions
+    import ssl
+    cert_file = os.path.expanduser("~/ssl/certs/support.impromptuindian.com.crt")
+    key_file = os.path.expanduser("~/ssl/private/support.impromptuindian.com.key")
+    ssl_context = None
+    if os.path.exists(cert_file) and os.path.exists(key_file):
+        ssl_context = ssl.SSLContext(ssl.PROTOCOL_TLS_SERVER)
+        ssl_context.load_cert_chain(cert_file, key_file)
+        print(f"✅ SSL enabled: {cert_file}")
+    else:
+        print(f"⚠️ SSL certificates not found:")
+        print(f"   Certificate: {cert_file}")
+        print(f"   Private Key: {key_file}")
+        print(f"   Running without SSL (HTTP only)")
+        print(f"   ⚠️ Frontend must use ws:// (not wss://) if SSL not available")
     
     # Run Socket.IO server on port 3000
     # ⭐ This runs OUTSIDE Passenger - single process, stable sessions
