@@ -12,6 +12,10 @@ Options -MultiViews
 
 RewriteEngine On
 
+# ✅ IMPORTANT: Allow socket.io through Passenger (must be first)
+RewriteCond %{REQUEST_URI} ^/socket.io
+RewriteRule ^(.*)$ / [QSA,L]
+
 # If file exists, serve normally
 RewriteCond %{REQUEST_FILENAME} -f
 RewriteRule ^ - [L]
