@@ -188,7 +188,7 @@ def register_handlers(socketio):
                 'message_id': message_id,
                 'ticket_id': ticket.ticket_number or str(ticket.id),  # Display ID
                 'ticket_id_raw': ticket.id,  # ✅ Numeric ID for room matching
-                'message': message,
+                'message': message, 
                 'sender': sender,
                 'sender_id': sender_id,
                 'sender_name': sender_name,
