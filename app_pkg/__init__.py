@@ -32,11 +32,13 @@ csrf = CSRFProtect()
 # We'll call socketio.init_app(app) inside create_app()
 # ⭐ FORCE THREADING MODE for Passenger (one async layer only - Passenger manages workers)
 # ⭐ FORCE POLLING MODE for cPanel/Passenger shared hosting (WebSocket upgrades blocked)
+# ⭐ CRITICAL: path="/socket.io" is REQUIRED for Passenger to route requests correctly
 socketio = SocketIO(
     cors_allowed_origins="*",
     async_mode="threading",  # ⭐ CRITICAL: Use threading for Passenger (gevent/eventlet cause instability)
-    logger=False,
-    engineio_logger=False,
+    path="/socket.io",  # ⭐ CRITICAL: Explicit path required for Passenger routing
+    logger=True,  # ✅ Enable for debugging (can disable in production)
+    engineio_logger=True,  # ✅ Enable for debugging (can disable in production)
     ping_timeout=60,
     ping_interval=25,
     allow_upgrades=False,  # ⭐ CRITICAL: Disable WebSocket upgrades (Passenger blocks them)
