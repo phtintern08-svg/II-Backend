@@ -1,37 +1,23 @@
-# ===============================
-# PASSENGER CONFIGURATION
-# ===============================
-
 PassengerEnabled on
 PassengerAppRoot /home/impromptuindian/backend
 PassengerAppType wsgi
 PassengerStartupFile passenger_wsgi.py
-
 PassengerAppEnv production
-PassengerBaseURI /
-
-# IMPORTANT: Disable buffering for Socket.IO
-PassengerBufferUpload off
-
-# ✅ CRITICAL: Limit Passenger workers for Socket.IO stability
-# Multiple workers break Socket.IO sessions (no sticky sessions)
-PassengerMaxPoolSize 1
-PassengerMinInstances 1
-PassengerMaxInstancesPerApp 1
 
 Options -MultiViews
 RewriteEngine On
 
-# ✅ CRITICAL: Route socket.io to Passenger (must be first)
-RewriteRule ^socket.io/(.*)$ /socket.io/$1 [L]
+# Important for Socket.IO
+PassengerBufferUpload off
 
-# ✅ IMPORTANT: Allow socket.io through Passenger
-RewriteCond %{REQUEST_URI} ^/socket.io
-RewriteRule ^(.*)$ / [QSA,L]
+# Limit Passenger workers
+PassengerMaxPoolSize 1
+PassengerMinInstances 1
+PassengerMaxInstancesPerApp 1
 
-# If file exists, serve normally
+# If file exists serve it
 RewriteCond %{REQUEST_FILENAME} -f
 RewriteRule ^ - [L]
 
-# Otherwise send request to Passenger
-RewriteRule ^(.*)$ / [QSA,L]
+# Send EVERYTHING to Flask (including /socket.io)
+RewriteRule ^(.*)$ passenger_wsgi.py/$1 [QSA,PT,L]
