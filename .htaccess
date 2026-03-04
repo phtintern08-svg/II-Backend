@@ -13,6 +13,12 @@ PassengerBaseURI /
 # IMPORTANT: Disable buffering for Socket.IO
 PassengerBufferUpload off
 
+# ✅ CRITICAL: Limit Passenger workers for Socket.IO stability
+# Multiple workers break Socket.IO sessions (no sticky sessions)
+PassengerMaxPoolSize 1
+PassengerMinInstances 1
+PassengerMaxInstancesPerApp 1
+
 Options -MultiViews
 RewriteEngine On
 

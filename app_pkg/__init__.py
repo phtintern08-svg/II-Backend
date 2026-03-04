@@ -43,7 +43,7 @@ socketio = SocketIO(
         "http://localhost:3000",  # For local frontend development
     ],
     async_mode="threading",  # ✅ Works with Passenger
-    path="/socket.io",
+    path="socket.io",  # ✅ Without leading slash for Passenger compatibility
     logger=True,
     engineio_logger=True,
     ping_timeout=60,
@@ -315,6 +315,13 @@ def create_app(config_class=Config):
         """Serve portal selector page (protected by global lock)"""
         app_logger.info(f"✅ ROOT ROUTE HIT: {request.host}{request.path} | Serving portal selector")
         return render_template('portal_selector.html')
+
+    # ✅ Socket.IO test route - verifies Passenger routing works
+    @app.route('/socket.io/')
+    def socketio_test():
+        """Test route to verify Socket.IO endpoint is accessible"""
+        app_logger.info(f"✅ Socket.IO test route hit: {request.host}{request.path}")
+        return "Socket.IO endpoint active", 200
 
     # ✅ Initialize Socket.IO for real-time support chat (runs inside Passenger)
     # ⭐ Architecture: Browser → Apache/Passenger → Flask + Socket.IO
