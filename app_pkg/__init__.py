@@ -5,7 +5,8 @@ from flask_limiter import Limiter
 from flask_limiter.util import get_remote_address
 from flask_wtf.csrf import CSRFProtect
 from flask_talisman import Talisman
-from flask_socketio import SocketIO, join_room, leave_room, emit
+# ⭐ Socket.IO is handled by standalone server (run_socket_standalone.py)
+# ⭐ Flask app provides HTTP API only (no Socket.IO imports to avoid conflicts)
 import traceback
 
 from config import Config
@@ -27,23 +28,9 @@ limiter = Limiter(
 )
 csrf = CSRFProtect()
 
-# ✅ CRITICAL: Initialize Socket.IO globally WITHOUT app parameter
-# This is the correct pattern for Flask-SocketIO with Passenger
-# We'll call socketio.init_app(app) inside create_app()
-# ⭐ FORCE THREADING MODE for Passenger (one async layer only - Passenger manages workers)
-# ⭐ FORCE POLLING MODE for cPanel/Passenger shared hosting (WebSocket upgrades blocked)
-# ⭐ CRITICAL: path="/socket.io" is REQUIRED for Passenger to route requests correctly
-socketio = SocketIO(
-    cors_allowed_origins="*",
-    async_mode="threading",  # ⭐ CRITICAL: Use threading for Passenger (gevent/eventlet cause instability)
-    path="/socket.io",  # ⭐ CRITICAL: Explicit path required for Passenger routing
-    logger=True,  # ✅ Enable for debugging (can disable in production)
-    engineio_logger=True,  # ✅ Enable for debugging (can disable in production)
-    ping_timeout=60,
-    ping_interval=25,
-    allow_upgrades=False,  # ⭐ CRITICAL: Disable WebSocket upgrades (Passenger blocks them)
-    transports=["polling"]  # ⭐ FORCE polling only (works perfectly on shared hosting)
-)
+# ⭐ Socket.IO is handled by standalone server (run_socket_standalone.py)
+# ⭐ Flask app provides HTTP API only (no Socket.IO to avoid conflicts)
+# ⭐ Architecture: Browser → Apache proxy → localhost:3000 → Standalone Socket.IO server
 
 
 def create_app(config_class=Config):
@@ -308,26 +295,41 @@ def create_app(config_class=Config):
         app_logger.info(f"✅ ROOT ROUTE HIT: {request.host}{request.path} | Serving portal selector")
         return render_template('portal_selector.html')
 
-    # Initialize Socket.IO for real-time support chat
-    # ✅ CRITICAL: Use init_app() pattern (required for Passenger compatibility)
-    global socketio
+    # ⭐ Socket.IO is handled by standalone server (run_socket_standalone.py)
+    # ⭐ Flask app provides HTTP API only (no Socket.IO to avoid conflicts)
+    # ⭐ Architecture: Browser → Apache proxy → localhost:3000 → Standalone Socket.IO server
     
-    # Bind socketio to app (Flask-SocketIO automatically injects middleware)
-    socketio.init_app(app)
-    
-    # Register Socket.IO event handlers
-    from app_pkg import socketio_handlers
-    socketio_handlers.register_handlers(socketio)
-    
-    app_logger.info("✅ Socket.IO initialized for real-time support chat")
-    
-    # Start escalation worker as Socket.IO background task (Eventlet-compatible)
-    # ✅ CRITICAL: Must use socketio.start_background_task() NOT threading.Thread()
-    # This is REQUIRED when using eventlet to avoid lock conflicts
+    # Start escalation worker as regular background thread (no Socket.IO dependency)
     try:
-        from app_pkg.escalation_worker import start_escalation_worker_background_task
-        start_escalation_worker_background_task(socketio, app)
-        app_logger.info("✅ Escalation worker started as background task")
+        import threading
+        import os
+        from app_pkg.escalation_worker import run_escalation_worker, LOCK_FILE
+        
+        # ⭐ Prevent multiple workers from starting (Passenger runs multiple processes)
+        if not os.path.exists(LOCK_FILE):
+            # Create lock file
+            try:
+                with open(LOCK_FILE, 'w') as f:
+                    f.write(str(os.getpid()))
+                
+                # Start escalation worker in background thread
+                worker_thread = threading.Thread(
+                    target=run_escalation_worker,
+                    args=(app,),
+                    daemon=True,
+                    name="EscalationWorker"
+                )
+                worker_thread.start()
+                app_logger.info("✅ Escalation worker started as background thread")
+            except Exception as e:
+                app_logger.warning(f"⚠️ Failed to start escalation worker: {e}")
+                if os.path.exists(LOCK_FILE):
+                    try:
+                        os.remove(LOCK_FILE)
+                    except:
+                        pass
+        else:
+            app_logger.info("⚠️ Escalation worker already running (lock file exists). Skipping start.")
     except Exception as e:
         app_logger.warning(f"⚠️ Failed to start escalation worker: {e}")
         app_logger.warning(traceback.format_exc())
