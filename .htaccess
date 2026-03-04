@@ -1,20 +1,20 @@
 # ===============================
-# PASSENGER + FLASK-SOCKETIO CONFIGURATION
+# PASSENGER CONFIGURATION
 # ===============================
-# Routes /socket.io and all other requests to Flask app
-# This ensures Socket.IO requests reach Flask-SocketIO instead of returning 404
 
 PassengerEnabled on
 PassengerAppRoot /home/impromptuindian/backend
 PassengerAppType wsgi
 PassengerStartupFile passenger_wsgi.py
 
+# Allow Passenger to handle all routes
+Options -MultiViews
+
 RewriteEngine On
 
-# ✅ CRITICAL: Allow Socket.IO - explicit rule first
-RewriteCond %{REQUEST_URI} ^/socket.io
-RewriteRule ^(.*)$ passenger_wsgi.py/$1 [QSA,L]
+# If file exists, serve normally
+RewriteCond %{REQUEST_FILENAME} -f
+RewriteRule ^ - [L]
 
-# Route all other requests to Flask
-RewriteCond %{REQUEST_FILENAME} !-f
-RewriteRule ^(.*)$ passenger_wsgi.py/$1 [QSA,L]
+# Otherwise send request to Passenger
+RewriteRule ^(.*)$ / [QSA,L]
