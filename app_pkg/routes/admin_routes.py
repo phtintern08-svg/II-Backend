@@ -1334,7 +1334,9 @@ def assign_order_to_vendor(order_id):
             eligible_vendors = get_recommended_vendors(order, product_catalog_ids, total_qty, db, models)
             eligible_vendor_ids = [v["vendor_id"] for v in eligible_vendors]
             
-            if vendor_id not in eligible_vendor_ids:
+            # 🔥 MANUAL ASSIGNMENT: If no eligible vendors found, allow manual assignment
+            # Admin can override and assign any verified vendor when recommendation engine finds none
+            if len(eligible_vendor_ids) > 0 and vendor_id not in eligible_vendor_ids:
                 app_logger.warning(
                     f"Assignment blocked: Vendor {vendor_id} not eligible for order {order_id}. "
                     f"Eligible vendors: {eligible_vendor_ids}"
@@ -1344,6 +1346,12 @@ def assign_order_to_vendor(order_id):
                             f"Vendor must have: approved quotation for all products, sufficient capacity, "
                             f"and be verified. Please select from eligible vendors only."
                 }), 400
+            elif len(eligible_vendor_ids) == 0:
+                # No eligible vendors found - allow manual assignment but log it
+                app_logger.info(
+                    f"Manual assignment allowed: No eligible vendors found for order {order_id}. "
+                    f"Admin manually assigning vendor {vendor_id} ({vendor.business_name})."
+                )
         
         # 🔥 CRITICAL: Verify vendor verification status (double-check)
         if vendor.verification_status not in ('approved', 'active'):
