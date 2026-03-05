@@ -896,7 +896,39 @@ def get_eligible_vendors_for_order(order_id):
             return jsonify({"error": "Order not found"}), 404
 
         # 🔥 DEBUG: Log order details to diagnose marketplace_product_id
-        app_logger.info(f"Order {order_id} details: marketplace_product_id={order.marketplace_product_id}, product_type={order.product_type}, status={order.status}, selected_vendor_id={order.selected_vendor_id}")
+        app_logger.info(f"Order {order_id} details: marketplace_product_id={order.marketplace_product_id}, selected_vendor_id={order.selected_vendor_id}, product_type={order.product_type}, status={order.status}")
+
+        # 🔥 VENDOR PRODUCT ORDER: Check if vendor is already auto-assigned (CartProduct or MarketplaceProduct)
+        # If vendor is auto-assigned, return that vendor as eligible
+        if order.selected_vendor_id:
+            try:
+                vendor = Vendor.query.get(order.selected_vendor_id)
+                if vendor:
+                    app_logger.info(f"Order {order_id} has auto-assigned vendor {order.selected_vendor_id} ({vendor.business_name})")
+                    vendor_data = {
+                        "vendor_id": vendor.id,
+                        "vendor_name": vendor.business_name,
+                        "score": 1.0,
+                        "distance_km": None,
+                        "stock_available": order.quantity,
+                        "capacity_available": order.quantity,
+                        "lead_time_days": 2,
+                        "base_cost_per_piece": order.price_per_piece_offered or 0,
+                        "city": vendor.city or "",
+                        "state": vendor.state or "",
+                        "auto_assigned": True,
+                        "is_marketplace": True,  # Treat auto-assigned orders as marketplace-like
+                    }
+                    
+                    return jsonify({
+                        "eligible_vendors": [vendor_data],
+                        "order_quantity": order.quantity,
+                        "product_catalog_ids": [],
+                        "message": f"Vendor '{vendor.business_name}' is auto-assigned to this order.",
+                        "is_marketplace": True
+                    }), 200
+            except Exception as e:
+                app_logger.warning(f"Error fetching auto-assigned vendor {order.selected_vendor_id}: {e}")
 
         # 🔥 MARKETPLACE ORDER: Return vendor who posted the product
         # Check if order has marketplace_product_id set

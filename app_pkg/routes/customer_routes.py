@@ -425,30 +425,65 @@ def create_cart_order():
             if not item.get('price') or item.get('price', 0) <= 0:
                 continue
             
-            # Get marketplace_product_id from item
-            marketplace_product_id = item.get('product_id') if item.get('product_id') else None
+            # Get product_id from item and determine product type
+            product_id_raw = item.get('product_id')
+            marketplace_product_id = None
+            cart_product_id = None
             
-            # Auto-assign vendor if marketplace product exists
+            # Handle different product ID formats
+            if product_id_raw:
+                if isinstance(product_id_raw, str) and product_id_raw.startswith('cp_'):
+                    # CartProduct ID format: "cp_7" -> extract 7
+                    try:
+                        cart_product_id = int(product_id_raw.replace('cp_', ''))
+                        app_logger.info(f"Detected CartProduct ID: {cart_product_id} from {product_id_raw}")
+                    except (ValueError, AttributeError):
+                        app_logger.warning(f"Invalid CartProduct ID format: {product_id_raw}")
+                elif isinstance(product_id_raw, (int, str)) and str(product_id_raw).isdigit():
+                    # MarketplaceProduct ID format: numeric ID
+                    try:
+                        marketplace_product_id = int(product_id_raw)
+                        app_logger.info(f"Detected MarketplaceProduct ID: {marketplace_product_id}")
+                    except (ValueError, TypeError):
+                        app_logger.warning(f"Invalid MarketplaceProduct ID format: {product_id_raw}")
+                else:
+                    app_logger.warning(f"Unknown product ID format: {product_id_raw}")
+            
+            # Auto-assign vendor if product exists
             selected_vendor_id = None
             order_status = 'pending_admin_review'
             
-            if marketplace_product_id:
+            # Try CartProduct first (vendor products)
+            if cart_product_id:
+                try:
+                    from app_pkg.models import CartProduct
+                    product = CartProduct.query.get(cart_product_id)
+                    if product and product.vendor_id:
+                        selected_vendor_id = product.vendor_id
+                        order_status = 'vendor_assigned'
+                        app_logger.info(f"Auto-assigning order to vendor {selected_vendor_id} for CartProduct {cart_product_id}")
+                except Exception as e:
+                    app_logger.warning(f"Failed to auto-assign vendor for CartProduct {cart_product_id}: {e}")
+            
+            # Try MarketplaceProduct if CartProduct didn't work
+            elif marketplace_product_id:
                 try:
                     from app_pkg.models import MarketplaceProduct
                     product = MarketplaceProduct.query.get(marketplace_product_id)
                     if product and product.vendor_id:
                         selected_vendor_id = product.vendor_id
-                        # Auto-assign vendor - admin can still reassign if needed
                         order_status = 'vendor_assigned'
-                        app_logger.info(f"Auto-assigning order to vendor {selected_vendor_id} for marketplace product {marketplace_product_id}")
+                        app_logger.info(f"Auto-assigning order to vendor {selected_vendor_id} for MarketplaceProduct {marketplace_product_id}")
                 except Exception as e:
-                    app_logger.warning(f"Failed to auto-assign vendor for product {marketplace_product_id}: {e}")
+                    app_logger.warning(f"Failed to auto-assign vendor for MarketplaceProduct {marketplace_product_id}: {e}")
             
             # Create order for this cart item
+            # Note: marketplace_product_id column only stores MarketplaceProduct IDs (numeric)
+            # CartProduct IDs (cp_*) are vendor products - vendor is auto-assigned but ID not stored in this column
             order = Order(
                 customer_id=customer_id,
-                marketplace_product_id=marketplace_product_id,  # Link to marketplace product
-                selected_vendor_id=selected_vendor_id,  # Auto-assigned vendor if marketplace product
+                marketplace_product_id=marketplace_product_id if marketplace_product_id else None,  # Only store MarketplaceProduct IDs (numeric)
+                selected_vendor_id=selected_vendor_id,  # Auto-assigned vendor if product found (CartProduct or MarketplaceProduct)
                 product_type=item.get('product_type', 'T-Shirt'),
                 category=item.get('category', 'Regular Fit'),
                 color=item.get('color'),
