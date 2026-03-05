@@ -877,24 +877,81 @@ def get_all_orders():
 def get_eligible_vendors_for_order(order_id):
     """
     GET /api/admin/orders/<order_id>/eligible-vendors
-    Returns ONLY eligible vendors (hard-filtered) ranked by score.
+    Returns eligible vendors for order assignment.
     
-    Hard Filters (ELIMINATION):
-    - Must have approved quotation for ALL required products
-    - Must have active capacity where daily_capacity * lead_time_days >= order_quantity
-    - Must pass bulk check: max_bulk_capacity = 0 OR max_bulk_capacity >= order_quantity
-    - Must be verified (approved/active)
-    - Stock check: stock_available >= order_quantity (if stock exists, else use capacity)
+    Two order types:
+    1. Marketplace Orders (marketplace_product_id exists):
+       - Returns the vendor who posted the product
+       - Bypasses recommendation engine
+       - Auto-assigned vendor
     
-    Ranking (after filtering):
-    - Score based on stock, distance, capacity, lead time
+    2. RFQ/Catalog Orders (no marketplace_product_id):
+       - Uses recommendation engine
+       - Hard Filters: approved quotation, capacity, stock, verification
+       - Ranking: stock, distance, capacity, lead time
     """
     try:
-        from app_pkg.services.vendor_recommendation_engine import get_recommended_vendors
-
         order = Order.query.get(order_id)
         if not order:
             return jsonify({"error": "Order not found"}), 404
+
+        # 🔥 MARKETPLACE ORDER: Return vendor who posted the product
+        if order.marketplace_product_id:
+            try:
+                product = MarketplaceProduct.query.get(order.marketplace_product_id)
+                if not product:
+                    return jsonify({
+                        "eligible_vendors": [],
+                        "message": "Marketplace product not found.",
+                        "auto_assigned": False
+                    }), 200
+                
+                vendor = Vendor.query.get(product.vendor_id)
+                if not vendor:
+                    return jsonify({
+                        "eligible_vendors": [],
+                        "message": "Vendor not found for marketplace product.",
+                        "auto_assigned": False
+                    }), 200
+                
+                # Return the vendor who posted the product
+                vendor_data = {
+                    "vendor_id": vendor.id,
+                    "vendor_name": vendor.business_name,
+                    "score": 1.0,  # Perfect match - vendor owns the product
+                    "distance_km": None,  # Not applicable for marketplace
+                    "stock_available": order.quantity,  # Use order quantity as available
+                    "capacity_available": order.quantity,
+                    "lead_time_days": 2,  # Default lead time for marketplace products
+                    "base_cost_per_piece": float(product.price) if product.price else order.price_per_piece_offered or 0,
+                    "city": vendor.city or "",
+                    "state": vendor.state or "",
+                    "auto_assigned": True,
+                    "is_marketplace": True,
+                    "product_name": product.product_name,
+                    "product_image": product.image_url
+                }
+                
+                app_logger.info(f"Marketplace order {order_id}: Returning vendor {vendor.id} who posted product {order.marketplace_product_id}")
+                
+                return jsonify({
+                    "eligible_vendors": [vendor_data],
+                    "order_quantity": order.quantity,
+                    "product_catalog_ids": [],
+                    "message": f"Marketplace product order. Vendor '{vendor.business_name}' posted this product.",
+                    "is_marketplace": True
+                }), 200
+                
+            except Exception as e:
+                app_logger.exception(f"Error fetching marketplace product vendor: {e}")
+                return jsonify({
+                    "eligible_vendors": [],
+                    "message": "Error fetching marketplace product vendor.",
+                    "auto_assigned": False
+                }), 200
+
+        # 🔥 RFQ/CATALOG ORDER: Use recommendation engine
+        from app_pkg.services.vendor_recommendation_engine import get_recommended_vendors
 
         total_qty = order.get_effective_quantity()
         product_catalog_ids = _resolve_order_to_product_catalog_ids(order)
@@ -902,18 +959,20 @@ def get_eligible_vendors_for_order(order_id):
             return jsonify({
                 "eligible_vendors": [],
                 "message": "Could not resolve order to product catalog.",
-                "order_product": f"{order.product_type or ''} / {order.category or ''} / {order.neck_type or ''} / {order.fabric or ''}"
+                "order_product": f"{order.product_type or ''} / {order.category or ''} / {order.neck_type or ''} / {order.fabric or ''}",
+                "is_marketplace": False
             }), 200
 
         import app_pkg.models as models
-        # Recommendation engine already does hard filtering + ranking
+        # Recommendation engine does hard filtering + ranking
         candidates = get_recommended_vendors(order, product_catalog_ids, total_qty, db, models)
         
         return jsonify({
             "eligible_vendors": candidates,
             "order_quantity": total_qty,
             "product_catalog_ids": product_catalog_ids,
-            "message": f"Found {len(candidates)} eligible vendor(s) based on requirements, capacity, and stock."
+            "message": f"Found {len(candidates)} eligible vendor(s) based on requirements, capacity, and stock.",
+            "is_marketplace": False
         }), 200
     except Exception as e:
         app_logger.exception(f"Get eligible vendors error: {e}")
@@ -1117,28 +1176,57 @@ def assign_order_to_vendor(order_id):
         # This ensures correct quantity is used for bulk orders (bulk_quantity) vs sample orders (quantity)
         total_qty = order.get_effective_quantity()
         
-        # 🔥 CRITICAL SECURITY: Re-validate vendor eligibility before assignment
-        # Frontend filtering is not enough - admin could modify request manually
-        # Backend must enforce eligibility as source of truth
-        from app_pkg.services.vendor_recommendation_engine import get_recommended_vendors
-        import app_pkg.models as models
-        product_catalog_ids = _resolve_order_to_product_catalog_ids(order)
-        if not product_catalog_ids:
-            return jsonify({"error": "Could not resolve order to product catalog. Cannot validate eligibility."}), 400
+        # 🔥 MARKETPLACE ORDER: Skip eligibility check - vendor owns the product
+        if order.marketplace_product_id:
+            try:
+                product = MarketplaceProduct.query.get(order.marketplace_product_id)
+                if product and product.vendor_id == vendor_id:
+                    # Vendor owns the product - allow assignment
+                    app_logger.info(f"Marketplace order {order_id}: Allowing assignment to product owner vendor {vendor_id}")
+                else:
+                    # Admin trying to assign different vendor - validate they're eligible
+                    app_logger.warning(f"Marketplace order {order_id}: Admin assigning different vendor {vendor_id} (product owner: {product.vendor_id if product else 'unknown'})")
+                    # Still validate the new vendor is eligible (admin can reassign if needed)
+                    from app_pkg.services.vendor_recommendation_engine import get_recommended_vendors
+                    import app_pkg.models as models
+                    product_catalog_ids = _resolve_order_to_product_catalog_ids(order)
+                    if product_catalog_ids:
+                        eligible_vendors = get_recommended_vendors(order, product_catalog_ids, total_qty, db, models)
+                        eligible_vendor_ids = [v["vendor_id"] for v in eligible_vendors]
+                        if vendor_id not in eligible_vendor_ids:
+                            return jsonify({
+                                "error": f"Vendor {vendor_id} is not eligible for this order. "
+                                        f"Marketplace product is owned by vendor {product.vendor_id if product else 'unknown'}. "
+                                        f"Please select the product owner or an eligible vendor."
+                            }), 400
+            except Exception as e:
+                app_logger.warning(f"Error validating marketplace product vendor: {e}")
+                # Continue with normal validation as fallback
         
-        eligible_vendors = get_recommended_vendors(order, product_catalog_ids, total_qty, db, models)
-        eligible_vendor_ids = [v["vendor_id"] for v in eligible_vendors]
-        
-        if vendor_id not in eligible_vendor_ids:
-            app_logger.warning(
-                f"Assignment blocked: Vendor {vendor_id} not eligible for order {order_id}. "
-                f"Eligible vendors: {eligible_vendor_ids}"
-            )
-            return jsonify({
-                "error": f"Vendor {vendor_id} is not eligible for this order. "
-                        f"Vendor must have: approved quotation for all products, sufficient capacity, "
-                        f"and be verified. Please select from eligible vendors only."
-            }), 400
+        # 🔥 RFQ/CATALOG ORDER: Validate vendor eligibility using recommendation engine
+        if not order.marketplace_product_id:
+            # 🔥 CRITICAL SECURITY: Re-validate vendor eligibility before assignment
+            # Frontend filtering is not enough - admin could modify request manually
+            # Backend must enforce eligibility as source of truth
+            from app_pkg.services.vendor_recommendation_engine import get_recommended_vendors
+            import app_pkg.models as models
+            product_catalog_ids = _resolve_order_to_product_catalog_ids(order)
+            if not product_catalog_ids:
+                return jsonify({"error": "Could not resolve order to product catalog. Cannot validate eligibility."}), 400
+            
+            eligible_vendors = get_recommended_vendors(order, product_catalog_ids, total_qty, db, models)
+            eligible_vendor_ids = [v["vendor_id"] for v in eligible_vendors]
+            
+            if vendor_id not in eligible_vendor_ids:
+                app_logger.warning(
+                    f"Assignment blocked: Vendor {vendor_id} not eligible for order {order_id}. "
+                    f"Eligible vendors: {eligible_vendor_ids}"
+                )
+                return jsonify({
+                    "error": f"Vendor {vendor_id} is not eligible for this order. "
+                            f"Vendor must have: approved quotation for all products, sufficient capacity, "
+                            f"and be verified. Please select from eligible vendors only."
+                }), 400
         
         # 🔥 CRITICAL: Verify vendor verification status (double-check)
         if vendor.verification_status not in ('approved', 'active'):
