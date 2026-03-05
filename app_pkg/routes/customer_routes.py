@@ -6,7 +6,7 @@ from flask import Blueprint, request, jsonify, current_app
 from datetime import datetime
 import os
 
-from app_pkg.models import db, Customer, Address, Order, Notification
+from app_pkg.models import db, Customer, Address, Order, Notification, CustomerPayment
 from app_pkg.auth import login_required, role_required
 from werkzeug.security import check_password_hash, generate_password_hash
 from app_pkg.logger_config import app_logger
@@ -372,6 +372,131 @@ def delete_address(address_id):
         db.session.rollback()
         app_logger.exception(f"Delete address error: {e}")
         return jsonify({"error": "Failed to delete address"}), 500
+
+
+@bp.route('/orders', methods=['POST'])
+@login_required
+@role_required(['customer'])
+def create_cart_order():
+    """
+    POST /api/customer/orders
+    Create order(s) from cart checkout
+    Accepts cart items and creates orders (one order per item for now)
+    """
+    try:
+        customer_id = request.user_id
+        data = request.get_json()
+        
+        if not data:
+            return jsonify({"error": "Request body is required"}), 400
+        
+        # Validate required fields
+        if not data.get('items') or not isinstance(data.get('items'), list) or len(data.get('items', [])) == 0:
+            return jsonify({"error": "At least one item is required"}), 400
+        
+        if not data.get('address_line1') or not data.get('city') or not data.get('state') or not data.get('pincode'):
+            return jsonify({"error": "Address fields are required"}), 400
+        
+        if not data.get('transaction_id'):
+            return jsonify({"error": "Transaction ID is required"}), 400
+        
+        # Get address details
+        address_line1 = data.get('address_line1')
+        address_line2 = data.get('address_line2', '')
+        city = data.get('city')
+        state = data.get('state')
+        pincode = data.get('pincode')
+        country = data.get('country', 'India')
+        latitude = data.get('latitude')
+        longitude = data.get('longitude')
+        
+        # Payment details
+        transaction_id = data.get('transaction_id')
+        payment_method = data.get('payment_method', 'unknown')
+        payment_details = data.get('payment_details', '')
+        
+        created_orders = []
+        
+        # Create one order per cart item (simplified approach)
+        for item in data.get('items', []):
+            if not item.get('quantity') or item.get('quantity', 0) <= 0:
+                continue
+            
+            if not item.get('price') or item.get('price', 0) <= 0:
+                continue
+            
+            # Create order for this cart item
+            order = Order(
+                customer_id=customer_id,
+                product_type=item.get('product_type', 'T-Shirt'),
+                category=item.get('category', 'Regular Fit'),
+                color=item.get('color'),
+                quantity=item.get('quantity', 1),
+                price_per_piece_offered=float(item.get('price', 0)),
+                sample_cost=float(item.get('price', 0)) * int(item.get('quantity', 1)),
+                sample_size=item.get('size'),
+                address_line1=address_line1,
+                address_line2=address_line2,
+                city=city,
+                state=state,
+                pincode=pincode,
+                country=country,
+                latitude=float(latitude) if latitude else None,
+                longitude=float(longitude) if longitude else None,
+                status='pending_admin_review',  # Admin will assign vendor
+            )
+            
+            db.session.add(order)
+            db.session.flush()  # Get order ID
+            
+            # Create payment record for this order
+            # Get admin ID for receiver (payments go to admin first)
+            try:
+                from app_pkg.models import Admin
+                admin = Admin.query.first()
+                admin_id = admin.id if admin else 1  # Fallback to 1 if no admin found
+                
+                payment = CustomerPayment(
+                    order_id=order.id,
+                    payer_type='customer',
+                    payer_id=customer_id,
+                    receiver_type='admin',
+                    receiver_id=admin_id,
+                    amount=float(item.get('price', 0)) * int(item.get('quantity', 1)),
+                    payment_type='cart_order',
+                    status='completed'
+                )
+                db.session.add(payment)
+            except Exception as payment_error:
+                app_logger.warning(f"Failed to create payment record for order {order.id}: {payment_error}")
+                # Continue even if payment record creation fails
+            
+            created_orders.append({
+                "id": order.id,
+                "product_name": item.get('product_name', 'Product'),
+                "quantity": item.get('quantity'),
+                "price": item.get('price')
+            })
+        
+        if len(created_orders) == 0:
+            return jsonify({"error": "No valid items to create orders"}), 400
+        
+        # Commit all orders
+        db.session.commit()
+        
+        app_logger.info(f"Customer #{customer_id} created {len(created_orders)} order(s) from cart. Transaction: {transaction_id}")
+        
+        return jsonify({
+            "message": "Orders created successfully",
+            "orders": created_orders,
+            "count": len(created_orders),
+            "transaction_id": transaction_id
+        }), 201
+        
+    except Exception as e:
+        db.session.rollback()
+        app_logger.exception(f"Create cart order error: {e}")
+        return jsonify({"error": "Failed to create orders"}), 500
 
 
 @bp.route('/orders', methods=['GET'])
