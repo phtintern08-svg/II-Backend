@@ -1260,8 +1260,8 @@ def assign_order_to_vendor(order_id):
         quotation_price = data.get('quotation_price_per_piece')
         sample_cost = data.get('sample_cost')  # 🔥 FIX: Remove default - only update if explicitly provided
         
-        if not vendor_id or not quotation_price:
-            return jsonify({"error": "vendor_id and quotation_price_per_piece are required"}), 400
+        if not vendor_id:
+            return jsonify({"error": "vendor_id is required"}), 400
         
         order = Order.query.get(order_id)
         if not order:
@@ -1360,9 +1360,34 @@ def assign_order_to_vendor(order_id):
         
         # Assign vendor to order
         order.selected_vendor_id = vendor_id
-        new_price = float(quotation_price)
-        order.quotation_price_per_piece = new_price
-        order.quotation_total_price = new_price * total_qty  # Use correct quantity (bulk or sample)
+        
+        # 🔥 FIX: Use quotation_price if provided, otherwise use vendor's base cost or order's existing price
+        if quotation_price:
+            new_price = float(quotation_price)
+            order.quotation_price_per_piece = new_price
+            order.quotation_total_price = new_price * total_qty  # Use correct quantity (bulk or sample)
+        else:
+            # If no quotation price provided, try to get from vendor quotation or use existing price
+            # For marketplace orders, price is already set, so keep it
+            if order.quotation_price_per_piece:
+                # Keep existing price
+                order.quotation_total_price = order.quotation_price_per_piece * total_qty
+            else:
+                # Try to get from vendor quotation
+                from app_pkg.models import VendorQuotation
+                vq = VendorQuotation.query.filter_by(
+                    vendor_id=vendor_id,
+                    product_id=order.product_catalog_id,
+                    status='approved'
+                ).first()
+                if vq and vq.base_cost:
+                    order.quotation_price_per_piece = float(vq.base_cost)
+                    order.quotation_total_price = float(vq.base_cost) * total_qty
+                else:
+                    # Fallback: use price_per_piece_offered if available
+                    if order.price_per_piece_offered:
+                        order.quotation_price_per_piece = float(order.price_per_piece_offered)
+                        order.quotation_total_price = float(order.price_per_piece_offered) * total_qty
         
         # 🔥 FIX: Only update sample_cost if explicitly provided (should not overwrite existing value)
         # Sample cost is determined at order creation time and should not be changed during vendor assignment
