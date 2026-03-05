@@ -18,61 +18,49 @@ import sys
 backend_dir = os.path.dirname(os.path.abspath(__file__))
 sys.path.insert(0, backend_dir)
 
-# Import Flask and Socket.IO
-from flask import Flask, request
-from flask_socketio import SocketIO, emit, join_room, leave_room
-from flask_cors import CORS
-
-# Create minimal Flask app for Socket.IO
-app = Flask(__name__)
-app.config['SECRET_KEY'] = os.environ.get('SECRET_KEY', 'socket-server-secret-key')
-
-# Enable CORS
-CORS(app, resources={r"/*": {"origins": "*"}})
-
-# Create Socket.IO instance
-# ⭐ Use threading mode for stability (works on all shared hosting)
-# ⭐ CORS enabled for cross-origin connections from frontend
-socketio = SocketIO(
-    app,
-    cors_allowed_origins="*",  # ✅ Allow all origins (or whitelist specific domains)
-    async_mode="threading",  # Stable on shared hosting
-    logger=True,
-    engineio_logger=True,
-    ping_timeout=60,
-    ping_interval=25,
-    allow_upgrades=True,  # ✅ Allow WebSocket (standalone server supports it)
-    transports=["websocket", "polling"]  # ✅ WebSocket preferred, polling fallback
-)
-
-# Import and register handlers from main app
+# ✅ Load environment variables (for database connection, etc.)
+# Try to load from .env file if it exists
 try:
+    from dotenv import load_dotenv
+    env_path = os.path.join(backend_dir, '.env')
+    if os.path.exists(env_path):
+        load_dotenv(env_path)
+        print(f"✅ Loaded environment variables from: {env_path}")
+    else:
+        print(f"⚠️ No .env file found at: {env_path}")
+        print("   Using system environment variables only")
+except ImportError:
+    print("⚠️ python-dotenv not installed, using system environment variables only")
+
+# ✅ Import and create the main Flask app FIRST (has DB config)
+# This ensures database connection is available
+try:
+    from app_pkg import create_app
+    from app_pkg import socketio  # ✅ Use the socketio instance from main app
+    from flask_cors import CORS
+    
+    # Create the full Flask app (with database, models, etc.)
+    app = create_app()
+    
+    # Enable CORS
+    CORS(app, resources={r"/*": {"origins": "*"}})
+    
+    # ✅ Socket.IO is already initialized in create_app() and bound to the app
+    # We just need to register the handlers
     from app_pkg.socketio_handlers import register_handlers
-    from app_pkg import create_app as create_main_app
     
-    # Create main app context for database access
-    main_app = create_main_app()
-    
-    # Register Socket.IO handlers (they need app context)
-    with main_app.app_context():
-        register_handlers(socketio)
+    # Register Socket.IO handlers (they now have access to the full app with DB)
+    register_handlers(socketio)
     
     print("✅ Socket.IO handlers registered from main app")
+    print("✅ Using full Flask app - database access available")
+    
 except Exception as e:
-    print(f"⚠️ Warning: Could not load handlers from main app: {e}")
+    print(f"❌ ERROR: Could not load main app: {e}")
     import traceback
     traceback.print_exc()
-    print("⚠️ Using minimal handlers only")
-    
-    # Minimal fallback handlers
-    @socketio.on('connect')
-    def handle_connect():
-        print(f"✅ Client connected: {request.sid}")
-        emit('system_message', {'msg': 'Connected to Socket.IO server'})
-    
-    @socketio.on('disconnect')
-    def handle_disconnect():
-        print(f"❌ Client disconnected: {request.sid}")
+    print("❌ Server cannot start without main app")
+    sys.exit(1)
 
 if __name__ == "__main__":
     print("=" * 60)

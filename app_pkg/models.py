@@ -976,7 +976,7 @@ class CartProduct(db.Model):
     product_name = db.Column(db.String(150), nullable=False)
     description = db.Column(db.Text)
     cost_price = db.Column(db.Numeric(10, 2), nullable=False)
-    sizes = db.Column(MySQLJSON, nullable=False)  # JSON array: ["S","M","L","XL"]
+    sizes = db.Column(MySQLJSON, nullable=False)  # JSON array: ["S","M","L","XL","XXL"]
     images = db.Column(MySQLJSON)  # JSON array: ["img1.jpg","img2.jpg"]
     status = db.Column(db.Enum('pending', 'approved', 'rejected', name='product_status'), default='pending', index=True)
     admin_remarks = db.Column(db.Text)
@@ -1194,7 +1194,7 @@ class MarketplaceProduct(db.Model):
     product_name = db.Column(db.String(255), nullable=False)
     description = db.Column(db.Text)
     price = db.Column(db.Numeric(10, 2), nullable=False)
-    sizes = db.Column(MySQLJSON)  # JSON array: ["S","M","L","XL"]
+    sizes = db.Column(MySQLJSON)  # JSON array: ["S","M","L","XL","XXL"]
     colors = db.Column(MySQLJSON)  # JSON array: ["Black","White","Red"]
     image_url = db.Column(db.Text)
     status = db.Column(db.Enum('PENDING', 'APPROVED', 'REJECTED', name='product_status'), default='PENDING', index=True)

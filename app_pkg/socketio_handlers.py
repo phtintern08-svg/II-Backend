@@ -345,17 +345,30 @@ def register_handlers(socketio):
                 emit('error', {'msg': 'Order ID required'})
                 return
             
+            # ✅ Ensure we are using the app context explicitly for the DB query
+            from flask import current_app
             with current_app.app_context():
-                from app_pkg.models import SupportTicket, Order
+                from app_pkg.models import SupportTicket, Order, db
                 from app_pkg.intelligent_support import AutoAssignment
                 from datetime import datetime, timedelta
                 from sqlalchemy import text
                 
-                # Get order details
-                order = Order.query.filter_by(id=order_id).first()
+                app_logger.info(f"🔍 Processing support for Order {order_id}")
+                
+                # ✅ Use session.get for better stability in standalone mode
+                try:
+                    order = db.session.get(Order, order_id)
+                except Exception as db_error:
+                    app_logger.exception(f"Database error getting order {order_id}: {db_error}")
+                    emit('error', {'msg': 'Database connection error. Please try again.'})
+                    return
+                
                 if not order:
+                    app_logger.warning(f"Order {order_id} not found in database")
                     emit('error', {'msg': 'Order not found'})
                     return
+                
+                app_logger.info(f"✅ Order {order_id} found, status: {order.status}")
                 
                 order_status = order.status or 'pending'
                 vendor_id = getattr(order, 'selected_vendor_id', None)
@@ -483,8 +496,10 @@ def register_handlers(socketio):
                 app_logger.info(f"✅ Guided support started for ticket {ticket_id}")
                 
         except Exception as e:
-            app_logger.exception(f"Error in start_support: {e}")
-            emit('error', {'msg': 'Failed to start support'})
+            app_logger.exception(f"❌ Error in start_support: {e}")
+            import traceback
+            app_logger.error(f"Full traceback: {traceback.format_exc()}")
+            emit('error', {'msg': f'Failed to start support: {str(e)}'})
     
     @socketio.on('issue_selected')
     def handle_issue_selected(data):
