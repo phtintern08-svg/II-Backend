@@ -1063,69 +1063,140 @@ def get_recommended_vendors_for_order(order_id):
 
 def _resolve_order_to_product_items(order):
     """Resolve order to list of (product_catalog_id, quantity) for stock deduction."""
-    def _resolve(product_type, category, neck_type, fabric, size):
+    def _normalize(value):
+        """Normalize string: strip, lowercase, handle None"""
+        if not value:
+            return ''
+        return str(value).strip().lower()
+    
+    def _resolve(product_type, category, neck_type, fabric, size, try_without_fabric=False):
+        """Resolve product catalog entry with fallback to no fabric."""
+        pt_norm = _normalize(product_type)
+        cat_norm = _normalize(category)
+        nt_norm = _normalize(neck_type) if neck_type and neck_type.lower() != 'none' else None
+        fb_norm = _normalize(fabric) if fabric and not try_without_fabric else None
+        size_norm = str(size).strip().upper() if size else None
+        
         q = ProductCatalog.query.filter(
-            func.lower(ProductCatalog.product_type) == (product_type or '').lower(),
-            func.lower(ProductCatalog.category) == (category or '').lower(),
+            func.lower(ProductCatalog.product_type) == pt_norm,
+            func.lower(ProductCatalog.category) == cat_norm,
         )
-        if size:
-            q = q.filter(func.upper(ProductCatalog.size) == (size or '').upper())
-        if neck_type:
-            q = q.filter(func.lower(ProductCatalog.neck_type) == neck_type.lower())
-        if fabric:
-            q = q.filter(func.lower(ProductCatalog.fabric) == fabric.lower())
+        
+        if size_norm:
+            q = q.filter(func.upper(ProductCatalog.size) == size_norm)
+        if nt_norm:
+            q = q.filter(func.lower(ProductCatalog.neck_type) == nt_norm)
+        if fb_norm and not try_without_fabric:
+            q = q.filter(func.lower(ProductCatalog.fabric) == fb_norm)
+        
         p = q.first()
         return p.id if p else None
 
     pt = (order.product_type or '').strip()
     cat = (order.category or '').strip()
-    nt = (order.neck_type or '').strip() or 'none'
+    nt = (order.neck_type or '').strip()
     fb = (order.fabric or '').strip()
     items = []
+    
     if order.is_bulk_order and order.size_distribution:
         for size, qty in order.size_distribution.items():
-            pid = _resolve(pt, cat, nt, fb, size)
+            pid = _resolve(pt, cat, nt, fb, size, try_without_fabric=False)
+            if not pid and fb:
+                pid = _resolve(pt, cat, nt, fb, size, try_without_fabric=True)
             if pid and qty:
                 items.append((pid, int(qty)))
     else:
         size = order.sample_size or (order.size_distribution and next(iter(order.size_distribution.keys()), None)) or 'M'
-        pid = _resolve(pt, cat, nt, fb, size)
+        pid = _resolve(pt, cat, nt, fb, size, try_without_fabric=False)
+        if not pid and fb:
+            pid = _resolve(pt, cat, nt, fb, size, try_without_fabric=True)
         if pid:
             items.append((pid, order.get_effective_quantity()))
     return items
 
 
 def _resolve_order_to_product_catalog_ids(order):
-    """Resolve order product fields to product_catalog ids."""
-    def _resolve(product_type, category, neck_type, fabric, size):
+    """
+    Resolve order product fields to product_catalog ids.
+    Uses case-insensitive matching and handles fabric mismatches gracefully.
+    """
+    def _normalize(value):
+        """Normalize string: strip, lowercase, handle None"""
+        if not value:
+            return ''
+        return str(value).strip().lower()
+    
+    def _resolve(product_type, category, neck_type, fabric, size, try_without_fabric=False):
+        """
+        Resolve product catalog entry.
+        Tries with fabric first, then without fabric if not found.
+        """
+        # Normalize all inputs
+        pt_norm = _normalize(product_type)
+        cat_norm = _normalize(category)
+        nt_norm = _normalize(neck_type) if neck_type and neck_type.lower() != 'none' else None
+        fb_norm = _normalize(fabric) if fabric and not try_without_fabric else None
+        size_norm = str(size).strip().upper() if size else None
+        
+        # Base query: product_type and category (required)
         q = ProductCatalog.query.filter(
-            func.lower(ProductCatalog.product_type) == (product_type or '').lower(),
-            func.lower(ProductCatalog.category) == (category or '').lower(),
+            func.lower(ProductCatalog.product_type) == pt_norm,
+            func.lower(ProductCatalog.category) == cat_norm,
         )
-        if size:
-            q = q.filter(func.upper(ProductCatalog.size) == (size or '').upper())
-        if neck_type:
-            q = q.filter(func.lower(ProductCatalog.neck_type) == neck_type.lower())
-        if fabric:
-            q = q.filter(func.lower(ProductCatalog.fabric) == fabric.lower())
+        
+        # Add size filter (required for matching)
+        if size_norm:
+            q = q.filter(func.upper(ProductCatalog.size) == size_norm)
+        
+        # Add neck_type filter if provided
+        if nt_norm:
+            q = q.filter(func.lower(ProductCatalog.neck_type) == nt_norm)
+        
+        # Add fabric filter only if fabric is provided and we're not trying without it
+        if fb_norm and not try_without_fabric:
+            q = q.filter(func.lower(ProductCatalog.fabric) == fb_norm)
+        
         p = q.first()
         return p.id if p else None
-
+    
+    # Normalize order fields
     pt = (order.product_type or '').strip()
     cat = (order.category or '').strip()
-    nt = (order.neck_type or '').strip() or 'none'
+    nt = (order.neck_type or '').strip()
     fb = (order.fabric or '').strip()
+    
     ids = []
+    
     if order.is_bulk_order and order.size_distribution:
+        # Bulk order: resolve each size
         for size in order.size_distribution.keys():
-            pid = _resolve(pt, cat, nt, fb, size)
+            # Try with fabric first
+            pid = _resolve(pt, cat, nt, fb, size, try_without_fabric=False)
+            # If not found and fabric was provided, try without fabric
+            if not pid and fb:
+                app_logger.info(f"Product not found with fabric '{fb}', trying without fabric for {pt}/{cat}/{nt}/{size}")
+                pid = _resolve(pt, cat, nt, fb, size, try_without_fabric=True)
+            
             if pid and pid not in ids:
                 ids.append(pid)
+            elif not pid:
+                app_logger.warning(f"Could not resolve product: {pt}/{cat}/{nt}/{fb}/{size}")
     else:
+        # Single size order
         size = order.sample_size or (order.size_distribution and next(iter(order.size_distribution.keys()), None)) or 'M'
-        pid = _resolve(pt, cat, nt, fb, size)
+        
+        # Try with fabric first
+        pid = _resolve(pt, cat, nt, fb, size, try_without_fabric=False)
+        # If not found and fabric was provided, try without fabric
+        if not pid and fb:
+            app_logger.info(f"Product not found with fabric '{fb}', trying without fabric for {pt}/{cat}/{nt}/{size}")
+            pid = _resolve(pt, cat, nt, fb, size, try_without_fabric=True)
+        
         if pid:
             ids.append(pid)
+        else:
+            app_logger.warning(f"Could not resolve product catalog for order {order.id}: {pt}/{cat}/{nt}/{fb}/{size}")
+    
     return ids
 
 
