@@ -255,6 +255,7 @@ class Order(db.Model):
     
     # Product Details
     product_catalog_id = db.Column(db.Integer, nullable=True)  # References admin.product_catalog.id for stock matching
+    marketplace_product_id = db.Column(db.Integer, nullable=True)  # References admin.marketplace_products.id for cart orders
     product_type = db.Column(db.String(50), nullable=False)
     category = db.Column(db.String(50), nullable=False)
     neck_type = db.Column(db.String(50))

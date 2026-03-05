@@ -817,6 +817,7 @@ def get_all_orders():
     GET /api/admin/orders
     Get all orders with optional filters
     🔥 ADMIN: Returns FULL order data including bulk details, quantities, and financials
+    Includes marketplace product and vendor information for cart orders
     """
     try:
         from app_pkg.schemas import orders_schema
@@ -831,6 +832,35 @@ def get_all_orders():
         
         # 🔥 ADMIN: Use full schema - admins see everything (sample + bulk)
         orders_data = orders_schema.dump(orders)
+        
+        # Enrich orders with marketplace product and vendor information
+        for idx, order in enumerate(orders):
+            if order.marketplace_product_id:
+                try:
+                    # Get marketplace product
+                    product = MarketplaceProduct.query.get(order.marketplace_product_id)
+                    if product:
+                        orders_data[idx]['product_name'] = product.product_name
+                        orders_data[idx]['product_image'] = product.image_url
+                        orders_data[idx]['vendor_id'] = product.vendor_id
+                        
+                        # Get vendor information
+                        vendor = Vendor.query.get(product.vendor_id)
+                        if vendor:
+                            orders_data[idx]['vendor_name'] = vendor.business_name
+                        else:
+                            orders_data[idx]['vendor_name'] = f"Vendor #{product.vendor_id}"
+                    else:
+                        orders_data[idx]['product_name'] = None
+                        orders_data[idx]['product_image'] = None
+                        orders_data[idx]['vendor_id'] = None
+                        orders_data[idx]['vendor_name'] = None
+                except Exception as e:
+                    app_logger.warning(f"Failed to fetch product/vendor info for order {order.id}: {e}")
+                    orders_data[idx]['product_name'] = None
+                    orders_data[idx]['product_image'] = None
+                    orders_data[idx]['vendor_id'] = None
+                    orders_data[idx]['vendor_name'] = None
         
         return jsonify({
             "orders": orders_data,

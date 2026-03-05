@@ -425,9 +425,30 @@ def create_cart_order():
             if not item.get('price') or item.get('price', 0) <= 0:
                 continue
             
+            # Get marketplace_product_id from item
+            marketplace_product_id = item.get('product_id') if item.get('product_id') else None
+            
+            # Auto-assign vendor if marketplace product exists
+            selected_vendor_id = None
+            order_status = 'pending_admin_review'
+            
+            if marketplace_product_id:
+                try:
+                    from app_pkg.models import MarketplaceProduct
+                    product = MarketplaceProduct.query.get(marketplace_product_id)
+                    if product and product.vendor_id:
+                        selected_vendor_id = product.vendor_id
+                        # Auto-assign vendor - admin can still reassign if needed
+                        order_status = 'vendor_assigned'
+                        app_logger.info(f"Auto-assigning order to vendor {selected_vendor_id} for marketplace product {marketplace_product_id}")
+                except Exception as e:
+                    app_logger.warning(f"Failed to auto-assign vendor for product {marketplace_product_id}: {e}")
+            
             # Create order for this cart item
             order = Order(
                 customer_id=customer_id,
+                marketplace_product_id=marketplace_product_id,  # Link to marketplace product
+                selected_vendor_id=selected_vendor_id,  # Auto-assigned vendor if marketplace product
                 product_type=item.get('product_type', 'T-Shirt'),
                 category=item.get('category', 'Regular Fit'),
                 color=item.get('color'),
@@ -443,7 +464,7 @@ def create_cart_order():
                 country=country,
                 latitude=float(latitude) if latitude else None,
                 longitude=float(longitude) if longitude else None,
-                status='pending_admin_review',  # Admin will assign vendor
+                status=order_status,  # Auto-assigned if marketplace product, else pending admin review
             )
             
             db.session.add(order)
