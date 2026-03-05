@@ -895,23 +895,34 @@ def get_eligible_vendors_for_order(order_id):
         if not order:
             return jsonify({"error": "Order not found"}), 404
 
+        # 🔥 DEBUG: Log order details to diagnose marketplace_product_id
+        app_logger.info(f"Order {order_id} details: marketplace_product_id={order.marketplace_product_id}, product_type={order.product_type}, status={order.status}, selected_vendor_id={order.selected_vendor_id}")
+
         # 🔥 MARKETPLACE ORDER: Return vendor who posted the product
-        if order.marketplace_product_id:
+        # Check if order has marketplace_product_id set
+        if hasattr(order, 'marketplace_product_id') and order.marketplace_product_id:
+            app_logger.info(f"Order {order_id} is marketplace order with product_id: {order.marketplace_product_id}")
             try:
                 product = MarketplaceProduct.query.get(order.marketplace_product_id)
                 if not product:
+                    app_logger.warning(f"Marketplace product {order.marketplace_product_id} not found for order {order_id}")
                     return jsonify({
                         "eligible_vendors": [],
-                        "message": "Marketplace product not found.",
-                        "auto_assigned": False
+                        "message": f"Marketplace product {order.marketplace_product_id} not found.",
+                        "auto_assigned": False,
+                        "is_marketplace": True
                     }), 200
+                
+                app_logger.info(f"Found marketplace product: {product.product_name}, vendor_id: {product.vendor_id}")
                 
                 vendor = Vendor.query.get(product.vendor_id)
                 if not vendor:
+                    app_logger.warning(f"Vendor {product.vendor_id} not found for marketplace product {order.marketplace_product_id}")
                     return jsonify({
                         "eligible_vendors": [],
-                        "message": "Vendor not found for marketplace product.",
-                        "auto_assigned": False
+                        "message": f"Vendor {product.vendor_id} not found for marketplace product.",
+                        "auto_assigned": False,
+                        "is_marketplace": True
                     }), 200
                 
                 # Return the vendor who posted the product
@@ -932,7 +943,7 @@ def get_eligible_vendors_for_order(order_id):
                     "product_image": product.image_url
                 }
                 
-                app_logger.info(f"Marketplace order {order_id}: Returning vendor {vendor.id} who posted product {order.marketplace_product_id}")
+                app_logger.info(f"Marketplace order {order_id}: Returning vendor {vendor.id} ({vendor.business_name}) who posted product {order.marketplace_product_id}")
                 
                 return jsonify({
                     "eligible_vendors": [vendor_data],
@@ -943,11 +954,14 @@ def get_eligible_vendors_for_order(order_id):
                 }), 200
                 
             except Exception as e:
-                app_logger.exception(f"Error fetching marketplace product vendor: {e}")
+                app_logger.exception(f"Error fetching marketplace product vendor for order {order_id}: {e}")
+                import traceback
+                app_logger.error(f"Traceback: {traceback.format_exc()}")
                 return jsonify({
                     "eligible_vendors": [],
-                    "message": "Error fetching marketplace product vendor.",
-                    "auto_assigned": False
+                    "message": f"Error fetching marketplace product vendor: {str(e)}",
+                    "auto_assigned": False,
+                    "is_marketplace": True
                 }), 200
 
         # 🔥 RFQ/CATALOG ORDER: Use recommendation engine
