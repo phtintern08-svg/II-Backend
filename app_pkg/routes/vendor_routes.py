@@ -65,11 +65,19 @@ def get_vendor_profile():
             if not permissions:
                 permissions = ['dashboard', 'orders']
             
+            # Get order categories from database
+            order_categories = subuser.order_categories if subuser.order_categories else []
+            
+            # Default order categories if none set (for backward compatibility)
+            if not order_categories:
+                order_categories = ['new_orders', 'in_production', 'ready_for_dispatch', 'completed_orders']
+            
             return jsonify({
                 "username": subuser.name or identity.get('username', '') if identity else '',
                 "email": subuser.email or identity.get('email', '') if identity else '',
                 "role": "subuser",
-                "permissions": permissions  # Return actual permissions selected by vendor
+                "permissions": permissions,  # Return actual permissions selected by vendor
+                "order_categories": order_categories  # Return order categories selected by vendor
             }), 200
         
         # If VENDOR - return vendor data from database
@@ -1195,6 +1203,16 @@ def get_vendor_orders_filtered():
         if not vendor_id:
             return jsonify({"error": "Vendor ID not found"}), 401
         
+        # Check if user is subuser and get order_categories
+        role = getattr(request, 'role', None)
+        user_id = getattr(request, 'user_id', None)
+        order_categories = None
+        
+        if role == 'subuser' and user_id:
+            subuser = VendorUser.query.filter_by(id=user_id).first()
+            if subuser and subuser.order_categories:
+                order_categories = subuser.order_categories
+        
         status = request.args.get('status')
         
         query = Order.query.filter_by(selected_vendor_id=vendor_id)
@@ -1222,6 +1240,29 @@ def get_vendor_orders_filtered():
             query = query.filter_by(status=status)
         
         orders = query.order_by(Order.created_at.desc()).all()
+        
+        # Filter orders by order_categories for subusers
+        if role == 'subuser' and order_categories:
+            # Map order categories to status filters
+            category_status_map = {
+                'new_orders': ['quotation_sent_to_customer', 'sample_requested', 'awaiting_advance_payment'],
+                'in_production': ['in_production', 'material_prep', 'printing', 'printing_completed', 'quality_check'],
+                'ready_for_dispatch': ['packed_ready'],
+                'completed_orders': ['dispatched', 'delivered', 'completed', 'completed_with_penalty']
+            }
+            
+            # Get allowed statuses based on order_categories
+            allowed_statuses = []
+            for category in order_categories:
+                if category in category_status_map:
+                    allowed_statuses.extend(category_status_map[category])
+            
+            # Filter orders to only include those with allowed statuses
+            if allowed_statuses:
+                orders = [o for o in orders if o.status in allowed_statuses]
+            else:
+                # If no valid categories, return empty list
+                orders = []
         
         # 🔥 SECURITY: Use filtered schema - vendors should NOT see quantity or bulk details
         # Get base filtered data (sample fields only)
@@ -1773,39 +1814,92 @@ def get_order_stats():
         if not vendor_id:
             return jsonify({"error": "Vendor ID not found"}), 401
         
-        # 🔥 FIX: New orders are pre-production only - once order moves to production, it should appear in "In Production"
-        new_orders_count = Order.query.filter(
-            Order.selected_vendor_id == vendor_id,
-            Order.status.in_([
-                'quotation_sent_to_customer',
-                'sample_requested',
-                'awaiting_advance_payment'
-            ])
-        ).count()
+        # Check if user is subuser and get order_categories
+        role = getattr(request, 'role', None)
+        user_id = getattr(request, 'user_id', None)
+        order_categories = None
         
-        # 🔥 FIX: In-production orders include in_production stage and all active production stages
-        in_production_count = Order.query.filter(
-            Order.selected_vendor_id == vendor_id,
-            Order.status.in_([
-                'in_production',
-                'material_prep',
-                'printing',
-                'printing_completed',
-                'quality_check'
-            ])
-        ).count()
+        if role == 'subuser' and user_id:
+            subuser = VendorUser.query.filter_by(id=user_id).first()
+            if subuser and subuser.order_categories:
+                order_categories = subuser.order_categories
         
-        # 🔥 FIX: Standardize to only packed_ready (remove unused statuses)
-        ready_count = Order.query.filter(
-            Order.selected_vendor_id == vendor_id,
-            Order.status == 'packed_ready'
-        ).count()
+        # Initialize counts
+        new_orders_count = 0
+        in_production_count = 0
+        ready_count = 0
+        completed_count = 0
         
-        # 🔥 FIX: Include dispatched orders in completed count (treat dispatched as completed)
-        completed_count = Order.query.filter(
-            Order.selected_vendor_id == vendor_id,
-            Order.status.in_(['completed', 'completed_with_penalty', 'delivered', 'dispatched'])
-        ).count()
+        # Only count categories that subuser has access to
+        if role == 'subuser' and order_categories:
+            if 'new_orders' in order_categories:
+                new_orders_count = Order.query.filter(
+                    Order.selected_vendor_id == vendor_id,
+                    Order.status.in_([
+                        'quotation_sent_to_customer',
+                        'sample_requested',
+                        'awaiting_advance_payment'
+                    ])
+                ).count()
+            
+            if 'in_production' in order_categories:
+                in_production_count = Order.query.filter(
+                    Order.selected_vendor_id == vendor_id,
+                    Order.status.in_([
+                        'in_production',
+                        'material_prep',
+                        'printing',
+                        'printing_completed',
+                        'quality_check'
+                    ])
+                ).count()
+            
+            if 'ready_for_dispatch' in order_categories:
+                ready_count = Order.query.filter(
+                    Order.selected_vendor_id == vendor_id,
+                    Order.status == 'packed_ready'
+                ).count()
+            
+            if 'completed_orders' in order_categories:
+                completed_count = Order.query.filter(
+                    Order.selected_vendor_id == vendor_id,
+                    Order.status.in_(['completed', 'completed_with_penalty', 'delivered', 'dispatched'])
+                ).count()
+        else:
+            # For vendors, show all counts
+            # 🔥 FIX: New orders are pre-production only - once order moves to production, it should appear in "In Production"
+            new_orders_count = Order.query.filter(
+                Order.selected_vendor_id == vendor_id,
+                Order.status.in_([
+                    'quotation_sent_to_customer',
+                    'sample_requested',
+                    'awaiting_advance_payment'
+                ])
+            ).count()
+            
+            # 🔥 FIX: In-production orders include in_production stage and all active production stages
+            in_production_count = Order.query.filter(
+                Order.selected_vendor_id == vendor_id,
+                Order.status.in_([
+                    'in_production',
+                    'material_prep',
+                    'printing',
+                    'printing_completed',
+                    'quality_check'
+                ])
+            ).count()
+            
+            # 🔥 FIX: Standardize to only packed_ready (remove unused statuses)
+            ready_count = Order.query.filter(
+                Order.selected_vendor_id == vendor_id,
+                Order.status == 'packed_ready'
+            ).count()
+            
+            # 🔥 FIX: Include dispatched orders in completed count (treat dispatched as completed)
+            completed_count = Order.query.filter(
+                Order.selected_vendor_id == vendor_id,
+                Order.status.in_(['completed', 'completed_with_penalty', 'delivered', 'dispatched'])
+            ).count()
         
         return jsonify({
             "newOrders": new_orders_count,
