@@ -13,7 +13,7 @@ import os
 import hashlib
 from datetime import datetime, timedelta
 
-from app_pkg.models import db, Admin, Customer, Vendor, Rider, SupportUser, OTPLog, EmailVerificationToken
+from app_pkg.models import db, Admin, Customer, Vendor, Rider, SupportUser, OTPLog, EmailVerificationToken, VendorUser
 from app_pkg.auth import generate_token, verify_token, get_token_from_request, send_verification_email, require_auth
 import secrets
 from app_pkg.validation import sanitize_text
@@ -286,6 +286,23 @@ def authenticate():
                             "error": "Invalid credentials",
                             "message": "Email or password incorrect"
                         }, 401)
+                
+                # Check for subuser (vendor team member) if vendor not found
+                # Subusers use email only
+                subuser = VendorUser.query.filter(
+                    VendorUser.email.ilike(identifier)
+                ).first()
+                if subuser:
+                    if check_password_hash(subuser.password_hash, password):
+                        user = subuser
+                        role_found = 'subuser'
+                        break
+                    else:
+                        log_auth_event('login', False, identifier, subuser.id, 'subuser', request.remote_addr, error="Wrong password")
+                        return json_response({
+                            "error": "Invalid credentials",
+                            "message": "Email or password incorrect"
+                        }, 401)
             
             elif table_role == 'rider':
                 # Rider: email or phone (case-insensitive)
@@ -465,6 +482,52 @@ def authenticate():
                 "username": vendor.username,
                 "email": vendor.email,
                 "phone": vendor.phone,
+                "token": token,  # Include token in response for localStorage (cookie is HttpOnly)
+                "redirect_url": redirect_url
+            })
+        elif role_found == 'subuser':
+            subuser = user
+            # Generate token with vendor_id included for subuser
+            token = generate_token(
+                user_id=subuser.id,
+                role="subuser",
+                username=subuser.name,
+                email=subuser.email,
+                vendor_id=subuser.vendor_id
+            )
+            # Add vendor_id to token payload by modifying the token generation
+            # Since generate_token doesn't support vendor_id, we'll need to update auth.py
+            # For now, we'll include vendor_id in the response and frontend can store it
+            log_auth_event('login', True, identifier, subuser.id, 'subuser', request.remote_addr)
+            
+            # Get IP address (check proxy headers)
+            ip_address = None
+            if request.headers.get('X-Forwarded-For'):
+                ip_address = request.headers.get('X-Forwarded-For').split(',')[0].strip()
+            elif request.headers.get('X-Real-IP'):
+                ip_address = request.headers.get('X-Real-IP').strip()
+            else:
+                ip_address = request.remote_addr
+            
+            # Log activity
+            log_activity(
+                user_id=subuser.id,
+                user_type='vendor',  # Log as vendor type for subusers
+                action=f"Logged in as subuser: {subuser.name or subuser.email} (Vendor #{subuser.vendor_id})",
+                action_type="login",
+                entity_type="vendor",
+                entity_id=subuser.vendor_id,
+                ip_address=ip_address
+            )
+            
+            redirect_url = build_subdomain_url('vendor', '/home.html')
+            response = jsonify({
+                "message": "Login successful",
+                "role": "subuser",
+                "user_id": subuser.id,
+                "vendor_id": subuser.vendor_id,  # Include vendor_id in response
+                "name": subuser.name,
+                "email": subuser.email,
                 "token": token,  # Include token in response for localStorage (cookie is HttpOnly)
                 "redirect_url": redirect_url
             })

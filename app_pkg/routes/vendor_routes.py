@@ -11,9 +11,10 @@ from sqlalchemy import text
 from app_pkg.models import (
     db, Vendor, VendorQuotation, VendorDocument, VendorOrderAssignment, Order,
     VendorQuotationSubmission, Notification, OrderStatusHistory, Customer,
-    DeliveryLog, Rider, VendorCapacity, ProductCatalog, MarketplaceProduct, CartProduct  # CartProduct for vendor-created products
+    DeliveryLog, Rider, VendorCapacity, ProductCatalog, MarketplaceProduct, CartProduct, VendorUser  # CartProduct for vendor-created products
 )
 from app_pkg.auth import login_required, role_required
+from werkzeug.security import generate_password_hash, check_password_hash
 from app_pkg.file_upload import validate_and_save_file, delete_file, get_file_path_from_db
 from app_pkg.logger_config import app_logger
 from app_pkg.activity_logger import log_activity_from_request
@@ -252,7 +253,7 @@ def submit_quotation():
 
 @bp.route('/orders/all', methods=['GET'])
 @login_required
-@role_required(['vendor'])
+@role_required(['vendor', 'subuser'])
 def get_vendor_orders():
     """
     GET /api/vendor/orders/all
@@ -260,8 +261,13 @@ def get_vendor_orders():
     🔥 SECURITY: Vendors should NOT see quantity, bulk pricing, or financial details
     """
     try:
+        # Get vendor_id (works for both vendor and subuser)
+        vendor_id = get_vendor_id()
+        if not vendor_id:
+            return jsonify({"error": "Vendor ID not found"}), 401
+        
         # Get orders assigned to this vendor
-        vendor_orders = Order.query.filter_by(selected_vendor_id=request.user_id).all()
+        vendor_orders = Order.query.filter_by(selected_vendor_id=vendor_id).all()
         
         # 🔥 SECURITY: Use filtered schema - only sample fields, no bulk details
         orders_data = vendor_orders_schema.dump(vendor_orders)
@@ -1099,16 +1105,21 @@ def create_cart_product():
 
 @bp.route('/orders', methods=['GET'])
 @login_required
-@role_required(['vendor'])
+@role_required(['vendor', 'subuser'])
 def get_vendor_orders_filtered():
     """
     GET /api/vendor/orders
     Get vendor orders with status filter
     """
     try:
+        # Get vendor_id (works for both vendor and subuser)
+        vendor_id = get_vendor_id()
+        if not vendor_id:
+            return jsonify({"error": "Vendor ID not found"}), 401
+        
         status = request.args.get('status')
         
-        query = Order.query.filter_by(selected_vendor_id=request.user_id)
+        query = Order.query.filter_by(selected_vendor_id=vendor_id)
         
         if status == 'new':
             # 🔥 FIX: 'new' orders are those assigned to vendor but not yet in production
@@ -1203,14 +1214,17 @@ def get_vendor_orders_filtered():
 
 @bp.route('/dashboard/stats', methods=['GET'])
 @login_required
-@role_required(['vendor'])
+@role_required(['vendor', 'subuser'])
 def get_dashboard_stats():
     """
     GET /api/vendor/dashboard/stats
     Get vendor dashboard statistics
     """
     try:
-        vendor_id = request.user_id
+        # Get vendor_id (works for both vendor and subuser)
+        vendor_id = get_vendor_id()
+        if not vendor_id:
+            return jsonify({"error": "Vendor ID not found"}), 401
         
         # 🔥 FIX: New orders are pre-production only - once order moves to production, it should appear in "In Production"
         new_orders = Order.query.filter(
@@ -1621,14 +1635,17 @@ def update_location_details():
 
 @bp.route('/order-stats', methods=['GET'])
 @login_required
-@role_required(['vendor'])
+@role_required(['vendor', 'subuser'])
 def get_order_stats():
     """
     GET /api/vendor/order-stats
     Get order statistics for vendor dashboard
     """
     try:
-        vendor_id = request.user_id
+        # Get vendor_id (works for both vendor and subuser)
+        vendor_id = get_vendor_id()
+        if not vendor_id:
+            return jsonify({"error": "Vendor ID not found"}), 401
         
         # 🔥 FIX: New orders are pre-production only - once order moves to production, it should appear in "In Production"
         new_orders_count = Order.query.filter(
@@ -1741,7 +1758,7 @@ def track_delivery(delivery_id):
 
 @bp.route('/new-orders', methods=['GET'])
 @login_required
-@role_required(['vendor'])
+@role_required(['vendor', 'subuser'])
 def get_new_orders():
     """
     GET /api/vendor/new-orders
@@ -1749,10 +1766,15 @@ def get_new_orders():
     🔥 Vendor should see orders after admin assignment, including before advance payment
     """
     try:
+        # Get vendor_id (works for both vendor and subuser)
+        vendor_id = get_vendor_id()
+        if not vendor_id:
+            return jsonify({"error": "Vendor ID not found"}), 401
+        
         # 🔥 FIX: Vendor should see orders after admin assignment, but not yet in production
         # Only include pre-production statuses - once order moves to production, it should appear in "In Production" page
         orders = Order.query.filter(
-            Order.selected_vendor_id == request.user_id,
+            Order.selected_vendor_id == vendor_id,
             Order.status.in_([
                 'quotation_sent_to_customer',
                 'sample_requested',
@@ -1967,3 +1989,174 @@ def update_vendor_product(product_id):
         db.session.rollback()
         app_logger.exception(f"Update vendor product error: {e}")
         return jsonify({"error": "Failed to update product"}), 500
+
+
+# ============================================================================
+# Helper Functions for Vendor/Subuser Compatibility
+# ============================================================================
+
+def get_vendor_id():
+    """
+    Get the actual vendor_id from request context.
+    Works for both vendor and subuser roles.
+    
+    Returns:
+        int: The vendor_id (either from vendor.id or subuser.vendor_id)
+    """
+    identity = getattr(request, 'current_user', None)
+    if not identity:
+        # Fallback to request attributes set by decorators
+        role = getattr(request, 'role', None)
+        user_id = getattr(request, 'user_id', None)
+    else:
+        role = identity.get('role')
+        user_id = identity.get('user_id')
+    
+    if role == 'vendor':
+        return user_id
+    elif role == 'subuser':
+        # For subusers, vendor_id is stored in token payload
+        vendor_id = identity.get('vendor_id') if identity else None
+        if vendor_id:
+            return vendor_id
+        # Fallback: query the subuser to get vendor_id
+        subuser = VendorUser.query.get(user_id)
+        if subuser:
+            return subuser.vendor_id
+        return None
+    return None
+
+
+# ============================================================================
+# Vendor Users Management Routes
+# ============================================================================
+
+@bp.route('/add-user', methods=['POST'])
+@login_required
+@role_required(['vendor'])  # Only vendors can add users
+def add_vendor_user():
+    """
+    POST /api/vendor/add-user
+    Create a new subuser for the vendor
+    Maximum 2 subusers per vendor
+    """
+    try:
+        vendor_id = get_vendor_id()
+        if not vendor_id:
+            return jsonify({"error": "Vendor ID not found"}), 401
+        
+        data = request.get_json()
+        name = data.get('name', '').strip()
+        email = data.get('email', '').strip().lower()
+        password = data.get('password', '').strip()
+        
+        # Validation
+        if not name or not email or not password:
+            return jsonify({"error": "Missing required fields: name, email, password"}), 400
+        
+        if len(password) < 6:
+            return jsonify({"error": "Password must be at least 6 characters"}), 400
+        
+        # Check if email already exists
+        existing_user = VendorUser.query.filter_by(email=email).first()
+        if existing_user:
+            return jsonify({"error": "Email already registered"}), 409
+        
+        # Check user count (max 2 subusers)
+        user_count = VendorUser.query.filter_by(vendor_id=vendor_id).count()
+        if user_count >= 2:
+            return jsonify({"error": "Maximum 2 users allowed per vendor"}), 403
+        
+        # Create subuser
+        password_hash = generate_password_hash(password)
+        new_user = VendorUser(
+            vendor_id=vendor_id,
+            name=name,
+            email=email,
+            password_hash=password_hash,
+            role='subuser'
+        )
+        
+        db.session.add(new_user)
+        db.session.commit()
+        
+        app_logger.info(f"Vendor #{vendor_id} created subuser: {email}")
+        
+        return jsonify({
+            "message": "User created successfully",
+            "user": {
+                "id": new_user.id,
+                "name": new_user.name,
+                "email": new_user.email,
+                "role": new_user.role,
+                "created_at": new_user.created_at.isoformat() if new_user.created_at else None
+            }
+        }), 201
+        
+    except Exception as e:
+        db.session.rollback()
+        app_logger.exception(f"Add vendor user error: {e}")
+        return jsonify({"error": "Failed to create user"}), 500
+
+
+@bp.route('/users', methods=['GET'])
+@login_required
+@role_required(['vendor'])  # Only vendors can list users
+def list_vendor_users():
+    """
+    GET /api/vendor/users
+    List all subusers for the vendor
+    """
+    try:
+        vendor_id = get_vendor_id()
+        if not vendor_id:
+            return jsonify({"error": "Vendor ID not found"}), 401
+        
+        users = VendorUser.query.filter_by(vendor_id=vendor_id).all()
+        
+        users_list = [{
+            "id": user.id,
+            "name": user.name,
+            "email": user.email,
+            "role": user.role,
+            "created_at": user.created_at.isoformat() if user.created_at else None
+        } for user in users]
+        
+        return jsonify({
+            "users": users_list,
+            "count": len(users_list)
+        }), 200
+        
+    except Exception as e:
+        app_logger.exception(f"List vendor users error: {e}")
+        return jsonify({"error": "Failed to retrieve users"}), 500
+
+
+@bp.route('/users/<int:user_id>', methods=['DELETE'])
+@login_required
+@role_required(['vendor'])  # Only vendors can delete users
+def delete_vendor_user(user_id):
+    """
+    DELETE /api/vendor/users/<user_id>
+    Delete a subuser
+    """
+    try:
+        vendor_id = get_vendor_id()
+        if not vendor_id:
+            return jsonify({"error": "Vendor ID not found"}), 401
+        
+        user = VendorUser.query.filter_by(id=user_id, vendor_id=vendor_id).first()
+        if not user:
+            return jsonify({"error": "User not found"}), 404
+        
+        db.session.delete(user)
+        db.session.commit()
+        
+        app_logger.info(f"Vendor #{vendor_id} deleted subuser #{user_id}")
+        
+        return jsonify({"message": "User deleted successfully"}), 200
+        
+    except Exception as e:
+        db.session.rollback()
+        app_logger.exception(f"Delete vendor user error: {e}")
+        return jsonify({"error": "Failed to delete user"}), 500

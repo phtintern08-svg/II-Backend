@@ -17,16 +17,17 @@ from app_pkg.logger_config import app_logger
 from config import Config
 
 
-def generate_token(user_id, role, username=None, email=None, phone=None):
+def generate_token(user_id, role, username=None, email=None, phone=None, vendor_id=None):
     """
     Generate a JWT token for authenticated user
     
     Args:
         user_id: User ID
-        role: User role (admin, customer, vendor, rider)
+        role: User role (admin, customer, vendor, rider, subuser)
         username: Optional username
         email: Optional email
         phone: Optional phone
+        vendor_id: Optional vendor_id (for subusers)
     
     Returns:
         str: JWT token
@@ -40,6 +41,9 @@ def generate_token(user_id, role, username=None, email=None, phone=None):
         'exp': datetime.utcnow() + timedelta(days=7),  # Token expires in 7 days
         'iat': datetime.utcnow()
     }
+    # Add vendor_id to payload for subusers
+    if vendor_id is not None:
+        payload['vendor_id'] = vendor_id
     
     secret_key = current_app.config.get('SECRET_KEY')
     if not secret_key:
@@ -429,6 +433,9 @@ def verify_user_exists(user_id, role):
             user = Customer.query.get(user_id)
         elif role == 'vendor':
             user = Vendor.query.get(user_id)
+        elif role == 'subuser':
+            from app_pkg.models import VendorUser
+            user = VendorUser.query.get(user_id)
         elif role == 'rider':
             # 🔥 DIAGNOSTIC: Enhanced logging for rider verification
             bind_key = getattr(Rider, '__bind_key__', 'NOT SET')

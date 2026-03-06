@@ -113,6 +113,24 @@ class Vendor(db.Model):
     def __repr__(self):
         return f'<Vendor {self.username}>'
 
+class VendorUser(db.Model):
+    __bind_key__ = 'vendor'
+    __tablename__ = 'vendor_users'
+    
+    id = db.Column(db.Integer, primary_key=True)
+    vendor_id = db.Column(db.Integer, db.ForeignKey('vendors.id'), nullable=False)
+    name = db.Column(db.String(120), nullable=False)
+    email = db.Column(db.String(120), unique=True, nullable=False)
+    password_hash = db.Column(db.String(255), nullable=False)
+    role = db.Column(db.String(20), default='subuser', nullable=False)  # 'vendor' or 'subuser'
+    created_at = db.Column(db.DateTime, default=datetime.utcnow)
+    
+    # Relationship
+    vendor = db.relationship('Vendor', backref=db.backref('subusers', lazy=True))
+    
+    def __repr__(self):
+        return f'<VendorUser {self.email} (Vendor {self.vendor_id})>'
+
 class VendorDocument(db.Model):
     __bind_key__ = 'vendor'
     __tablename__ = 'vendor_documents'
