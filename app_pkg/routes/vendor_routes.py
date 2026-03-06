@@ -1381,6 +1381,24 @@ def update_production_stage(order_id):
         stage_label = stage_labels.get(stage_id, 'In Production')
         order.status = new_status
         
+        # Extract rider and delivery details (for notification and storage)
+        delivery_method = data.get('delivery_method')
+        rider_name = data.get('rider_name')
+        rider_phone = data.get('rider_phone')
+        expected_delivery = data.get('expected_delivery')
+        
+        # Store rider and delivery details when order is dispatched
+        if stage_id == 'dispatched':
+            # Store delivery method and rider details
+            if delivery_method:
+                order.delivery_method = delivery_method
+            if rider_name:
+                order.rider_name = rider_name
+            if rider_phone:
+                order.rider_phone = rider_phone
+            if expected_delivery:
+                order.expected_delivery = expected_delivery
+        
         # Record status history
         status_record = OrderStatusHistory(
             order_id=order.id,
@@ -1406,11 +1424,23 @@ def update_production_stage(order_id):
         db.session.add(admin_notif)
         
         # Notify Customer
+        notification_message = f'Great news! Your order ORD-{order.id} is now in "{stage_label}" stage.'
+        
+        # Add rider information to notification if order is dispatched
+        if stage_id == 'dispatched' and delivery_method:
+            if delivery_method == 'inhouse' and rider_name:
+                notification_message += f' Your order will be delivered by {rider_name}'
+                if expected_delivery:
+                    notification_message += f' between {expected_delivery}'
+                notification_message += '.'
+            elif delivery_method == 'platform':
+                notification_message += ' A platform rider will be assigned shortly.'
+        
         customer_notif = Notification(
             user_id=order.customer_id,
             user_type='customer',
             title=f'Your Order Update',
-            message=f'Great news! Your order ORD-{order.id} is now in "{stage_label}" stage.',
+            message=notification_message,
             type='order'
         )
         db.session.add(customer_notif)
