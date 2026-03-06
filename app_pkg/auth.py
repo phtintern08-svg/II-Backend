@@ -17,7 +17,7 @@ from app_pkg.logger_config import app_logger
 from config import Config
 
 
-def generate_token(user_id, role, username=None, email=None, phone=None, vendor_id=None):
+def generate_token(user_id, role, username=None, email=None, phone=None, vendor_id=None, permissions=None):
     """
     Generate a JWT token for authenticated user
     
@@ -28,6 +28,7 @@ def generate_token(user_id, role, username=None, email=None, phone=None, vendor_
         email: Optional email
         phone: Optional phone
         vendor_id: Optional vendor_id (for subusers)
+        permissions: Optional permissions array (for subusers)
     
     Returns:
         str: JWT token
@@ -44,6 +45,9 @@ def generate_token(user_id, role, username=None, email=None, phone=None, vendor_
     # Add vendor_id to payload for subusers
     if vendor_id is not None:
         payload['vendor_id'] = vendor_id
+    # Add permissions to payload for subusers
+    if permissions is not None:
+        payload['permissions'] = permissions
     
     secret_key = current_app.config.get('SECRET_KEY')
     if not secret_key:

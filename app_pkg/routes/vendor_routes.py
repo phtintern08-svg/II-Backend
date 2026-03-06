@@ -26,11 +26,12 @@ bp = Blueprint('vendor', __name__, url_prefix='/api/vendor')
 
 @bp.route('/profile', methods=['GET'])
 @login_required
-@role_required(['vendor'])
+@role_required(['vendor', 'subuser'])
 def get_vendor_profile():
     """
     GET /api/vendor/profile
     Get vendor profile information
+    Allows subusers with 'profile' permission
     """
     try:
         # ✅ CRITICAL: Verify request.user_id is set by @login_required decorator
@@ -43,7 +44,27 @@ def get_vendor_profile():
         
         app_logger.info(f"TOKEN OK → user_id={user_id}, role={role}")
         
-        vendor = Vendor.query.get(user_id)
+        # Get vendor_id (works for both vendor and subuser)
+        vendor_id = get_vendor_id()
+        if not vendor_id:
+            return jsonify({"error": "Vendor ID not found"}), 401
+        
+        # For subusers, check if they have profile permission
+        if role == 'subuser':
+            identity = getattr(request, 'current_user', None)
+            permissions = identity.get('permissions', []) if identity else []
+            # Get permissions from database if not in token
+            if not permissions:
+                subuser = VendorUser.query.get(user_id)
+                if subuser and subuser.permissions:
+                    permissions = subuser.permissions
+            if 'profile' not in permissions:
+                return jsonify({
+                    "error": "Permission denied",
+                    "message": "You do not have permission to view profile"
+                }), 403
+        
+        vendor = Vendor.query.get(vendor_id)
         if not vendor:
             return jsonify({"error": "Vendor not found"}), 404
         
@@ -83,8 +104,14 @@ def update_vendor_profile():
     """
     PUT /api/vendor/profile
     Update vendor profile information
+    Only vendors can update profile (subusers cannot)
     """
     try:
+        # Check if user is vendor (not subuser)
+        perm_check = require_vendor_only()
+        if perm_check:
+            return perm_check
+        
         data = request.get_json()
         vendor = Vendor.query.get(request.user_id)
         
@@ -722,7 +749,7 @@ def get_quotation_status():
 
 @bp.route('/capacity', methods=['GET'])
 @login_required
-@role_required(['vendor'])
+@role_required(['vendor', 'subuser'])
 def get_vendor_capacity():
     """
     GET /api/vendor/capacity
@@ -735,7 +762,28 @@ def get_vendor_capacity():
     Capacity fields = editable (from vendor_capacity).
     """
     try:
-        vendor_id = request.user_id
+        # Get vendor_id (works for both vendor and subuser)
+        vendor_id = get_vendor_id()
+        if not vendor_id:
+            return jsonify({"error": "Vendor ID not found"}), 401
+        
+        # For subusers, check if they have capacity permission
+        role = getattr(request, 'role', None)
+        if role == 'subuser':
+            identity = getattr(request, 'current_user', None)
+            permissions = identity.get('permissions', []) if identity else []
+            # Get permissions from database if not in token
+            if not permissions:
+                user_id = getattr(request, 'user_id', None)
+                subuser = VendorUser.query.get(user_id)
+                if subuser and subuser.permissions:
+                    permissions = subuser.permissions
+            if 'capacity' not in permissions:
+                return jsonify({
+                    "error": "Permission denied",
+                    "message": "You do not have permission to view capacity"
+                }), 403
+        
         vendor_db = current_app.config.get('DB_NAME_VENDOR', 'impromptuindian_vendor')
         admin_db = current_app.config.get('DB_NAME_ADMIN', 'impromptuindian_admin')
         if not all(c.isalnum() or c == '_' for c in vendor_db):
@@ -826,9 +874,17 @@ def upsert_vendor_capacity():
     Create or update production capacity ONLY.
     Body: { product_catalog_id, daily_capacity, max_bulk_capacity?, lead_time_days? }
     Price is NEVER accepted - vendor can only edit capacity. Price comes from vendor_quotations (admin-controlled).
+    Only vendors can update capacity (subusers cannot)
     """
     try:
-        vendor_id = request.user_id
+        # Check if user is vendor (not subuser)
+        perm_check = require_vendor_only()
+        if perm_check:
+            return perm_check
+        
+        vendor_id = get_vendor_id()
+        if not vendor_id:
+            return jsonify({"error": "Vendor ID not found"}), 401
         vendor = Vendor.query.get(vendor_id)
         if not vendor:
             return jsonify({"error": "Vendor not found"}), 404
@@ -906,10 +962,20 @@ def delete_vendor_capacity(product_catalog_id):
     """
     DELETE /api/vendor/capacity/<product_catalog_id>
     Soft-deactivate (set capacity to 0) - vendor keeps quotation, just clears capacity.
+    Only vendors can delete capacity (subusers cannot)
     """
     try:
+        # Check if user is vendor (not subuser)
+        perm_check = require_vendor_only()
+        if perm_check:
+            return perm_check
+        
+        vendor_id = get_vendor_id()
+        if not vendor_id:
+            return jsonify({"error": "Vendor ID not found"}), 401
+        
         cap = VendorCapacity.query.filter_by(
-            vendor_id=request.user_id,
+            vendor_id=vendor_id,
             product_catalog_id=product_catalog_id
         ).first()
 
@@ -1272,15 +1338,39 @@ def get_dashboard_stats():
 
 @bp.route('/notifications', methods=['GET'])
 @login_required
-@role_required(['vendor'])
+@role_required(['vendor', 'subuser'])
 def get_notifications():
     """
     GET /api/vendor/notifications
     Get vendor notifications
+    Allows subusers with 'notifications' permission
     """
     try:
+        # Get vendor_id (works for both vendor and subuser)
+        vendor_id = get_vendor_id()
+        if not vendor_id:
+            return jsonify({"error": "Vendor ID not found"}), 401
+        
+        # For subusers, check if they have notifications permission
+        role = getattr(request, 'role', None)
+        if role == 'subuser':
+            identity = getattr(request, 'current_user', None)
+            permissions = identity.get('permissions', []) if identity else []
+            # Get permissions from database if not in token
+            if not permissions:
+                user_id = getattr(request, 'user_id', None)
+                subuser = VendorUser.query.get(user_id)
+                if subuser and subuser.permissions:
+                    permissions = subuser.permissions
+            if 'notifications' not in permissions:
+                return jsonify({
+                    "error": "Permission denied",
+                    "message": "You do not have permission to view notifications"
+                }), 403
+        
+        # Notifications are stored with vendor_id, not user_id
         notifs = Notification.query.filter_by(
-            user_id=request.user_id,
+            user_id=vendor_id,
             user_type='vendor'
         ).order_by(Notification.created_at.desc()).all()
         
@@ -1300,18 +1390,42 @@ def get_notifications():
 
 @bp.route('/notifications/<int:notif_id>/read', methods=['POST'])
 @login_required
-@role_required(['vendor'])
+@role_required(['vendor', 'subuser'])
 def mark_notification_read(notif_id):
     """
     POST /api/vendor/notifications/<notif_id>/read
     Mark notification as read
+    Allows subusers with 'notifications' permission
     """
     try:
+        # Get vendor_id (works for both vendor and subuser)
+        vendor_id = get_vendor_id()
+        if not vendor_id:
+            return jsonify({"error": "Vendor ID not found"}), 401
+        
+        # For subusers, check if they have notifications permission
+        role = getattr(request, 'role', None)
+        if role == 'subuser':
+            identity = getattr(request, 'current_user', None)
+            permissions = identity.get('permissions', []) if identity else []
+            # Get permissions from database if not in token
+            if not permissions:
+                user_id = getattr(request, 'user_id', None)
+                subuser = VendorUser.query.get(user_id)
+                if subuser and subuser.permissions:
+                    permissions = subuser.permissions
+            if 'notifications' not in permissions:
+                return jsonify({
+                    "error": "Permission denied",
+                    "message": "You do not have permission to mark notifications as read"
+                }), 403
+        
         notif = Notification.query.get(notif_id)
         if not notif:
             return jsonify({"error": "Notification not found"}), 404
         
-        if notif.user_id != request.user_id:
+        # Check if notification belongs to this vendor
+        if notif.user_id != vendor_id:
             return jsonify({"error": "Unauthorized"}), 403
         
         notif.is_read = True
@@ -2025,6 +2139,64 @@ def get_vendor_id():
             return subuser.vendor_id
         return None
     return None
+
+
+def require_vendor_only():
+    """
+    Check if the current user is a vendor (not a subuser).
+    Returns error response if user is subuser, None if vendor.
+    
+    Returns:
+        Response or None: Error response if subuser, None if vendor
+    """
+    identity = getattr(request, 'current_user', None)
+    if not identity:
+        role = getattr(request, 'role', None)
+    else:
+        role = identity.get('role')
+    
+    if role != 'vendor':
+        return jsonify({
+            "error": "Vendor access only",
+            "message": "This action requires vendor privileges. Subusers do not have access to this feature."
+        }), 403
+    
+    return None
+
+
+def get_user_permissions():
+    """
+    Get permissions for the current user (subuser only).
+    Returns empty list for vendors (they have full access).
+    
+    Returns:
+        list: Array of permission strings
+    """
+    identity = getattr(request, 'current_user', None)
+    if not identity:
+        role = getattr(request, 'role', None)
+        user_id = getattr(request, 'user_id', None)
+    else:
+        role = identity.get('role')
+        user_id = identity.get('user_id')
+    
+    if role != 'subuser':
+        return []  # Vendors have full access, no permissions array needed
+    
+    # Try to get permissions from token first
+    if identity:
+        permissions = identity.get('permissions', [])
+        if permissions:
+            return permissions
+    
+    # Fallback: get from database
+    if user_id:
+        subuser = VendorUser.query.get(user_id)
+        if subuser and subuser.permissions:
+            return subuser.permissions
+    
+    # Default permissions for backward compatibility
+    return ['dashboard', 'orders']
 
 
 # ============================================================================

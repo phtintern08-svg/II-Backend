@@ -482,18 +482,22 @@ def authenticate():
                 "username": vendor.username,
                 "email": vendor.email,
                 "phone": vendor.phone,
+                "permissions": [],  # Vendors have full access, no permissions array needed
                 "token": token,  # Include token in response for localStorage (cookie is HttpOnly)
                 "redirect_url": redirect_url
             })
         elif role_found == 'subuser':
             subuser = user
-            # Generate token with vendor_id included for subuser
+            # Get permissions from database
+            permissions = subuser.permissions if subuser.permissions else ['dashboard', 'orders']
+            # Generate token with vendor_id and permissions included for subuser
             token = generate_token(
                 user_id=subuser.id,
                 role="subuser",
                 username=subuser.name,
                 email=subuser.email,
-                vendor_id=subuser.vendor_id
+                vendor_id=subuser.vendor_id,
+                permissions=permissions
             )
             # Add vendor_id to token payload by modifying the token generation
             # Since generate_token doesn't support vendor_id, we'll need to update auth.py
