@@ -2049,6 +2049,7 @@ def add_vendor_user():
         name = data.get('name', '').strip()
         email = data.get('email', '').strip().lower()
         password = data.get('password', '').strip()
+        permissions = data.get('permissions', [])
         
         # Validation
         if not name or not email or not password:
@@ -2056,6 +2057,16 @@ def add_vendor_user():
         
         if len(password) < 6:
             return jsonify({"error": "Password must be at least 6 characters"}), 400
+        
+        # Validate permissions
+        valid_permissions = ['dashboard', 'orders', 'payments', 'capacity', 'notifications', 'profile']
+        if not isinstance(permissions, list) or len(permissions) == 0:
+            return jsonify({"error": "At least one permission must be selected"}), 400
+        
+        # Filter and validate permissions
+        permissions = [p for p in permissions if p in valid_permissions]
+        if len(permissions) == 0:
+            return jsonify({"error": "Invalid permissions selected"}), 400
         
         # Check if email already exists
         existing_user = VendorUser.query.filter_by(email=email).first()
@@ -2074,13 +2085,14 @@ def add_vendor_user():
             name=name,
             email=email,
             password_hash=password_hash,
-            role='subuser'
+            role='subuser',
+            permissions=permissions
         )
         
         db.session.add(new_user)
         db.session.commit()
         
-        app_logger.info(f"Vendor #{vendor_id} created subuser: {email}")
+        app_logger.info(f"Vendor #{vendor_id} created subuser: {email} with permissions: {permissions}")
         
         return jsonify({
             "message": "User created successfully",
@@ -2089,6 +2101,7 @@ def add_vendor_user():
                 "name": new_user.name,
                 "email": new_user.email,
                 "role": new_user.role,
+                "permissions": new_user.permissions if new_user.permissions else [],
                 "created_at": new_user.created_at.isoformat() if new_user.created_at else None
             }
         }), 201
@@ -2119,6 +2132,7 @@ def list_vendor_users():
             "name": user.name,
             "email": user.email,
             "role": user.role,
+            "permissions": user.permissions if user.permissions else ['dashboard', 'orders'],  # Default for backward compatibility
             "created_at": user.created_at.isoformat() if user.created_at else None
         } for user in users]
         

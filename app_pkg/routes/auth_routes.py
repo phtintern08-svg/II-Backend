@@ -528,6 +528,7 @@ def authenticate():
                 "vendor_id": subuser.vendor_id,  # Include vendor_id in response
                 "name": subuser.name,
                 "email": subuser.email,
+                "permissions": subuser.permissions if subuser.permissions else ['dashboard', 'orders'],  # Include permissions
                 "token": token,  # Include token in response for localStorage (cookie is HttpOnly)
                 "redirect_url": redirect_url
             })

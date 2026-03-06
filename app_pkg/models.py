@@ -123,6 +123,7 @@ class VendorUser(db.Model):
     email = db.Column(db.String(120), unique=True, nullable=False)
     password_hash = db.Column(db.String(255), nullable=False)
     role = db.Column(db.String(20), default='subuser', nullable=False)  # 'vendor' or 'subuser'
+    permissions = db.Column(MySQLJSON, default=list)  # JSON array of permissions: ['dashboard', 'orders', 'payments', etc.]
     created_at = db.Column(db.DateTime, default=datetime.utcnow)
     
     # Relationship
