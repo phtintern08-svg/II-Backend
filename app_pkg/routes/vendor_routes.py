@@ -2243,7 +2243,7 @@ def add_vendor_user():
             return jsonify({"error": "Password must be at least 6 characters"}), 400
         
         # Validate permissions
-        valid_permissions = ['dashboard', 'orders', 'payments', 'capacity', 'notifications', 'profile']
+        valid_permissions = ['dashboard', 'orders', 'payments', 'notifications']
         if not isinstance(permissions, list) or len(permissions) == 0:
             return jsonify({"error": "At least one permission must be selected"}), 400
         
@@ -2251,6 +2251,17 @@ def add_vendor_user():
         permissions = [p for p in permissions if p in valid_permissions]
         if len(permissions) == 0:
             return jsonify({"error": "Invalid permissions selected"}), 400
+        
+        # Validate order categories
+        order_categories = data.get('order_categories', [])
+        valid_order_categories = ['new_orders', 'in_production', 'ready_for_dispatch', 'completed_orders']
+        if not isinstance(order_categories, list) or len(order_categories) == 0:
+            return jsonify({"error": "At least one order category must be selected"}), 400
+        
+        # Filter and validate order categories - only allow valid categories
+        order_categories = [cat for cat in order_categories if cat in valid_order_categories]
+        if len(order_categories) == 0:
+            return jsonify({"error": "Invalid order categories selected"}), 400
         
         # Check if email already exists
         existing_user = VendorUser.query.filter_by(email=email).first()
@@ -2270,13 +2281,14 @@ def add_vendor_user():
             email=email,
             password_hash=password_hash,
             role='subuser',
-            permissions=permissions
+            permissions=permissions,
+            order_categories=order_categories
         )
         
         db.session.add(new_user)
         db.session.commit()
         
-        app_logger.info(f"Vendor #{vendor_id} created subuser: {email} with permissions: {permissions}")
+        app_logger.info(f"Vendor #{vendor_id} created subuser: {email} with permissions: {permissions}, order_categories: {order_categories}")
         
         return jsonify({
             "message": "User created successfully",
@@ -2317,6 +2329,7 @@ def list_vendor_users():
             "email": user.email,
             "role": user.role,
             "permissions": user.permissions if user.permissions else ['dashboard', 'orders'],  # Default for backward compatibility
+            "order_categories": user.order_categories if user.order_categories else ['new_orders', 'in_production', 'ready_for_dispatch', 'completed_orders'],  # Default for backward compatibility
             "created_at": user.created_at.isoformat() if user.created_at else None
         } for user in users]
         
