@@ -49,33 +49,27 @@ def get_vendor_profile():
         
         # If SUBUSER - return subuser data from token
         if role == 'subuser':
-            # Get permissions from token or database
-            permissions = identity.get('permissions', []) if identity else []
-            if not permissions:
-                subuser = VendorUser.query.filter_by(id=user_id).first()
-                if subuser and subuser.permissions:
-                    permissions = subuser.permissions
-            
-            # 🔥 SECURITY: Enforce that subusers can only have dashboard and orders
-            # Filter out any other permissions
-            allowed_permissions = ["dashboard", "orders"]
-            permissions = [p for p in permissions if p in allowed_permissions]
-            
-            # Get subuser data from database for username/email
+            # Get permissions from database (source of truth - what vendor selected)
             subuser = VendorUser.query.filter_by(id=user_id).first()
             if not subuser:
                 return jsonify({"error": "Subuser not found"}), 404
             
-            # Check if subuser has profile permission (optional check)
-            if 'profile' not in permissions:
-                # Still return basic data, but note they don't have profile permission
-                pass
+            # Get permissions from database (what vendor selected when creating subuser)
+            permissions = subuser.permissions if subuser.permissions else []
+            
+            # Fallback to token permissions if database doesn't have them
+            if not permissions and identity:
+                permissions = identity.get('permissions', [])
+            
+            # Default to dashboard and orders if no permissions set
+            if not permissions:
+                permissions = ['dashboard', 'orders']
             
             return jsonify({
-                "username": subuser.name or identity.get('username', ''),
-                "email": subuser.email or identity.get('email', ''),
+                "username": subuser.name or identity.get('username', '') if identity else '',
+                "email": subuser.email or identity.get('email', '') if identity else '',
                 "role": "subuser",
-                "permissions": permissions
+                "permissions": permissions  # Return actual permissions selected by vendor
             }), 200
         
         # If VENDOR - return vendor data from database
@@ -2249,15 +2243,14 @@ def add_vendor_user():
             return jsonify({"error": "Password must be at least 6 characters"}), 400
         
         # Validate permissions
-        # 🔥 SECURITY: Subusers can only have dashboard and orders permissions
-        allowed_permissions = ['dashboard', 'orders']
+        valid_permissions = ['dashboard', 'orders', 'payments', 'capacity', 'notifications', 'profile']
         if not isinstance(permissions, list) or len(permissions) == 0:
             return jsonify({"error": "At least one permission must be selected"}), 400
         
-        # Filter permissions to only allow dashboard and orders
-        permissions = [p for p in permissions if p in allowed_permissions]
+        # Filter and validate permissions - only allow valid permissions
+        permissions = [p for p in permissions if p in valid_permissions]
         if len(permissions) == 0:
-            return jsonify({"error": "At least one permission must be selected (dashboard or orders)"}), 400
+            return jsonify({"error": "Invalid permissions selected"}), 400
         
         # Check if email already exists
         existing_user = VendorUser.query.filter_by(email=email).first()
