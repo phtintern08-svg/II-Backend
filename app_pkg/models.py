@@ -313,6 +313,12 @@ class Order(db.Model):
     defect_reported = db.Column(db.Boolean, default=False)
     feedback_comment = db.Column(db.Text)
     
+    # Delivery & Rider Information (added via migration)
+    delivery_method = db.Column(db.String(20), nullable=True)  # 'inhouse' or 'platform'
+    rider_name = db.Column(db.String(100), nullable=True)  # In-house rider name
+    rider_phone = db.Column(db.String(20), nullable=True)  # In-house rider phone
+    expected_delivery = db.Column(db.String(50), nullable=True)  # Expected delivery time (e.g., "by 6:00 PM")
+    
     # Financials
     vendor_initial_payout = db.Column(db.Float, default=0.0)
     vendor_final_payout = db.Column(db.Float, default=0.0)
