@@ -68,6 +68,21 @@ def get_vendor_profile():
         if not vendor:
             return jsonify({"error": "Vendor not found"}), 404
         
+        # Get role and permissions from token/identity
+        identity = getattr(request, 'current_user', None)
+        user_role = role  # From request.role set by decorator
+        user_permissions = []
+        
+        if user_role == 'subuser':
+            # Get permissions from token or database
+            if identity:
+                user_permissions = identity.get('permissions', [])
+            if not user_permissions:
+                subuser = VendorUser.query.get(user_id)
+                if subuser and subuser.permissions:
+                    user_permissions = subuser.permissions
+        # For vendors, permissions is empty array (they have full access)
+        
         vendor_data = {
             "id": vendor.id,
             "username": vendor.username,
@@ -87,7 +102,10 @@ def get_vendor_profile():
             "latitude": float(vendor.latitude) if vendor.latitude else None,
             "longitude": float(vendor.longitude) if vendor.longitude else None,
             "current_address": vendor.current_address,
-            "created_at": vendor.created_at.isoformat() if vendor.created_at else None
+            "created_at": vendor.created_at.isoformat() if vendor.created_at else None,
+            # Include role and permissions for frontend
+            "role": user_role,
+            "permissions": user_permissions
         }
         
         return jsonify(vendor_data), 200

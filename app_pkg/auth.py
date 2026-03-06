@@ -439,7 +439,7 @@ def verify_user_exists(user_id, role):
             user = Vendor.query.get(user_id)
         elif role == 'subuser':
             from app_pkg.models import VendorUser
-            user = VendorUser.query.get(user_id)
+            user = VendorUser.query.filter_by(id=user_id).first()
         elif role == 'rider':
             # 🔥 DIAGNOSTIC: Enhanced logging for rider verification
             bind_key = getattr(Rider, '__bind_key__', 'NOT SET')
