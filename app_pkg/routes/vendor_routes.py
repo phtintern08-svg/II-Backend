@@ -374,15 +374,16 @@ def upload_verification_document():
             
             setattr(doc_row, f"{doc_type}_meta", meta)
             
+            # Handle business_document upload (special case - no extra fields needed)
+            if doc_type == 'business_document':
+                # Business document doesn't need extra fields, just save the file
+                pass
+            
             # Save manual fields if provided
             if doc_type == 'pan' and request.form.get('pan_number'):
                 doc_row.pan_number = request.form.get('pan_number')
             if doc_type == 'aadhar' and request.form.get('aadhar_number'):
                 doc_row.aadhar_number = request.form.get('aadhar_number')
-            if doc_type == 'gst' and request.form.get('gst_number'):
-                doc_row.gst_number = request.form.get('gst_number')
-            if doc_type == 'business' and request.form.get('business_registration_number'):
-                doc_row.business_registration_number = request.form.get('business_registration_number')
             if doc_type == 'bank':
                 if request.form.get('bank_account_number'):
                     doc_row.bank_account_number = request.form.get('bank_account_number')
@@ -436,10 +437,17 @@ def submit_verification():
             doc_row.pan_number = data.get('pan_number')
         if data.get('aadhar_number'):
             doc_row.aadhar_number = data.get('aadhar_number')
-        if data.get('gst_number'):
-            doc_row.gst_number = data.get('gst_number')
-        if data.get('business_registration_number'):
-            doc_row.business_registration_number = data.get('business_registration_number')
+        # Save business details fields (only if columns exist - handle missing columns gracefully)
+        if hasattr(doc_row, 'company_unique_id') and data.get('company_unique_id'):
+            doc_row.company_unique_id = data.get('company_unique_id')
+        if hasattr(doc_row, 'company_id_number') and data.get('company_id_number'):
+            doc_row.company_id_number = data.get('company_id_number')
+        if hasattr(doc_row, 'date_of_establishment') and data.get('date_of_establishment'):
+            from datetime import datetime
+            try:
+                doc_row.date_of_establishment = datetime.strptime(data.get('date_of_establishment'), '%Y-%m-%d').date()
+            except ValueError:
+                app_logger.warning(f"Invalid date format for date_of_establishment: {data.get('date_of_establishment')}")
         if data.get('bank_account_number'):
             doc_row.bank_account_number = data.get('bank_account_number')
         if data.get('bank_holder_name'):
@@ -480,7 +488,7 @@ def get_verification_status():
         documents = {}
         if doc_row:
             from sqlalchemy.orm.attributes import flag_modified
-            for doc_type in ['pan', 'aadhar', 'gst', 'business', 'bank', 'workshop', 'signature']:
+            for doc_type in ['pan', 'aadhar', 'bank', 'workshop', 'signature', 'business_document']:
                 if hasattr(doc_row, f"{doc_type}_meta"):
                     meta = getattr(doc_row, f"{doc_type}_meta")
                     doc_data = {
@@ -499,16 +507,19 @@ def get_verification_status():
                             'adminRemarks': meta.get('remarks', '')
                         }
                     
+                    # Add file path if document exists
+                    if hasattr(doc_row, doc_type):
+                        doc_path = getattr(doc_row, doc_type)
+                        if doc_path:
+                            doc_data['file'] = doc_path
+                            doc_data['path'] = doc_path
+                    
                     # Add manual fields (CRITICAL: Frontend expects these after page refresh)
                     # These fields are used to populate hidden inputs and validate submission
                     if doc_type == 'pan':
                         doc_data['pan_number'] = doc_row.pan_number
                     if doc_type == 'aadhar':
                         doc_data['aadhar_number'] = doc_row.aadhar_number
-                    if doc_type == 'gst':
-                        doc_data['gst_number'] = doc_row.gst_number
-                    if doc_type == 'business':
-                        doc_data['business_registration_number'] = doc_row.business_registration_number
                     if doc_type == 'bank':
                         doc_data['bank_account_number'] = doc_row.bank_account_number
                         doc_data['bank_holder_name'] = doc_row.bank_holder_name
@@ -517,10 +528,24 @@ def get_verification_status():
                     
                     documents[doc_type] = doc_data
         
+        # Add business details fields to response (handle missing columns gracefully)
+        company_unique_id = None
+        company_id_number = None
+        date_of_establishment = None
+        if doc_row:
+            # Use getattr with default None to handle missing columns (before migration runs)
+            company_unique_id = getattr(doc_row, 'company_unique_id', None)
+            company_id_number = getattr(doc_row, 'company_id_number', None)
+            date_of_est = getattr(doc_row, 'date_of_establishment', None)
+            date_of_establishment = date_of_est.strftime('%Y-%m-%d') if date_of_est else None
+        
         return jsonify({
             "status": vendor.verification_status or "not-submitted",
             "documents": documents,
-            "admin_remarks": vendor.admin_remarks or ""
+            "admin_remarks": vendor.admin_remarks or "",
+            "company_unique_id": company_unique_id,
+            "company_id_number": company_id_number,
+            "date_of_establishment": date_of_establishment
         }), 200
         
     except Exception as e:

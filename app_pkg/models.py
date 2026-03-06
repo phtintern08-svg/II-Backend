@@ -133,13 +133,12 @@ class VendorDocument(db.Model):
     aadhar_meta = db.Column(MySQLJSON, default=dict)  # Default to empty dict to avoid null checks
     aadhar_number = db.Column(db.String(20))
     
-    gst = db.Column(db.String(500))  # File path string, not binary
-    gst_meta = db.Column(MySQLJSON, default=dict)  # Default to empty dict to avoid null checks
-    gst_number = db.Column(db.String(20))
-    
-    business = db.Column(db.String(500))  # File path string, not binary
-    business_meta = db.Column(MySQLJSON, default=dict)  # Default to empty dict to avoid null checks
-    business_registration_number = db.Column(db.String(50))
+    # Business Details (form fields + document upload)
+    company_unique_id = db.Column(db.String(50))  # TIN, GST, ROC, CIN, Association Registration
+    company_id_number = db.Column(db.String(100))  # ID Number
+    date_of_establishment = db.Column(db.Date)  # Date of establishment
+    business_document = db.Column(db.String(500))  # File path string for the selected document type image
+    business_document_meta = db.Column(MySQLJSON, default=dict)  # Metadata for business document
     
     bank = db.Column(db.String(500))  # File path string, not binary
     bank_meta = db.Column(MySQLJSON, default=dict)  # Default to empty dict to avoid null checks

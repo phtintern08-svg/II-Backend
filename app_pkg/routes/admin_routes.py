@@ -1581,7 +1581,7 @@ def approve_vendor(vendor_id):
         doc_row = VendorDocument.query.filter_by(vendor_id=vendor_id).first()
         if doc_row:
             from sqlalchemy.orm.attributes import flag_modified
-            for doc_type in ['pan', 'aadhar', 'gst', 'business', 'bank', 'workshop', 'signature']:
+            for doc_type in ['pan', 'aadhar', 'bank', 'workshop', 'signature', 'business_document']:
                 meta_attr = f"{doc_type}_meta"
                 if hasattr(doc_row, meta_attr):
                     meta = getattr(doc_row, meta_attr)
@@ -1656,7 +1656,7 @@ def reject_vendor(vendor_id):
                         flag_modified(doc_row, meta_attr)
             else:
                 # Reject all documents
-                for doc_type in ['pan', 'aadhar', 'gst', 'business', 'bank', 'workshop', 'signature', 'quotation']:
+                for doc_type in ['pan', 'aadhar', 'bank', 'workshop', 'signature', 'business_document', 'quotation']:
                     meta_attr = f"{doc_type}_meta"
                     if hasattr(doc_row, meta_attr):
                         meta = getattr(doc_row, meta_attr)
@@ -2282,7 +2282,7 @@ def get_vendor_requests():
                 doc_row = VendorDocument.query.filter_by(vendor_id=v.id).first()
                 documents = {}
                 if doc_row:
-                    for doc_type in ['pan', 'aadhar', 'gst', 'business', 'bank', 'workshop', 'signature']:
+                    for doc_type in ['pan', 'aadhar', 'bank', 'workshop', 'signature', 'business_document']:
                         if hasattr(doc_row, f"{doc_type}_meta"):
                             meta = getattr(doc_row, f"{doc_type}_meta")
                             if meta:
@@ -2295,18 +2295,35 @@ def get_vendor_requests():
                                     'adminRemarks': meta.get('remarks', ''),
                                     'previousRejectionReason': meta.get('previous_rejection_reason', '')
                                 }
+                                # Add file path if document exists
+                                if hasattr(doc_row, doc_type):
+                                    doc_path = getattr(doc_row, doc_type)
+                                    if doc_path:
+                                        doc_data['file'] = doc_path
+                                        doc_data['path'] = doc_path
                                 if doc_type == 'pan':
                                     doc_data['pan_number'] = doc_row.pan_number
                                 if doc_type == 'aadhar':
                                     doc_data['aadhar_number'] = doc_row.aadhar_number
-                                if doc_type == 'gst':
-                                    doc_data['gst_number'] = doc_row.gst_number
                                 if doc_type == 'bank':
                                     doc_data['bank_account_number'] = doc_row.bank_account_number
                                     doc_data['bank_holder_name'] = doc_row.bank_holder_name
                                     doc_data['bank_branch'] = doc_row.bank_branch
                                     doc_data['ifsc_code'] = doc_row.ifsc_code
                                 documents[doc_type] = doc_data
+                
+                # Add business details fields (handle missing columns gracefully)
+                business_details = {}
+                if doc_row:
+                    # Use getattr with default None to handle missing columns (before migration runs)
+                    company_unique_id = getattr(doc_row, 'company_unique_id', None)
+                    company_id_number = getattr(doc_row, 'company_id_number', None)
+                    date_of_est = getattr(doc_row, 'date_of_establishment', None)
+                    business_details = {
+                        'company_unique_id': company_unique_id,
+                        'company_id_number': company_id_number,
+                        'date_of_establishment': date_of_est.strftime('%Y-%m-%d') if date_of_est else None
+                    }
                 
                 result.append({
                     "id": v.id,
@@ -2315,6 +2332,7 @@ def get_vendor_requests():
                     "submitted": v.created_at.strftime('%Y-%m-%d') if v.created_at else "N/A",
                     "status": v.verification_status or "pending",
                     "documents": documents,
+                    "business_details": business_details,
                     "contact": {
                         "email": v.email or "N/A",
                         "phone": v.phone or "N/A"
@@ -2348,7 +2366,7 @@ def get_rejected_vendors():
                 doc_row = VendorDocument.query.filter_by(vendor_id=v.id).first()
                 documents = {}
                 if doc_row:
-                    for doc_type in ['pan', 'aadhar', 'gst', 'business', 'bank', 'workshop', 'signature']:
+                    for doc_type in ['pan', 'aadhar', 'bank', 'workshop', 'signature', 'business_document']:
                         if hasattr(doc_row, f"{doc_type}_meta"):
                             meta = getattr(doc_row, f"{doc_type}_meta")
                             if meta:
@@ -2359,7 +2377,26 @@ def get_rejected_vendors():
                                     'uploadedDate': meta.get('uploaded_at'),
                                     'adminRemarks': meta.get('remarks')
                                 }
+                                # Add file path if document exists
+                                if hasattr(doc_row, doc_type):
+                                    doc_path = getattr(doc_row, doc_type)
+                                    if doc_path:
+                                        doc_data['file'] = doc_path
+                                        doc_data['path'] = doc_path
                                 documents[doc_type] = doc_data
+                
+                # Add business details fields (handle missing columns gracefully)
+                business_details = {}
+                if doc_row:
+                    # Use getattr with default None to handle missing columns (before migration runs)
+                    company_unique_id = getattr(doc_row, 'company_unique_id', None)
+                    company_id_number = getattr(doc_row, 'company_id_number', None)
+                    date_of_est = getattr(doc_row, 'date_of_establishment', None)
+                    business_details = {
+                        'company_unique_id': company_unique_id,
+                        'company_id_number': company_id_number,
+                        'date_of_establishment': date_of_est.strftime('%Y-%m-%d') if date_of_est else None
+                    }
                 
                 result.append({
                     'id': v.id,
@@ -2370,7 +2407,8 @@ def get_rejected_vendors():
                     'status': v.verification_status,
                     'submitted': v.created_at.strftime('%Y-%m-%d') if v.created_at else "N/A",
                     'adminRemarks': v.admin_remarks,
-                    'documents': documents
+                    'documents': documents,
+                    'business_details': business_details
                 })
             except Exception as e:
                 app_logger.error(f"Error processing vendor {v.id}: {e}")
