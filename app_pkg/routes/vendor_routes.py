@@ -31,7 +31,7 @@ def get_vendor_profile():
     """
     GET /api/vendor/profile
     Get vendor profile information
-    Allows subusers with 'profile' permission
+    Returns different data based on role (vendor vs subuser)
     """
     try:
         # ✅ CRITICAL: Verify request.user_id is set by @login_required decorator
@@ -44,44 +44,44 @@ def get_vendor_profile():
         
         app_logger.info(f"TOKEN OK → user_id={user_id}, role={role}")
         
-        # Get vendor_id (works for both vendor and subuser)
-        vendor_id = get_vendor_id()
-        if not vendor_id:
-            return jsonify({"error": "Vendor ID not found"}), 401
+        # Get identity from JWT token
+        identity = getattr(request, 'current_user', None)
         
-        # For subusers, check if they have profile permission
+        # If SUBUSER - return subuser data from token
         if role == 'subuser':
-            identity = getattr(request, 'current_user', None)
+            # Get permissions from token or database
             permissions = identity.get('permissions', []) if identity else []
-            # Get permissions from database if not in token
             if not permissions:
-                subuser = VendorUser.query.get(user_id)
+                subuser = VendorUser.query.filter_by(id=user_id).first()
                 if subuser and subuser.permissions:
                     permissions = subuser.permissions
+            
+            # 🔥 SECURITY: Enforce that subusers can only have dashboard and orders
+            # Filter out any other permissions
+            allowed_permissions = ["dashboard", "orders"]
+            permissions = [p for p in permissions if p in allowed_permissions]
+            
+            # Get subuser data from database for username/email
+            subuser = VendorUser.query.filter_by(id=user_id).first()
+            if not subuser:
+                return jsonify({"error": "Subuser not found"}), 404
+            
+            # Check if subuser has profile permission (optional check)
             if 'profile' not in permissions:
-                return jsonify({
-                    "error": "Permission denied",
-                    "message": "You do not have permission to view profile"
-                }), 403
+                # Still return basic data, but note they don't have profile permission
+                pass
+            
+            return jsonify({
+                "username": subuser.name or identity.get('username', ''),
+                "email": subuser.email or identity.get('email', ''),
+                "role": "subuser",
+                "permissions": permissions
+            }), 200
         
-        vendor = Vendor.query.get(vendor_id)
+        # If VENDOR - return vendor data from database
+        vendor = Vendor.query.get(user_id)
         if not vendor:
             return jsonify({"error": "Vendor not found"}), 404
-        
-        # Get role and permissions from token/identity
-        identity = getattr(request, 'current_user', None)
-        user_role = role  # From request.role set by decorator
-        user_permissions = []
-        
-        if user_role == 'subuser':
-            # Get permissions from token or database
-            if identity:
-                user_permissions = identity.get('permissions', [])
-            if not user_permissions:
-                subuser = VendorUser.query.get(user_id)
-                if subuser and subuser.permissions:
-                    user_permissions = subuser.permissions
-        # For vendors, permissions is empty array (they have full access)
         
         vendor_data = {
             "id": vendor.id,
@@ -104,8 +104,8 @@ def get_vendor_profile():
             "current_address": vendor.current_address,
             "created_at": vendor.created_at.isoformat() if vendor.created_at else None,
             # Include role and permissions for frontend
-            "role": user_role,
-            "permissions": user_permissions
+            "role": "vendor",
+            "permissions": []  # Vendors have full access, no permissions array needed
         }
         
         return jsonify(vendor_data), 200
@@ -2249,14 +2249,15 @@ def add_vendor_user():
             return jsonify({"error": "Password must be at least 6 characters"}), 400
         
         # Validate permissions
-        valid_permissions = ['dashboard', 'orders', 'payments', 'capacity', 'notifications', 'profile']
+        # 🔥 SECURITY: Subusers can only have dashboard and orders permissions
+        allowed_permissions = ['dashboard', 'orders']
         if not isinstance(permissions, list) or len(permissions) == 0:
             return jsonify({"error": "At least one permission must be selected"}), 400
         
-        # Filter and validate permissions
-        permissions = [p for p in permissions if p in valid_permissions]
+        # Filter permissions to only allow dashboard and orders
+        permissions = [p for p in permissions if p in allowed_permissions]
         if len(permissions) == 0:
-            return jsonify({"error": "Invalid permissions selected"}), 400
+            return jsonify({"error": "At least one permission must be selected (dashboard or orders)"}), 400
         
         # Check if email already exists
         existing_user = VendorUser.query.filter_by(email=email).first()
