@@ -2346,16 +2346,22 @@ def add_vendor_user():
         if len(permissions) == 0:
             return jsonify({"error": "Invalid permissions selected"}), 400
         
-        # Validate order categories
+        # Validate order categories (only required if orders permission is selected)
         order_categories = data.get('order_categories', [])
         valid_order_categories = ['new_orders', 'in_production', 'ready_for_dispatch', 'completed_orders']
-        if not isinstance(order_categories, list) or len(order_categories) == 0:
-            return jsonify({"error": "At least one order category must be selected"}), 400
         
-        # Filter and validate order categories - only allow valid categories
-        order_categories = [cat for cat in order_categories if cat in valid_order_categories]
-        if len(order_categories) == 0:
-            return jsonify({"error": "Invalid order categories selected"}), 400
+        # Only validate order_categories if orders permission is selected
+        if 'orders' in permissions:
+            if not isinstance(order_categories, list) or len(order_categories) == 0:
+                return jsonify({"error": "At least one order category must be selected when Orders permission is enabled"}), 400
+            
+            # Filter and validate order categories - only allow valid categories
+            order_categories = [cat for cat in order_categories if cat in valid_order_categories]
+            if len(order_categories) == 0:
+                return jsonify({"error": "Invalid order categories selected"}), 400
+        else:
+            # If orders permission is not selected, set order_categories to empty array
+            order_categories = []
         
         # Check if email already exists
         existing_user = VendorUser.query.filter_by(email=email).first()
