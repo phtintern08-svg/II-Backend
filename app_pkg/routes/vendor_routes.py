@@ -427,9 +427,9 @@ def upload_verification_document():
             
             setattr(doc_row, f"{doc_type}_meta", meta)
             
-            # Handle business_document upload (special case - no extra fields needed)
-            if doc_type == 'business_document':
-                # Business document doesn't need extra fields, just save the file
+            # Handle business_document or business_details upload (special case - no extra fields needed for file)
+            if doc_type == 'business_document' or doc_type == 'business_details':
+                # Business document doesn't need extra fields in upload, form fields are saved separately
                 pass
             
             # Save manual fields if provided
@@ -541,7 +541,7 @@ def get_verification_status():
         documents = {}
         if doc_row:
             from sqlalchemy.orm.attributes import flag_modified
-            for doc_type in ['pan', 'aadhar', 'bank', 'workshop', 'signature', 'business_document']:
+            for doc_type in ['pan', 'aadhar', 'bank', 'workshop', 'signature', 'business_document', 'business_details']:
                 if hasattr(doc_row, f"{doc_type}_meta"):
                     meta = getattr(doc_row, f"{doc_type}_meta")
                     doc_data = {
