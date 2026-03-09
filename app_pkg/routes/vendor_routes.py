@@ -510,6 +510,26 @@ def submit_verification():
         if data.get('ifsc_code'):
             doc_row.ifsc_code = data.get('ifsc_code')
         
+        # Save store location fields
+        if data.get('store_address'):
+            vendor.address = data.get('store_address')
+        if data.get('store_city'):
+            vendor.city = data.get('store_city')
+        if data.get('store_state'):
+            vendor.state = data.get('store_state')
+        if data.get('store_pincode'):
+            vendor.pincode = data.get('store_pincode')
+        if data.get('store_latitude'):
+            try:
+                vendor.latitude = float(data.get('store_latitude'))
+            except (ValueError, TypeError):
+                app_logger.warning(f"Invalid latitude format: {data.get('store_latitude')}")
+        if data.get('store_longitude'):
+            try:
+                vendor.longitude = float(data.get('store_longitude'))
+            except (ValueError, TypeError):
+                app_logger.warning(f"Invalid longitude format: {data.get('store_longitude')}")
+        
         vendor.verification_status = 'pending'
         db.session.commit()
         app_logger.info(f"Vendor {vendor_id} verification_status updated to {vendor.verification_status}")
@@ -598,7 +618,13 @@ def get_verification_status():
             "admin_remarks": vendor.admin_remarks or "",
             "company_unique_id": company_unique_id,
             "company_id_number": company_id_number,
-            "date_of_establishment": date_of_establishment
+            "date_of_establishment": date_of_establishment,
+            "address": vendor.address or "",
+            "city": vendor.city or "",
+            "state": vendor.state or "",
+            "pincode": vendor.pincode or "",
+            "latitude": vendor.latitude,
+            "longitude": vendor.longitude
         }), 200
         
     except Exception as e:
