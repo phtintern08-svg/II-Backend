@@ -454,7 +454,9 @@ def register_handlers(socketio):
                 
                 emit('ai_message', {
                     'text': ai_message,
+                    'sender_type': 'ai',  # ✅ Add this for support.js compatibility
                     'ticket_id': new_ticket.ticket_number or str(ticket_id),
+                    'ticket_id_raw': ticket_id,  # ✅ Add numeric ID for matching
                     'timestamp': datetime.utcnow().isoformat()
                 })
                 
