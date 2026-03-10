@@ -462,7 +462,6 @@ def upload_verification_document():
             if hasattr(doc_row, 'company_id_number') and request.form.get('company_id_number'):
                 doc_row.company_id_number = request.form.get('company_id_number')
             if hasattr(doc_row, 'date_of_establishment') and request.form.get('date_of_establishment'):
-                from datetime import datetime
                 try:
                     doc_row.date_of_establishment = datetime.strptime(request.form.get('date_of_establishment'), '%Y-%m-%d').date()
                 except ValueError:
@@ -520,7 +519,6 @@ def submit_verification():
         if hasattr(doc_row, 'company_id_number') and data.get('company_id_number'):
             doc_row.company_id_number = data.get('company_id_number')
         if hasattr(doc_row, 'date_of_establishment') and data.get('date_of_establishment'):
-            from datetime import datetime
             try:
                 doc_row.date_of_establishment = datetime.strptime(data.get('date_of_establishment'), '%Y-%m-%d').date()
             except ValueError:
