@@ -74,7 +74,7 @@ def find_nearest_riders(vendor_lat, vendor_lon, max_distance_km=10, limit=5):
         if distance <= max_distance_km:
             rider_distances.append((rider, distance))
     
-ub    # Sort by distance (nearest first), then by accuracy (more accurate preferred)
+    # Sort by distance (nearest first), then by accuracy (more accurate preferred)
     def sort_key(item):
         rider, dist = item
         acc = rider.location_accuracy if rider.location_accuracy is not None else 9999
