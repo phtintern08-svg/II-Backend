@@ -338,16 +338,27 @@ def upload_verification_document():
     Upload vendor verification document
     """
     try:
-        if 'file' not in request.files:
-            return jsonify({"error": "No file part"}), 400
-        
-        file = request.files['file']
         # SECURITY: Always use vendor_id from JWT, never from request body
         vendor_id = request.user_id
         doc_type = request.form.get('doc_type')
         
-        if not file or not doc_type:
+        if not doc_type:
             return jsonify({"error": "Missing required data"}), 400
+        
+        # Allow saving fields without file for business_document (to save form fields)
+        file = request.files.get('file')
+        if not file and doc_type != 'business_document':
+            return jsonify({"error": "No file part"}), 400
+        
+        # For business_document, allow saving fields even without file (if file already exists)
+        if doc_type == 'business_document' and not file:
+            # Check if we're just updating fields (file already uploaded)
+            doc_row = VendorDocument.query.filter_by(vendor_id=vendor_id).first()
+            if not doc_row:
+                return jsonify({"error": "No file part and no existing document"}), 400
+            # Continue to save fields below
+        elif not file:
+            return jsonify({"error": "No file part"}), 400
         
         # Debug logging
         file.seek(0)
@@ -376,83 +387,97 @@ def upload_verification_document():
             if doc_status != 'rejected':
                 return jsonify({"error": "Only rejected documents can be re-uploaded"}), 403
         
-        # Validate and save file
-        file_info, error = validate_and_save_file(
-            file=file,
-            endpoint='/api/vendor/verification/upload',
-            subfolder='vendor',
-            user_id=int(vendor_id),
-            doc_type=doc_type,
-            scan_virus=False
-        )
-        
-        if error:
-            app_logger.warning(f"Upload validation failed: vendor_id={vendor_id}, doc_type={doc_type}, "
-                            f"filename={file.filename}, error={error}")
-            return jsonify({"error": error}), 400
-        
         # Get or create document row
         doc_row = VendorDocument.query.filter_by(vendor_id=vendor_id).first()
         if not doc_row:
             doc_row = VendorDocument(vendor_id=vendor_id)
             db.session.add(doc_row)
         
-        # Store file path
-        if hasattr(doc_row, doc_type):
-            old_path = getattr(doc_row, doc_type, None)
-            if old_path:
-                delete_file(old_path)
+        # Validate and save file (only if file is provided)
+        if file:
+            file_info, error = validate_and_save_file(
+                file=file,
+                endpoint='/api/vendor/verification/upload',
+                subfolder='vendor',
+                user_id=int(vendor_id),
+                doc_type=doc_type,
+                scan_virus=False
+            )
             
-            setattr(doc_row, doc_type, file_info['path'])
+            if error:
+                app_logger.warning(f"Upload validation failed: vendor_id={vendor_id}, doc_type={doc_type}, "
+                                f"filename={file.filename}, error={error}")
+                return jsonify({"error": error}), 400
             
-            # Get existing metadata to preserve rejected status if resubmitting
-            existing_meta = getattr(doc_row, f"{doc_type}_meta") or {}
-            existing_meta = dict(existing_meta) if isinstance(existing_meta, dict) else {}
-            was_rejected = existing_meta.get('status') == 'rejected'
+            # Store file path
+            if hasattr(doc_row, doc_type):
+                old_path = getattr(doc_row, doc_type, None)
+                if old_path:
+                    delete_file(old_path)
+                
+                setattr(doc_row, doc_type, file_info['path'])
+                
+                # Get existing metadata to preserve rejected status if resubmitting
+                existing_meta = getattr(doc_row, f"{doc_type}_meta") or {}
+                existing_meta = dict(existing_meta) if isinstance(existing_meta, dict) else {}
+                was_rejected = existing_meta.get('status') == 'rejected'
+                
+                # Update metadata
+                meta = {
+                    'filename': file_info['filename'],
+                    'original_filename': file_info['original_filename'],
+                    'mimetype': file_info['mimetype'],
+                    'size': file_info['size'],
+                    'status': 'rejected' if was_rejected else 'uploaded',  # Keep rejected status if resubmitting rejected doc
+                    'uploaded_at': datetime.utcnow().isoformat(),
+                    'resubmitted': was_rejected  # Flag to indicate this is a resubmission
+                }
+                # Preserve admin remarks if resubmitting
+                if was_rejected and existing_meta.get('remarks'):
+                    meta['remarks'] = existing_meta.get('remarks')
+                    meta['previous_rejection_reason'] = existing_meta.get('remarks')
+                
+                setattr(doc_row, f"{doc_type}_meta", meta)
             
-            # Update metadata
-            meta = {
-                'filename': file_info['filename'],
-                'original_filename': file_info['original_filename'],
-                'mimetype': file_info['mimetype'],
-                'size': file_info['size'],
-                'status': 'rejected' if was_rejected else 'uploaded',  # Keep rejected status if resubmitting rejected doc
-                'uploaded_at': datetime.utcnow().isoformat(),
-                'resubmitted': was_rejected  # Flag to indicate this is a resubmission
-            }
-            # Preserve admin remarks if resubmitting
-            if was_rejected and existing_meta.get('remarks'):
-                meta['remarks'] = existing_meta.get('remarks')
-                meta['previous_rejection_reason'] = existing_meta.get('remarks')
-            
-            setattr(doc_row, f"{doc_type}_meta", meta)
-            
-            # Handle business_document or business_details upload (special case - no extra fields needed for file)
-            if doc_type == 'business_document' or doc_type == 'business_details':
-                # Business document doesn't need extra fields in upload, form fields are saved separately
-                pass
-            
-            # Save manual fields if provided
-            if doc_type == 'pan' and request.form.get('pan_number'):
-                doc_row.pan_number = request.form.get('pan_number')
-            if doc_type == 'aadhar' and request.form.get('aadhar_number'):
-                doc_row.aadhar_number = request.form.get('aadhar_number')
-            if doc_type == 'bank':
-                if request.form.get('bank_account_number'):
-                    doc_row.bank_account_number = request.form.get('bank_account_number')
-                if request.form.get('bank_holder_name'):
-                    doc_row.bank_holder_name = request.form.get('bank_holder_name')
-                if request.form.get('bank_branch'):
-                    doc_row.bank_branch = request.form.get('bank_branch')
-                if request.form.get('ifsc_code'):
-                    doc_row.ifsc_code = request.form.get('ifsc_code')
-            
-            doc_row.updated_at = datetime.utcnow()
-            db.session.commit()
-            
+        # Save manual fields if provided (works for both file upload and field-only updates)
+        if doc_type == 'pan' and request.form.get('pan_number'):
+            doc_row.pan_number = request.form.get('pan_number')
+        if doc_type == 'aadhar' and request.form.get('aadhar_number'):
+            doc_row.aadhar_number = request.form.get('aadhar_number')
+        if doc_type == 'bank':
+            if request.form.get('bank_account_number'):
+                doc_row.bank_account_number = request.form.get('bank_account_number')
+            if request.form.get('bank_holder_name'):
+                doc_row.bank_holder_name = request.form.get('bank_holder_name')
+            if request.form.get('bank_branch'):
+                doc_row.bank_branch = request.form.get('bank_branch')
+            if request.form.get('ifsc_code'):
+                doc_row.ifsc_code = request.form.get('ifsc_code')
+        
+        # Save business details fields if provided (for business_document upload or field-only updates)
+        if doc_type == 'business_document' or doc_type == 'business_details':
+            if hasattr(doc_row, 'company_unique_id') and request.form.get('company_unique_id'):
+                doc_row.company_unique_id = request.form.get('company_unique_id')
+            if hasattr(doc_row, 'company_id_number') and request.form.get('company_id_number'):
+                doc_row.company_id_number = request.form.get('company_id_number')
+            if hasattr(doc_row, 'date_of_establishment') and request.form.get('date_of_establishment'):
+                from datetime import datetime
+                try:
+                    doc_row.date_of_establishment = datetime.strptime(request.form.get('date_of_establishment'), '%Y-%m-%d').date()
+                except ValueError:
+                    app_logger.warning(f"Invalid date format for date_of_establishment: {request.form.get('date_of_establishment')}")
+        
+        doc_row.updated_at = datetime.utcnow()
+        db.session.commit()
+        
+        if file:
             return jsonify({
                 "message": "File uploaded successfully",
                 "fileName": file_info['filename']
+            }), 200
+        else:
+            return jsonify({
+                "message": "Fields saved successfully"
             }), 200
         else:
             return jsonify({"error": "Invalid document type"}), 400
