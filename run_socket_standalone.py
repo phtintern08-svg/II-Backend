@@ -19,18 +19,36 @@ backend_dir = os.path.dirname(os.path.abspath(__file__))
 sys.path.insert(0, backend_dir)
 
 # ✅ Load environment variables (for database connection, etc.)
-# Try to load from .env file if it exists
+# This is CRITICAL for database credentials in cPanel environment
 try:
     from dotenv import load_dotenv
     env_path = os.path.join(backend_dir, '.env')
     if os.path.exists(env_path):
-        load_dotenv(env_path)
+        load_dotenv(env_path, override=True)  # override=True ensures .env takes precedence
         print(f"✅ Loaded environment variables from: {env_path}")
+        # Verify critical DB vars are loaded
+        db_host = os.getenv('DB_HOST') or os.getenv('MYSQL_HOST')
+        if db_host:
+            print(f"✅ Database host configured: {db_host}")
+        else:
+            print("⚠️ WARNING: Database host not found in environment variables")
     else:
         print(f"⚠️ No .env file found at: {env_path}")
-        print("   Using system environment variables only")
+        print("   Attempting to use system environment variables...")
+        # Try to load from parent directory or common locations
+        parent_env = os.path.join(os.path.dirname(backend_dir), '.env')
+        if os.path.exists(parent_env):
+            load_dotenv(parent_env, override=True)
+            print(f"✅ Loaded environment variables from parent: {parent_env}")
+        else:
+            print("   Using system environment variables only")
 except ImportError:
-    print("⚠️ python-dotenv not installed, using system environment variables only")
+    print("⚠️ python-dotenv not installed")
+    print("   Install with: pip install python-dotenv")
+    print("   Using system environment variables only")
+except Exception as e:
+    print(f"⚠️ Error loading .env file: {e}")
+    print("   Using system environment variables only")
 
 # ✅ Import and create the main Flask app FIRST (has DB config)
 # This ensures database connection is available

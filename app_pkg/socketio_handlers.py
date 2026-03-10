@@ -496,10 +496,12 @@ def register_handlers(socketio):
                 app_logger.info(f"✅ Guided support started for ticket {ticket_id}")
                 
         except Exception as e:
-            app_logger.exception(f"❌ Error in start_support: {e}")
             import traceback
-            app_logger.error(f"Full traceback: {traceback.format_exc()}")
-            emit('error', {'msg': f'Failed to start support: {str(e)}'})
+            error_log = traceback.format_exc()
+            app_logger.error(f"❌ DATABASE/LOGIC CRASH: {str(e)}")
+            app_logger.error(error_log)
+            # This will send the REAL error to your browser console
+            emit('error', {'msg': f'Backend Error: {str(e)}'})
     
     @socketio.on('issue_selected')
     def handle_issue_selected(data):
