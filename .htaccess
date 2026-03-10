@@ -1,9 +1,9 @@
 RewriteEngine On
 
-# 1. THE BRIDGE: Forward all Socket.IO traffic to the standalone server on Port 3000
+# 1. THE BRIDGE: Forward all Socket.IO traffic to Port 3000
+# NC = case-insensitive, P = Proxy, L = Last Rule
 # This prevents the 404 by bypassing Passenger and routing to the stable standalone server
-RewriteCond %{REQUEST_URI} ^/socket\.io [NC]
-RewriteRule ^socket\.io(.*)$ http://localhost:3000/socket.io$1 [P,L]
+RewriteRule ^socket\.io/(.*) http://localhost:3000/socket.io/$1 [P,L]
 
 # -------------------------------------------------------------------
 # 2. Standard Passenger / Flask Config

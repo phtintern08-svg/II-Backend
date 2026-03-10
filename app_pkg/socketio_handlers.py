@@ -345,7 +345,8 @@ def register_handlers(socketio):
                 emit('error', {'msg': 'Order ID required'})
                 return
             
-            # ✅ Ensure we are using the app context explicitly for the DB query
+            # ✅ CRITICAL: Wrap ALL database work in the application context
+            # This is essential for standalone server thread stability
             from flask import current_app
             with current_app.app_context():
                 from app_pkg.models import SupportTicket, Order, db
