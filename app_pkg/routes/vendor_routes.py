@@ -356,19 +356,20 @@ def upload_verification_document():
             doc_row = VendorDocument.query.filter_by(vendor_id=vendor_id).first()
             if not doc_row:
                 return jsonify({"error": "No file part and no existing document"}), 400
-            # Continue to save fields below
+            # Continue to save fields below (skip file validation)
         elif not file:
             return jsonify({"error": "No file part"}), 400
         
-        # Debug logging
-        file.seek(0)
-        file_data = file.read()
-        file.seek(0)  # Reset for validation
-        file_size = len(file_data)
-        file_ext = os.path.splitext(file.filename)[1].lower() if file.filename else ''
-        
-        app_logger.info(f"Upload attempt: vendor_id={vendor_id}, doc_type={doc_type}, filename={file.filename}, "
-                    f"content_type={file.content_type}, size={file_size}, ext={file_ext}")
+        # Debug logging (only if file is provided)
+        if file:
+            file.seek(0)
+            file_data = file.read()
+            file.seek(0)  # Reset for validation
+            file_size = len(file_data)
+            file_ext = os.path.splitext(file.filename)[1].lower() if file.filename else ''
+            
+            app_logger.info(f"Upload attempt: vendor_id={vendor_id}, doc_type={doc_type}, filename={file.filename}, "
+                        f"content_type={file.content_type}, size={file_size}, ext={file_ext}")
         
         vendor = Vendor.query.get(vendor_id)
         if not vendor:
@@ -479,8 +480,6 @@ def upload_verification_document():
             return jsonify({
                 "message": "Fields saved successfully"
             }), 200
-        else:
-            return jsonify({"error": "Invalid document type"}), 400
             
     except Exception as e:
         db.session.rollback()
