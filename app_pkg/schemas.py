@@ -82,6 +82,8 @@ class OrderSchema(ma.SQLAlchemyAutoSchema):
     # Cross-schema fetch for vendor
     vendor = fields.Method("get_vendor")
     payments = fields.Method("get_payments")
+    # Computed display status for customers
+    display_status = fields.Method("get_display_status")
 
     def get_vendor(self, obj):
         """Get vendor details if order is assigned to a vendor"""
@@ -90,6 +92,21 @@ class OrderSchema(ma.SQLAlchemyAutoSchema):
             if vendor:
                 return VendorSchema(only=('id', 'business_name', 'username', 'phone')).dump(vendor)
         return None
+
+    def get_display_status(self, obj):
+        """
+        Compute display status for customers based on order flow.
+        Legacy support: if old orders still have 'quotation_sent_to_customer',
+        show 'vendor_assigned' instead once a vendor is assigned.
+        """
+        status = obj.status or 'pending'
+        
+        # Legacy mapping
+        if status == 'quotation_sent_to_customer' and obj.selected_vendor_id:
+            return 'vendor_assigned'
+        
+        # Return the actual status for all other cases
+        return status
 
     def get_payments(self, obj):
         """Manually fetch payments from both admin and customer Payment models (cross-schema)"""

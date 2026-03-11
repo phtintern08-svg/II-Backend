@@ -120,6 +120,13 @@ def assign_nearest_rider_to_order(order_id, vendor_id, max_search_radius_km=10):
                 'error': 'Order not found'
             }
         
+        # ✅ Only allow rider assignment when order is ready for dispatch (packed)
+        if order.status != 'packed_ready':
+            return {
+                'success': False,
+                'error': f"Rider assignment not allowed at this stage. Required status: packed_ready. Current: {order.status}"
+            }
+        
         # Find nearest available riders
         nearest_riders = find_nearest_riders(
             vendor.latitude,
@@ -157,6 +164,22 @@ def assign_nearest_rider_to_order(order_id, vendor_id, max_search_radius_km=10):
                 existing_log.delivery_deadline = delivery_deadline
             
             db.session.commit()
+            
+            # ✅ Update order status to rider_assigned + history
+            try:
+                order.status = 'rider_assigned'
+                hist = OrderStatusHistory(
+                    order_id=order.id,
+                    status='rider_assigned',
+                    status_label='Rider Assigned',
+                    changed_by_type='admin',
+                    changed_by_id=getattr(request, 'user_id', None),
+                    notes='Nearest rider assigned (proximity)'
+                )
+                db.session.add(hist)
+                db.session.commit()
+            except Exception:
+                db.session.rollback()
             
             return {
                 'success': True,
@@ -203,6 +226,22 @@ def assign_nearest_rider_to_order(order_id, vendor_id, max_search_radius_km=10):
             
             db.session.add(delivery_log)
             db.session.commit()
+            
+            # ✅ Update order status to rider_assigned + history
+            try:
+                order.status = 'rider_assigned'
+                hist = OrderStatusHistory(
+                    order_id=order.id,
+                    status='rider_assigned',
+                    status_label='Rider Assigned',
+                    changed_by_type='admin',
+                    changed_by_id=getattr(request, 'user_id', None),
+                    notes='Nearest rider assigned (proximity)'
+                )
+                db.session.add(hist)
+                db.session.commit()
+            except Exception:
+                db.session.rollback()
             
             return {
                 'success': True,
@@ -1408,10 +1447,8 @@ def assign_order_to_vendor(order_id):
             f"Total={order.quotation_total_price}, "
             f"SampleCost={order.sample_cost}"
         )
-        # 🔥 FIX: Set status to 'quotation_sent_to_customer' to match state machine
-        # Vendor will see order only after customer pays advance (status becomes 'in_production')
-        # This matches the state machine: pending_admin_review → quotation_sent_to_customer
-        order.status = 'quotation_sent_to_customer'
+        # ✅ New flow: status becomes vendor_assigned immediately when vendor is assigned
+        order.status = 'vendor_assigned'
         
         # Create vendor order assignment record
         # 🔥 FIX: Since vendor must compulsorily produce, status should be 'assigned' not 'pending'

@@ -29,16 +29,19 @@ def get_admin_id():
 ALLOWED_TRANSITIONS = {
     'awaiting_sample_payment': ['sample_payment_received'],
     'sample_payment_received': ['pending_admin_review'],
-    'pending_admin_review': ['quotation_sent_to_customer', 'sample_rejected'],
-    'quotation_sent_to_customer': ['quotation_rejected_by_customer', 'sample_requested'],
-    'quotation_rejected_by_customer': [],  # Terminal state
-    'sample_requested': ['sample_approved', 'sample_rejected'],
+    # ✅ New simplified flow:
+    # customer places order -> pending_admin_review
+    # admin assigns vendor -> vendor_assigned
+    # vendor starts production -> in_production
+    'pending_admin_review': ['vendor_assigned', 'sample_rejected'],
+    'vendor_assigned': ['in_production'],
     'sample_rejected': [],  # Terminal state
-    'sample_approved': ['awaiting_advance_payment'],
-    'awaiting_advance_payment': ['in_production'],
     'in_production': ['quality_check'],
     'quality_check': ['packed_ready'],
-    'packed_ready': ['out_for_delivery'],
+    # Vendor marks packed_ready => "Ready for Dispatch"
+    # Admin assigns rider => rider_assigned
+    'packed_ready': ['rider_assigned', 'reached_vendor'],
+    'rider_assigned': ['reached_vendor'],
     'out_for_delivery': ['delivered'],
     'delivered': ['completed', 'completed_with_penalty'],
     'completed': [],  # Terminal state
@@ -79,6 +82,7 @@ def get_orders():
             return orders_schema.jsonify(orders), 200
         elif role == 'customer':
             # Customer: Full schema - sees their own orders with all details
+            # Use display_status computed field to show correct status when vendor is assigned
             orders_data = orders_schema.dump(orders)
             return jsonify({
                 "orders": orders_data,
@@ -760,7 +764,8 @@ def assign_vendor_to_order(order_id):
         order.quotation_price_per_piece = float(quotation_price_per_piece)
         order.quotation_total_price = float(quotation_price_per_piece) * total_qty  # Use correct quantity (bulk or sample)
         order.sample_cost = float(sample_cost)
-        order.status = 'quotation_sent_to_customer'
+        # ✅ New flow: once vendor is assigned, order status becomes vendor_assigned
+        order.status = 'vendor_assigned'
         
         # Create vendor order assignment
         assignment = VendorOrderAssignment(
@@ -811,13 +816,12 @@ def customer_quotation_response(order_id):
         if order.customer_id != request.user_id:
             return jsonify({"error": "Unauthorized"}), 403
         
-        # 🔥 FIX: Validate order status before allowing quotation response
-        if order.status != 'quotation_sent_to_customer':
-            return jsonify({
-                "error": "Quotation response not allowed at this stage",
-                "current_status": order.status,
-                "required_status": "quotation_sent_to_customer"
-            }), 400
+        # ✅ Quotation flow deprecated (kept for backward compatibility)
+        return jsonify({
+            "error": "Quotation response is no longer used in the current order flow.",
+            "current_status": order.status,
+            "message": "Orders now move from pending_admin_review → vendor_assigned → in_production."
+        }), 400
         
         if action == 'reject':
             order.status = 'quotation_rejected_by_customer'

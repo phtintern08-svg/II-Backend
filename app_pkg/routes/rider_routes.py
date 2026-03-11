@@ -739,11 +739,12 @@ def update_delivery_status(delivery_id):
         
         # Validate status transition - prevent skipping workflow states
         # Riders can only progress through delivery stages in sequence
-        # CRITICAL: Rider can only set 'reached_vendor' when order is 'ready_for_pickup'
+        # CRITICAL: Rider can only set 'reached_vendor' when order is ready for dispatch / rider assigned
         # This ensures vendor has finished packing before rider arrives
         current_order_status = order.status
         valid_transitions = {
-            'reached_vendor': ['ready_for_pickup'],  # Only allow when vendor has marked ready
+            # Vendor marks packed_ready, admin assigns rider (rider_assigned) => rider can proceed
+            'reached_vendor': ['packed_ready', 'rider_assigned'],
             'picked_up': ['reached_vendor'],
             'out_for_delivery': ['picked_up'],
             'delivered': ['out_for_delivery']

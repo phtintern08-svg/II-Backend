@@ -1293,7 +1293,9 @@ def get_vendor_orders_filtered():
         if role == 'subuser' and order_categories:
             # Map order categories to status filters
             category_status_map = {
-                'new_orders': ['quotation_sent_to_customer', 'sample_requested', 'awaiting_advance_payment'],
+                # ✅ New flow: new orders are those newly assigned to vendor
+                # Keep quotation_sent_to_customer for legacy compatibility (old orders)
+                'new_orders': ['vendor_assigned', 'quotation_sent_to_customer'],
                 'in_production': ['in_production', 'material_prep', 'printing', 'printing_completed', 'quality_check'],
                 'ready_for_dispatch': ['packed_ready'],
                 'completed_orders': ['dispatched', 'delivered', 'completed', 'completed_with_penalty']
