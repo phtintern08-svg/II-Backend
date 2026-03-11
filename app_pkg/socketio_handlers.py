@@ -641,7 +641,7 @@ def register_handlers(socketio):
                 return
             
             with current_app.app_context():
-                from app_pkg.models import SupportTicket, Order
+                from app_pkg.models import SupportTicket, Order, SupportUser
                 from app_pkg.intelligent_support import AutoAssignment
                 from datetime import datetime
                 from sqlalchemy import text
@@ -710,26 +710,62 @@ def register_handlers(socketio):
                             'ticket_id': ticket.ticket_number or str(ticket_id),
                             'ticket_id_raw': ticket_id
                         }, room=room)
-                    elif flow.escalate_if_selected:
-                        # Auto-assign agent
-                        agent_id = AutoAssignment.assign_agent()
-                        if agent_id:
-                            try:
-                                ticket.assigned_to = agent_id
-                                ticket.status = 'assigned'
-                                # Set first_response_at when agent is assigned
-                                ticket.first_response_at = datetime.utcnow()
-                                ticket.assigned_at = datetime.utcnow()
-                                db.session.commit()
-                                
-                                emit('agent_joined', {
-                                    'agent_id': agent_id,
-                                    'message': f'👤 Support agent has joined the conversation'
-                                }, room=room)
-                                
-                                app_logger.info(f"Agent {agent_id} auto-assigned to ticket {ticket_id}")
-                            except Exception as e:
-                                app_logger.warning(f"Auto-assignment failed: {e}")
+                    elif flow.escalate_if_selected or issue_key == 'agent':
+                        # ✅ Assign Support Executive when "Talk to Agent" is clicked
+                        if issue_key == 'agent':
+                            # Pick an active Support Executive (role='support')
+                            executive = SupportUser.query.filter_by(role='support', is_active=True).first()
+                            
+                            if executive:
+                                try:
+                                    ticket.assigned_to = executive.id
+                                    ticket.status = 'assigned'
+                                    ticket.first_response_at = datetime.utcnow()
+                                    ticket.assigned_at = datetime.utcnow()
+                                    db.session.commit()
+                                    
+                                    # ✅ Mention the Executive's name specifically
+                                    emit('receive_message', {
+                                        'message': f"👤 Support Executive {executive.name} has joined the chat.",
+                                        'sender_type': 'system',
+                                        'ticket_id': ticket.ticket_number or str(ticket_id),
+                                        'ticket_id_raw': ticket_id,
+                                        'created_at': datetime.utcnow().isoformat()
+                                    }, room=room)
+                                    
+                                    app_logger.info(f"Support Executive {executive.name} (ID: {executive.id}) assigned to ticket {ticket_id}")
+                                except Exception as e:
+                                    app_logger.warning(f"Executive assignment failed: {e}")
+                            else:
+                                app_logger.warning("No active Support Executive found")
+                        else:
+                            # Auto-assign agent for other escalations
+                            agent_id = AutoAssignment.assign_agent()
+                            if agent_id:
+                                try:
+                                    # Fetch the actual agent details
+                                    agent = db.session.get(SupportUser, agent_id)
+                                    agent_name = agent.name if agent else "Support Agent"
+                                    
+                                    ticket.assigned_to = agent_id
+                                    ticket.status = 'assigned'
+                                    # Set first_response_at when agent is assigned
+                                    ticket.first_response_at = datetime.utcnow()
+                                    ticket.assigned_at = datetime.utcnow()
+                                    db.session.commit()
+                                    
+                                    # Emit a specific message mentioning the agent's name
+                                    emit('receive_message', {
+                                        'message': f"👤 {agent_name} has joined the chat to assist you.",
+                                        'sender_type': 'system',
+                                        'ticket_id': ticket.ticket_number or str(ticket_id),
+                                        'ticket_id_raw': ticket_id,
+                                        'created_at': datetime.utcnow().isoformat()
+                                    }, room=room)
+                                    
+                                    app_logger.info(f"Agent {agent_name} (ID: {agent_id}) auto-assigned to ticket {ticket_id}")
+                                except Exception as e:
+                                    app_logger.warning(f"Auto-assignment failed: {e}")
                 else:
                     # 100% Database-driven: If flow not found, auto-escalate to agent
                     # No hardcoded responses - all responses must come from database
@@ -755,18 +791,26 @@ def register_handlers(socketio):
                     agent_id = AutoAssignment.assign_agent()
                     if agent_id:
                         try:
+                            # Fetch the actual agent details
+                            agent = db.session.get(SupportUser, agent_id)
+                            agent_name = agent.name if agent else "Support Agent"
+                            
                             ticket.assigned_to = agent_id
                             ticket.status = 'assigned'
                             ticket.first_response_at = datetime.utcnow()
                             ticket.assigned_at = datetime.utcnow()
                             db.session.commit()
                             
-                            emit('agent_joined', {
-                                'agent_id': agent_id,
-                                'message': f'👤 Support agent has joined the conversation'
+                            # Emit a specific message mentioning the agent's name
+                            emit('receive_message', {
+                                'message': f"👤 {agent_name} has joined the chat to assist you.",
+                                'sender_type': 'system',
+                                'ticket_id': ticket.ticket_number or str(ticket_id),
+                                'ticket_id_raw': ticket_id,
+                                'created_at': datetime.utcnow().isoformat()
                             }, room=room)
                             
-                            app_logger.info(f"Agent {agent_id} auto-assigned to ticket {ticket_id} (no database flow found)")
+                            app_logger.info(f"Agent {agent_name} (ID: {agent_id}) auto-assigned to ticket {ticket_id} (no database flow found)")
                         except Exception as e:
                             app_logger.warning(f"Auto-assignment failed: {e}")
                 
