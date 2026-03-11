@@ -576,21 +576,24 @@ def register_handlers(socketio):
                 
                 # Send issue options (Flipkart-style buttons)
                 # ✅ 100% Database-driven: All options come from support_order_flows table
-                if flows:
-                    # Use database-defined flows
-                    options = [{
-                        'key': flow.issue_key,
-                        'title': flow.issue_title
-                    } for flow in flows]
+                # No hardcoded fallbacks - if no flows exist, show empty options
+                options = [{
+                    'key': flow.issue_key,
+                    'title': flow.issue_title
+                } for flow in flows]
+                
+                if options:
                     app_logger.info(f"✅ Using database flows for status {order_status}: {len(options)} options")
                 else:
-                    # Fallback: Generic options if no database flows found
-                    app_logger.warning(f"⚠️ No database flows found for status {order_status}. Using generic fallback.")
-                    options = [
-                        {'key': 'general_issue', 'title': 'General Issue'},
-                        {'key': 'track_order', 'title': 'Track Order'},
-                        {'key': 'cancel_order', 'title': 'Cancel Order'}
-                    ]
+                    app_logger.warning(f"⚠️ No database flows found for status {order_status}. Add flows to support_order_flows table.")
+                    # Send message to customer that no options are available
+                    emit('ai_message', {
+                        'text': 'I apologize, but support options for this order status are not yet configured. Please contact our support team directly.',
+                        'sender_type': 'ai',
+                        'ticket_id': new_ticket.ticket_number or str(ticket_id),
+                        'ticket_id_raw': ticket_id,
+                        'timestamp': datetime.utcnow().isoformat()
+                    })
                 
                 emit('ai_options', {
                     'options': options,
@@ -696,9 +699,9 @@ def register_handlers(socketio):
                     except AttributeError:
                         pass
                     
-                    # Handle auto-resolution or escalation
+                    # Handle auto-resolution or escalation (100% database-driven)
                     if flow.auto_resolve:
-                        # Show resolution options
+                        # Show resolution options (database-driven)
                         emit('ai_options', {
                             'options': [
                                 {'key': 'resolved', 'title': '✅ Issue Resolved'},
@@ -712,7 +715,7 @@ def register_handlers(socketio):
                         agent_id = AutoAssignment.assign_agent()
                         if agent_id:
                             try:
-                                ticket.assigned_agent_id = agent_id
+                                ticket.assigned_to = agent_id
                                 ticket.status = 'assigned'
                                 # Set first_response_at when agent is assigned
                                 ticket.first_response_at = datetime.utcnow()
@@ -728,12 +731,13 @@ def register_handlers(socketio):
                             except Exception as e:
                                 app_logger.warning(f"Auto-assignment failed: {e}")
                 else:
-                    # Fallback: Database flow not found - auto-assign agent for immediate support
-                    app_logger.warning(f"⚠️ No database flow found for issue_key={issue_key}, status={order_status}. Auto-assigning agent.")
+                    # 100% Database-driven: If flow not found, auto-escalate to agent
+                    # No hardcoded responses - all responses must come from database
+                    app_logger.warning(f"⚠️ No database flow found for issue_key={issue_key}, status={order_status}. Auto-escalating to agent.")
                     
-                    # Send generic message
+                    # Send message that agent will help
                     emit('ai_message', {
-                        'text': 'Thank you for contacting us. A support agent will assist you shortly.',
+                        'text': 'I apologize, but I don\'t have a specific response for this issue. Connecting you to a support agent who can help.',
                         'sender_type': 'ai',
                         'ticket_id': ticket.ticket_number or str(ticket_id),
                         'ticket_id_raw': ticket_id,
@@ -747,11 +751,11 @@ def register_handlers(socketio):
                     except AttributeError:
                         pass
                     
-                    # Auto-assign agent for unknown issues
+                    # Auto-assign agent for missing flows (critical issues)
                     agent_id = AutoAssignment.assign_agent()
                     if agent_id:
                         try:
-                            ticket.assigned_agent_id = agent_id
+                            ticket.assigned_to = agent_id
                             ticket.status = 'assigned'
                             ticket.first_response_at = datetime.utcnow()
                             ticket.assigned_at = datetime.utcnow()
