@@ -12,161 +12,6 @@ from app_pkg.logger_config import app_logger
 from app_pkg.intelligent_support import EscalationEngine
 
 
-def get_status_based_ai_response(issue_key, order_status, order_id=None):
-    """
-    Get AI response for status-based support options.
-    Returns a response string based on the issue_key and order_status.
-    """
-    # Map issue keys to AI responses
-    response_map = {
-        # pending_admin_review
-        'when_confirmed': 'Your order is currently under review by our team. We typically confirm orders within 24-48 hours. You will receive a confirmation email once your order is approved.',
-        'change_address': 'I can help you change your delivery address. Please provide the new address details, and I\'ll update it for you.',
-        # vendor_assigned
-        'who_vendor': f'Your order #{order_id} has been assigned to a verified vendor. The vendor details will be shared with you once production begins.',
-        'when_production': 'Production typically starts within 1-2 business days after vendor assignment. You will receive updates as your order progresses through each stage.',
-        'change_order_details': 'I understand you want to modify your order. Let me check if changes are still possible at this stage. Some modifications may not be allowed once production has started.',
-        # in_production
-        'estimated_completion': 'Based on your order details, production typically takes 5-7 business days. You will receive regular updates as your order moves through each production stage.',
-        'preview_print': 'I can request a preview from the vendor once printing begins. Would you like me to ask for a preview image?',
-        'expedite_order': 'I understand you need this order expedited. Let me check with the vendor if rush production is possible. There may be additional charges for expedited orders.',
-        # material_prep / printing
-        'printing_duration': 'Printing typically takes 2-3 business days depending on the order size and complexity. Your order is currently in the printing stage and will move to quality check once complete.',
-        'design_mistake': 'I\'m sorry to hear about the design issue. Let me connect you with our support team immediately to address this. This is time-sensitive, so we\'ll prioritize your request.',
-        'why_printing_stage': 'Your order is in the printing stage, which is a normal part of the production process. This stage ensures high-quality output. It typically takes 2-3 business days.',
-        # printing_completed
-        'next_step': 'Great! Your order has completed printing. The next step is quality check, where our team will inspect the items for any defects before packing.',
-        'quality_check_status': 'Your order is currently in the quality check stage. This typically takes 1 business day. Once approved, it will be packed and ready for dispatch.',
-        'when_packed': 'Your order will be packed after passing quality check, which typically happens within 1 business day. Once packed, it will be marked as "Ready for Dispatch".',
-        # quality_check
-        'if_fails_check': 'If an item fails quality check, it will be sent back for rework at no extra cost to you. We ensure all items meet our quality standards before dispatch.',
-        'inspection_duration': 'Quality check typically takes 1 business day. Our team thoroughly inspects each item for defects, color accuracy, and overall quality.',
-        'order_okay': 'Your order is currently being inspected. Once the quality check is complete, you will receive an update. We ensure all items meet our standards before dispatch.',
-        # packed_ready
-        'when_dispatched': 'Your order is packed and ready for dispatch. A delivery partner will be assigned shortly, and you will receive tracking details once dispatch begins.',
-        'pickup_myself': 'I can arrange for self-pickup. Please provide your preferred pickup location and time, and I\'ll coordinate with the vendor.',
-        'package_photo': 'I\'ll request a photo of the packaged order from the vendor. This may take a few minutes. Would you like me to proceed?',
-        # rider_assigned
-        'who_delivery_partner': 'A delivery partner has been assigned to your order. You will receive their contact details and tracking information shortly.',
-        'rider_contact': 'I\'ll share the delivery partner\'s contact details with you. They will contact you before delivery to confirm the delivery address and time.',
-        'expected_delivery_time': 'Based on your location and the delivery partner\'s route, your order should be delivered within 24-48 hours. You will receive real-time tracking updates.',
-        # reached_vendor
-        'rider_picked_up': 'The delivery partner has reached the vendor location. They will pick up your order shortly. You will receive an update once pickup is confirmed.',
-        'rider_not_moving': 'I understand your concern. Let me check the delivery partner\'s current status and location. Sometimes there may be delays at the pickup location.',
-        'cancel_delivery': 'I can help you cancel the delivery. However, once the order is picked up, cancellation may not be possible. Let me check the current status.',
-        # picked_up / out_for_delivery
-        'track_order': f'Your order #{order_id} is on the way! You can track it in real-time. The delivery partner will contact you before delivery.',
-        'delivery_delayed': 'I\'m sorry for the delay. Let me check the current status and estimated delivery time. I\'ll update you shortly with the latest information.',
-        'share_location': 'I\'ll share the live tracking link with you. You can track your order in real-time and see the delivery partner\'s current location.',
-        # delivered
-        'not_received': 'I\'m sorry to hear you haven\'t received your order. Let me verify the delivery status and contact the delivery partner to confirm the delivery address.',
-        'damaged_missing': 'I\'m very sorry about this. Please provide details about the damaged or missing items, and I\'ll immediately escalate this to our quality team for resolution.',
-        'rate_experience': 'Thank you for your order! Your feedback helps us improve. You can rate your experience in your order history page.',
-        # completed
-        'download_invoice': f'You can download your invoice from the order details page for order #{order_id}. I can also email it to you if needed.',
-        'reorder_item': 'I can help you reorder this item. Would you like me to create a new order with the same specifications?',
-        'quality_complaint': 'I\'m sorry to hear about the quality issue. Please provide details about the problem, and I\'ll escalate this to our quality assurance team for immediate resolution.',
-        # Generic fallbacks
-        'general_issue': 'I\'m here to help! Please describe your issue in detail, and I\'ll assist you right away.',
-        'track_order': f'Your order #{order_id} status is being tracked. You can view real-time updates in your order history.',
-        'cancel_order': 'I can help you cancel your order. Please note that cancellation policies may vary based on the current order status. Let me check the details for you.'
-    }
-    
-    # Return specific response or generic fallback
-    return response_map.get(issue_key, 'Thank you for contacting support. I\'m here to help you with your order. Please provide more details about your concern.')
-
-
-def get_status_based_support_options(order_status):
-    """
-    Get status-based support options (Flipkart-style buttons) based on order status.
-    Returns a list of option dictionaries with 'key' and 'title'.
-    """
-    status_options_map = {
-        'pending_admin_review': [
-            {'key': 'when_confirmed', 'title': 'When will my order be confirmed?'},
-            {'key': 'change_address', 'title': 'I want to change my delivery address.'},
-            {'key': 'cancel_order', 'title': 'Cancel my order.'}
-        ],
-        'vendor_assigned': [
-            {'key': 'who_vendor', 'title': 'Who is the vendor?'},
-            {'key': 'when_production', 'title': 'When will production start?'},
-            {'key': 'change_order_details', 'title': 'Can I still change my order details?'}
-        ],
-        'in_production': [
-            {'key': 'estimated_completion', 'title': 'What is the estimated completion date?'},
-            {'key': 'preview_print', 'title': 'Can I see a preview of the print?'},
-            {'key': 'expedite_order', 'title': 'I need to expedite this order.'}
-        ],
-        'material_prep': [
-            {'key': 'printing_duration', 'title': 'How much longer will printing take?'},
-            {'key': 'design_mistake', 'title': 'I noticed a mistake in my design.'},
-            {'key': 'why_printing_stage', 'title': 'Why is it still in the printing stage?'}
-        ],
-        'printing': [
-            {'key': 'printing_duration', 'title': 'How much longer will printing take?'},
-            {'key': 'design_mistake', 'title': 'I noticed a mistake in my design.'},
-            {'key': 'why_printing_stage', 'title': 'Why is it still in the printing stage?'}
-        ],
-        'printing_completed': [
-            {'key': 'next_step', 'title': 'What is the next step?'},
-            {'key': 'quality_check_status', 'title': 'Has it passed quality check yet?'},
-            {'key': 'when_packed', 'title': 'When will it be packed?'}
-        ],
-        'quality_check': [
-            {'key': 'if_fails_check', 'title': 'What happens if it fails the check?'},
-            {'key': 'inspection_duration', 'title': 'How long does the inspection take?'},
-            {'key': 'order_okay', 'title': 'Is my order okay?'}
-        ],
-        'packed_ready': [
-            {'key': 'when_dispatched', 'title': 'When will it be dispatched?'},
-            {'key': 'pickup_myself', 'title': 'I want to pick it up myself.'},
-            {'key': 'package_photo', 'title': 'Send me a photo of the package.'}
-        ],
-        'rider_assigned': [
-            {'key': 'who_delivery_partner', 'title': 'Who is my delivery partner?'},
-            {'key': 'rider_contact', 'title': "Get rider's contact details."},
-            {'key': 'expected_delivery_time', 'title': 'What is the expected delivery time?'}
-        ],
-        'reached_vendor': [
-            {'key': 'rider_picked_up', 'title': 'Has the rider picked up the order?'},
-            {'key': 'rider_not_moving', 'title': "The rider hasn't moved for a long time."},
-            {'key': 'cancel_delivery', 'title': 'Cancel delivery.'}
-        ],
-        'picked_up': [
-            {'key': 'track_order', 'title': 'Track my order'},
-            {'key': 'delivery_delayed', 'title': 'Delivery delayed'},
-            {'key': 'share_location', 'title': 'Share live location link.'}
-        ],
-        'out_for_delivery': [
-            {'key': 'track_order', 'title': 'Track my order'},
-            {'key': 'delivery_delayed', 'title': 'Delivery delayed'},
-            {'key': 'share_location', 'title': 'Share live location link.'}
-        ],
-        'delivered': [
-            {'key': 'not_received', 'title': "I haven't received the items."},
-            {'key': 'damaged_missing', 'title': 'Items are damaged/missing.'},
-            {'key': 'rate_experience', 'title': 'Rate my experience.'}
-        ],
-        'completed': [
-            {'key': 'download_invoice', 'title': 'Download Invoice.'},
-            {'key': 'reorder_item', 'title': 'Re-order this item.'},
-            {'key': 'quality_complaint', 'title': 'Submit a complaint about the quality.'}
-        ],
-        'completed_with_penalty': [
-            {'key': 'download_invoice', 'title': 'Download Invoice.'},
-            {'key': 'reorder_item', 'title': 'Re-order this item.'},
-            {'key': 'quality_complaint', 'title': 'Submit a complaint about the quality.'}
-        ]
-    }
-    
-    # Return options for the specific status, or fallback to generic options
-    return status_options_map.get(order_status, [
-        {'key': 'general_issue', 'title': 'General Issue'},
-        {'key': 'track_order', 'title': 'Track Order'},
-        {'key': 'cancel_order', 'title': 'Cancel Order'}
-    ])
-
-
 def register_handlers(socketio):
     """Register all Socket.IO event handlers"""
     
@@ -394,76 +239,81 @@ def register_handlers(socketio):
                 emit('error', {'msg': 'Message and ticket ID required'})
                 return
             
-            # Find ticket
-            try:
-                ticket_id_int = int(ticket_id)
-            except (ValueError, TypeError):
-                ticket_id_int = None
-            
-            if ticket_id_int:
-                ticket = SupportTicket.query.filter(
-                    (SupportTicket.ticket_number == str(ticket_id)) |
-                    (SupportTicket.id == ticket_id_int)
-                ).first()
-            else:
-                ticket = SupportTicket.query.filter(
-                    SupportTicket.ticket_number == str(ticket_id)
-                ).first()
-            
-            if not ticket:
-                emit('error', {'msg': 'Ticket not found'})
-                return
-            
-            # Verify sender has access
-            if sender == 'customer' and ticket.user_id != sender_id:
-                emit('error', {'msg': 'Unauthorized'})
-                return
-            
-            # Store message in database
-            try:
-                thread = Thread(
-                    title=ticket.subject,
-                    content=message,
-                    user_id=sender_id,
-                    ticket_id=ticket.id
-                )
-                db.session.add(thread)
+            # ✅ CRITICAL: Wrap ALL database work in the application context
+            # This is essential for standalone server thread stability
+            with current_app.app_context():
+                # Find ticket
+                try:
+                    ticket_id_int = int(ticket_id)
+                except (ValueError, TypeError):
+                    ticket_id_int = None
                 
-                # Update ticket timestamps
-                ticket.updated_at = datetime.utcnow()
+                if ticket_id_int:
+                    ticket = SupportTicket.query.filter(
+                        (SupportTicket.ticket_number == str(ticket_id)) |
+                        (SupportTicket.id == ticket_id_int)
+                    ).first()
+                else:
+                    ticket = SupportTicket.query.filter(
+                        SupportTicket.ticket_number == str(ticket_id)
+                    ).first()
                 
-                # Set first_response_at if this is first agent response
-                if sender == 'agent' and not hasattr(ticket, 'first_response_at') or not ticket.first_response_at:
-                    try:
-                        ticket.first_response_at = datetime.utcnow()
-                    except AttributeError:
-                        pass
+                if not ticket:
+                    emit('error', {'msg': 'Ticket not found'})
+                    return
                 
-                db.session.commit()
-                message_id = thread.id
-            except Exception as e:
-                app_logger.exception(f"Error saving message: {e}")
-                db.session.rollback()
-                message_id = None
-            
-            # Broadcast message to room
-            room = f"ticket_{ticket.id}"
-            message_data = {
-                'message_id': message_id,
-                'ticket_id': ticket.ticket_number or str(ticket.id),  # Display ID
-                'ticket_id_raw': ticket.id,  # ✅ Numeric ID for room matching
-                'message': message, 
-                'sender': sender,
-                'sender_id': sender_id,
-                'sender_name': sender_name,
-                'sender_type': sender,  # ✅ For appendMessage compatibility
-                'timestamp': datetime.utcnow().isoformat(),
-                'created_at': datetime.utcnow().isoformat()  # ✅ For appendMessage compatibility
-            }
-            
-            emit('receive_message', message_data, room=room)
-            
-            app_logger.info(f"Message sent in ticket {ticket.id} by {sender} {sender_id}")
+                # Verify sender has access
+                if sender == 'customer' and ticket.user_id != sender_id:
+                    emit('error', {'msg': 'Unauthorized'})
+                    return
+                
+                # Store message in database (threads table)
+                try:
+                    thread = Thread(
+                        title=ticket.subject,
+                        content=message,
+                        user_id=sender_id,
+                        ticket_id=ticket.id
+                    )
+                    db.session.add(thread)
+                    
+                    # Update ticket timestamps
+                    ticket.updated_at = datetime.utcnow()
+                    
+                    # Set first_response_at if this is first agent response
+                    if sender == 'agent' and not hasattr(ticket, 'first_response_at') or not ticket.first_response_at:
+                        try:
+                            ticket.first_response_at = datetime.utcnow()
+                        except AttributeError:
+                            pass
+                    
+                    # ✅ CRITICAL: Commit inside app_context
+                    db.session.commit()
+                    message_id = thread.id
+                    app_logger.info(f"✅ Message saved to threads table: thread_id={message_id}, ticket_id={ticket.id}")
+                    
+                    # Broadcast message to room (inside app_context to access ticket)
+                    room = f"ticket_{ticket.id}"
+                    message_data = {
+                        'message_id': message_id,
+                        'ticket_id': ticket.ticket_number or str(ticket.id),  # Display ID
+                        'ticket_id_raw': ticket.id,  # ✅ Numeric ID for room matching
+                        'message': message, 
+                        'sender': sender,
+                        'sender_id': sender_id,
+                        'sender_name': sender_name,
+                        'sender_type': sender,  # ✅ For appendMessage compatibility
+                        'timestamp': datetime.utcnow().isoformat(),
+                        'created_at': datetime.utcnow().isoformat()  # ✅ For appendMessage compatibility
+                    }
+                    
+                    emit('receive_message', message_data, room=room)
+                    app_logger.info(f"Message sent in ticket {ticket.id} by {sender} {sender_id}")
+                except Exception as e:
+                    app_logger.exception(f"❌ Error saving message to threads table: {e}")
+                    db.session.rollback()
+                    message_id = None
+                    emit('error', {'msg': 'Failed to save message to database'})
             
         except Exception as e:
             app_logger.exception(f"Error sending message: {e}")
@@ -725,18 +575,22 @@ def register_handlers(socketio):
                 })
                 
                 # Send issue options (Flipkart-style buttons)
-                # Priority: Database flows > Status-based options > Generic fallback
+                # ✅ 100% Database-driven: All options come from support_order_flows table
                 if flows:
-                    # Use database-defined flows if available
+                    # Use database-defined flows
                     options = [{
                         'key': flow.issue_key,
                         'title': flow.issue_title
                     } for flow in flows]
                     app_logger.info(f"✅ Using database flows for status {order_status}: {len(options)} options")
                 else:
-                    # Use status-based options as fallback
-                    options = get_status_based_support_options(order_status)
-                    app_logger.info(f"✅ Using status-based options for status {order_status}: {len(options)} options")
+                    # Fallback: Generic options if no database flows found
+                    app_logger.warning(f"⚠️ No database flows found for status {order_status}. Using generic fallback.")
+                    options = [
+                        {'key': 'general_issue', 'title': 'General Issue'},
+                        {'key': 'track_order', 'title': 'Track Order'},
+                        {'key': 'cancel_order', 'title': 'Cancel Order'}
+                    ]
                 
                 emit('ai_options', {
                     'options': options,
@@ -874,14 +728,15 @@ def register_handlers(socketio):
                             except Exception as e:
                                 app_logger.warning(f"Auto-assignment failed: {e}")
                 else:
-                    # Fallback: Use status-based AI response if database flow not found
-                    ai_response = get_status_based_ai_response(issue_key, order_status, order_id)
+                    # Fallback: Database flow not found - auto-assign agent for immediate support
+                    app_logger.warning(f"⚠️ No database flow found for issue_key={issue_key}, status={order_status}. Auto-assigning agent.")
                     
+                    # Send generic message
                     emit('ai_message', {
-                        'text': ai_response,
-                        'sender_type': 'ai',  # Add for frontend compatibility
+                        'text': 'Thank you for contacting us. A support agent will assist you shortly.',
+                        'sender_type': 'ai',
                         'ticket_id': ticket.ticket_number or str(ticket_id),
-                        'ticket_id_raw': ticket_id,  # Add numeric ID for matching
+                        'ticket_id_raw': ticket_id,
                         'timestamp': datetime.utcnow().isoformat()
                     }, room=room)
                     
@@ -892,36 +747,24 @@ def register_handlers(socketio):
                     except AttributeError:
                         pass
                     
-                    # For certain critical issues, auto-assign agent
-                    critical_issues = ['design_mistake', 'damaged_missing', 'not_received', 'cancel_delivery', 'quality_complaint']
-                    if issue_key in critical_issues:
-                        agent_id = AutoAssignment.assign_agent()
-                        if agent_id:
-                            try:
-                                ticket.assigned_agent_id = agent_id
-                                ticket.status = 'assigned'
-                                ticket.first_response_at = datetime.utcnow()
-                                ticket.assigned_at = datetime.utcnow()
-                                db.session.commit()
-                                
-                                emit('agent_joined', {
-                                    'agent_id': agent_id,
-                                    'message': f'👤 Support agent has joined the conversation'
-                                }, room=room)
-                                
-                                app_logger.info(f"Agent {agent_id} auto-assigned to ticket {ticket_id} for critical issue: {issue_key}")
-                            except Exception as e:
-                                app_logger.warning(f"Auto-assignment failed: {e}")
-                    else:
-                        # For non-critical issues, offer option to talk to agent
-                        emit('ai_options', {
-                            'options': [
-                                {'key': 'resolved', 'title': '✅ Issue Resolved'},
-                                {'key': 'agent', 'title': 'Talk to Agent'}
-                            ],
-                            'ticket_id': ticket.ticket_number or str(ticket_id),
-                            'ticket_id_raw': ticket_id
-                        }, room=room)
+                    # Auto-assign agent for unknown issues
+                    agent_id = AutoAssignment.assign_agent()
+                    if agent_id:
+                        try:
+                            ticket.assigned_agent_id = agent_id
+                            ticket.status = 'assigned'
+                            ticket.first_response_at = datetime.utcnow()
+                            ticket.assigned_at = datetime.utcnow()
+                            db.session.commit()
+                            
+                            emit('agent_joined', {
+                                'agent_id': agent_id,
+                                'message': f'👤 Support agent has joined the conversation'
+                            }, room=room)
+                            
+                            app_logger.info(f"Agent {agent_id} auto-assigned to ticket {ticket_id} (no database flow found)")
+                        except Exception as e:
+                            app_logger.warning(f"Auto-assignment failed: {e}")
                 
         except Exception as e:
             app_logger.exception(f"Error in issue_selected: {e}")
