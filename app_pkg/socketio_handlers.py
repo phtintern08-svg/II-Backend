@@ -652,6 +652,26 @@ def register_handlers(socketio):
                     emit('error', {'msg': 'Ticket not found'})
                     return
                 
+                # ✅ FIX: Handle the 'resolved' key specifically
+                if issue_key == 'resolved':
+                    ticket.status = 'resolved'
+                    # Set resolved_at if the column exists
+                    try:
+                        ticket.resolved_at = datetime.utcnow()
+                    except AttributeError:
+                        pass
+                    db.session.commit()
+                    
+                    emit('ai_message', {
+                        'text': "Glad I could help! ✅ This ticket has been marked as resolved. Feel free to reach out if you need anything else.",
+                        'sender_type': 'ai',
+                        'ticket_id': ticket.ticket_number or str(ticket_id),
+                        'ticket_id_raw': ticket_id,
+                        'timestamp': datetime.utcnow().isoformat()
+                    }, room=f"ticket_{ticket_id}")
+                    app_logger.info(f"Ticket {ticket_id} marked as resolved by customer")
+                    return  # Exit here so it doesn't hit the fallback
+                
                 # Get order to find status
                 order = None
                 if order_id:
